@@ -1,8 +1,37 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
+import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { GoogleGenAI, Type } from '@google/genai';
+
+function loadEnvFile(filePath: string) {
+  if (!fs.existsSync(filePath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(filePath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = trimmedLine.indexOf('=');
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = trimmedLine.slice(0, separatorIndex).trim();
+    const value = trimmedLine.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadEnvFile(path.join(process.cwd(), '.env.local'));
+loadEnvFile(path.join(process.cwd(), '.env'));
 
 const app = express();
 const PORT = 3000;
@@ -10,7 +39,7 @@ const PORT = 3000;
 app.use(express.json());
 
 // Initialize SQLite database
-const db = new Database('sintertechnik.db', { verbose: console.log });
+const db = new Database('sintertechnik.db');
 
 // Create tables
 db.exec(`

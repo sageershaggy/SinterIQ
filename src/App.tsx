@@ -3,14 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState, useRef } from 'react';
-import { Building2, Users, MapPin, Activity, Euro, Search, Filter, Plus, ChevronDown, CheckCircle2, AlertCircle, Clock, Sparkles, Upload, Flame, CalendarClock } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Building2, Users, MapPin, Activity, Euro, Search, Filter, Plus, CheckCircle2, AlertCircle, Clock, Sparkles, Upload, Flame, CalendarClock } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import CompanyDetail from './CompanyDetail';
 import ContactsTab from './ContactsTab';
 import CommissionsTab from './CommissionsTab';
 import ResearchTab from './ResearchTab';
 import FollowUpsTab from './FollowUpsTab';
+import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
+import { internalUsers } from './companyData';
+import { formatCompactEur, getDateOnly, isPastDate } from './formatters';
 
 interface Company {
   id: number;
@@ -29,14 +32,24 @@ interface Company {
   follow_up_date?: string | null;
 }
 
+interface FollowUp {
+  follow_up_date: string;
+  follow_up_done: number;
+}
+
 export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [qualifyingId, setQualifyingId] = useState<number | null>(null);
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [initialTab, setInitialTab] = useState<string>('overview');
   const [importing, setImporting] = useState(false);
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [showCompanyForm, setShowCompanyForm] = useState(false);
+  const [companyForm, setCompanyForm] = useState<CompanyFormData>(emptyCompanyForm);
+  const [searchQuery, setSearchQuery] = useState('');
   const [minScore, setMinScore] = useState<string>('');
   const [maxScore, setMaxScore] = useState<string>('');
   const [assignedFilter, setAssignedFilter] = useState<string>('');
@@ -46,7 +59,7 @@ export default function App() {
   const [showFilters, setShowFilters] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const internalUsers = [
+  const legacyInternalUsers = [
     'Dr. Jochen Langguth',
     'Dr. Jürgen Schellenberger',
     'Ahmad Khan',
@@ -57,30 +70,63 @@ export default function App() {
   ];
 
   useEffect(() => {
-    fetch('/api/companies')
-      .then(res => res.json())
-      .then(data => {
-        setCompanies(data);
+    const loadAppData = async () => {
+      try {
+        const [companiesRes, followUpsRes] = await Promise.all([
+          fetch('/api/companies'),
+          fetch('/api/activities/follow-ups'),
+        ]);
+
+        if (!companiesRes.ok || !followUpsRes.ok) {
+          throw new Error('Failed to load app data');
+        }
+
+        const [companiesData, followUpsData] = await Promise.all([
+          companiesRes.json(),
+          followUpsRes.json(),
+        ]);
+
+        setCompanies(companiesData);
+        setFollowUps(followUpsData);
+      } catch (err) {
+        console.error('Failed to fetch app data:', err);
+      } finally {
         setLoading(false);
-      })
-      .catch(err => {
-        console.error('Failed to fetch companies:', err);
-        setLoading(false);
-      });
+      }
+    };
+
+    void loadAppData();
   }, []);
 
   const qualifiedCount = companies.filter(c => c.lead_status === 'QUALIFIED' || c.lead_status === 'APPROVED').length;
   const totalRevenue = companies.reduce((sum, c) => sum + (c.revenue_eur || 0), 0);
+  const today = getDateOnly(new Date().toISOString());
+  const overdueFollowUpCount = followUps.filter(f => !f.follow_up_done && getDateOnly(f.follow_up_date) < today).length;
 
   const filteredCompanies = companies.filter(c => {
-    if (minScore && c.lead_score !== null && c.lead_score < parseInt(minScore)) return false;
-    if (maxScore && c.lead_score !== null && c.lead_score > parseInt(maxScore)) return false;
+    if (minScore && c.lead_score !== null && c.lead_score < parseInt(minScore, 10)) return false;
+    if (maxScore && c.lead_score !== null && c.lead_score > parseInt(maxScore, 10)) return false;
     if (assignedFilter && c.assigned_to !== assignedFilter) return false;
     if (industryFilter && c.industry !== industryFilter) return false;
     if (companyTypeFilter && c.company_type !== companyTypeFilter) return false;
     if (statusFilter && c.lead_status !== statusFilter) return false;
+    if (searchQuery) {
+      const normalizedQuery = searchQuery.trim().toLowerCase();
+      const searchTarget = [c.company_name, c.country, c.city, c.industry, c.company_type, c.assigned_to]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      if (!searchTarget.includes(normalizedQuery)) return false;
+    }
     return true;
   });
+
+  const refreshCompanies = async () => {
+    const res = await fetch('/api/companies');
+    if (!res.ok) throw new Error('Failed to refresh companies');
+    setCompanies(await res.json());
+  };
 
   const handleAIQualify = async (id: number) => {
     setQualifyingId(id);
@@ -119,10 +165,7 @@ export default function App() {
 
         if (!res.ok) throw new Error('Import failed');
         
-        // Refresh companies
-        const fetchRes = await fetch('/api/companies');
-        const newData = await fetchRes.json();
-        setCompanies(newData);
+        await refreshCompanies();
         alert('Import successful!');
         setActiveTab('companies');
       } catch (err) {
@@ -134,6 +177,40 @@ export default function App() {
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  const handleCreateCompany = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSavingCompany(true);
+
+    try {
+      const res = await fetch('/api/companies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...companyForm,
+          employee_count: companyForm.employee_count ? parseInt(companyForm.employee_count, 10) : null,
+          revenue_eur: companyForm.revenue_eur ? parseFloat(companyForm.revenue_eur) : null,
+        }),
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || 'Failed to create company');
+      }
+
+      await refreshCompanies();
+      setShowCompanyForm(false);
+      setCompanyForm(emptyCompanyForm);
+      setActiveTab('companies');
+      setInitialTab('overview');
+      setSelectedCompanyId(payload.id);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to create company.');
+    } finally {
+      setSavingCompany(false);
+    }
   };
 
   return (
@@ -217,13 +294,18 @@ export default function App() {
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text" 
-                placeholder="Search companies, contacts, activities..." 
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search companies, countries, assignees..." 
                 className="w-full pl-9 pr-4 py-2 bg-slate-100 border-transparent rounded-md text-sm focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
               />
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+            <button
+              onClick={() => setShowCompanyForm(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+            >
               <Plus className="w-4 h-4" />
               New Company
             </button>
@@ -245,7 +327,13 @@ export default function App() {
           ) : activeTab === 'research' ? (
             <ResearchTab />
           ) : activeTab === 'followups' ? (
-            <FollowUpsTab onCompanyClick={(id) => { setSelectedCompanyId(id); setActiveTab('companies'); }} />
+            <FollowUpsTab
+              onCompanyClick={(id) => {
+                setInitialTab('activities');
+                setSelectedCompanyId(id);
+                setActiveTab('companies');
+              }}
+            />
           ) : activeTab === 'dashboard' ? (
             <div className="space-y-6">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">Pipeline Dashboard</h1>
@@ -278,7 +366,7 @@ export default function App() {
                     <h3 className="text-sm font-medium text-slate-500">Overdue Follow-ups</h3>
                     <AlertCircle className="w-4 h-4 text-red-500" />
                   </div>
-                  <div className="text-3xl font-bold text-slate-900">0</div>
+                  <div className="text-3xl font-bold text-slate-900">{overdueFollowUpCount}</div>
                 </div>
               </div>
 
