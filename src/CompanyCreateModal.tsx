@@ -2,10 +2,11 @@ import React from 'react';
 import {
   companyTypeOptions,
   industryOptions,
-  internalUsers,
   leadStatusOptions,
   regionOptions,
   technicalFitOptions,
+  trackingLevelOptions,
+  trackingStatusOptions,
 } from './companyData';
 
 export interface CompanyFormData {
@@ -21,6 +22,10 @@ export interface CompanyFormData {
   region: string;
   revenue_eur: string;
   technical_fit: string;
+  tracking_level: string;
+  tracking_notes: string;
+  tracking_status: string;
+  next_tracking_date: string;
   website: string;
 }
 
@@ -37,6 +42,10 @@ export const emptyCompanyForm: CompanyFormData = {
   region: '',
   revenue_eur: '',
   technical_fit: '',
+  tracking_level: 'WATCHLIST',
+  tracking_notes: '',
+  tracking_status: 'PENDING',
+  next_tracking_date: '',
   website: '',
 };
 
@@ -47,6 +56,7 @@ interface CompanyCreateModalProps {
   onSubmit: (event: React.FormEvent) => void;
   open: boolean;
   submitting: boolean;
+  users: string[];
 }
 
 export default function CompanyCreateModal({
@@ -56,6 +66,7 @@ export default function CompanyCreateModal({
   onSubmit,
   open,
   submitting,
+  users,
 }: CompanyCreateModalProps) {
   if (!open) {
     return null;
@@ -201,7 +212,7 @@ export default function CompanyCreateModal({
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
               >
                 <option value="">Unassigned</option>
-                {internalUsers.map((user) => (
+                {users.map((user) => (
                   <option key={user} value={user}>
                     {user}
                   </option>
@@ -239,6 +250,57 @@ export default function CompanyCreateModal({
                 value={form.qualification_notes}
                 onChange={(event) => onChange({ ...form, qualification_notes: event.target.value })}
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Tracking Level</label>
+              <select
+                value={form.tracking_level}
+                onChange={(event) => onChange({ ...form, tracking_level: event.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
+              >
+                {trackingLevelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Tracking Status</label>
+              <select
+                value={form.tracking_status}
+                onChange={(event) => onChange({ ...form, tracking_status: event.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
+              >
+                {trackingStatusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Next Tracking Date</label>
+              <input
+                type="date"
+                value={form.next_tracking_date}
+                onChange={(event) => onChange({ ...form, next_tracking_date: event.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-slate-700 mb-1">Tracking Notes</label>
+              <textarea
+                rows={3}
+                value={form.tracking_notes}
+                onChange={(event) => onChange({ ...form, tracking_notes: event.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                placeholder="How closely should this company be monitored and why?"
               />
             </div>
           </div>

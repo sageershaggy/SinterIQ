@@ -11,37 +11,27 @@ import {
   Flame,
   LucideIcon,
   MapPin,
+  Bot,
   Plus,
   Search,
   Sparkles,
+  Target,
   Upload,
   Users,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { AppUser, Company } from './appTypes';
 import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
 import CompanyDetail from './CompanyDetail';
 import CommissionsTab from './CommissionsTab';
 import ContactsTab from './ContactsTab';
 import FollowUpsTab from './FollowUpsTab';
 import ResearchTab from './ResearchTab';
-import { companyTypeOptions, industryOptions, internalUsers, leadStatusOptions } from './companyData';
+import SettingsTab from './SettingsTab';
+import TrackingTab from './TrackingTab';
+import UsersTab from './UsersTab';
+import { companyTypeOptions, industryOptions, internalUsers as defaultInternalUsers, leadStatusOptions } from './companyData';
 import { formatCompactEur, getDateOnly, isPastDate } from './formatters';
-
-interface Company {
-  assigned_to: string;
-  city: string;
-  company_name: string;
-  company_type: string;
-  contact_count?: number;
-  country: string;
-  follow_up_date?: string | null;
-  id: number;
-  industry: string;
-  lead_score: number;
-  lead_status: string;
-  revenue_eur: number;
-  technical_fit: string;
-}
 
 interface FollowUp {
   follow_up_date: string;
@@ -50,6 +40,7 @@ interface FollowUp {
 
 export default function AppRoot() {
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -79,6 +70,15 @@ export default function AppRoot() {
     setCompanies(await response.json());
   };
 
+  const loadUsers = async () => {
+    const response = await fetch('/api/users');
+    if (!response.ok) {
+      throw new Error('Failed to load users');
+    }
+
+    setUsers(await response.json());
+  };
+
   const loadFollowUps = async () => {
     const response = await fetch('/api/activities/follow-ups');
     if (!response.ok) {
@@ -91,7 +91,7 @@ export default function AppRoot() {
   useEffect(() => {
     const loadAppData = async () => {
       try {
-        await Promise.all([loadCompanies(), loadFollowUps()]);
+        await Promise.all([loadCompanies(), loadFollowUps(), loadUsers()]);
       } catch (error) {
         console.error('Failed to load app data:', error);
       } finally {
@@ -103,10 +103,15 @@ export default function AppRoot() {
   }, []);
 
   const totalRevenue = companies.reduce((sum, company) => sum + (company.revenue_eur || 0), 0);
+  const activeUsers = users.filter((user) => user.is_active).map((user) => user.full_name);
+  const userOptions = activeUsers.length > 0 ? activeUsers : [...defaultInternalUsers];
   const qualifiedCount = companies.filter((company) => ['QUALIFIED', 'APPROVED'].includes(company.lead_status)).length;
   const today = getDateOnly(new Date().toISOString());
   const overdueFollowUpsCount = followUps.filter(
     (followUp) => !followUp.follow_up_done && getDateOnly(followUp.follow_up_date) < today,
+  ).length;
+  const trackingDueCount = companies.filter(
+    (company) => company.next_tracking_date && getDateOnly(company.next_tracking_date) <= today,
   ).length;
 
   const filteredCompanies = companies.filter((company) => {
@@ -145,6 +150,8 @@ export default function AppRoot() {
       company.industry,
       company.company_type,
       company.assigned_to,
+      company.tracking_level,
+      company.tracking_status,
     ]
       .filter(Boolean)
       .join(' ')
@@ -159,22 +166,27 @@ export default function AppRoot() {
     setActiveTab('companies');
   };
 
+  const handleDataChanged = async () => {
+    await Promise.all([loadCompanies(), loadFollowUps()]);
+  };
+
   const handleAIQualify = async (id: number) => {
     setQualifyingId(id);
 
     try {
       const response = await fetch(`/api/companies/${id}/ai-qualify`, { method: 'POST' });
+      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error('AI qualification failed');
+        throw new Error(payload?.error || 'AI qualification failed');
       }
 
-      const updatedCompany = await response.json();
+      const updatedCompany = payload;
       setCompanies((currentCompanies) =>
         currentCompanies.map((company) => (company.id === id ? { ...company, ...updatedCompany } : company)),
       );
     } catch (error) {
       console.error(error);
-      alert('AI qualification failed. Check GEMINI_API_KEY and try again.');
+      alert(error instanceof Error ? error.message : 'AI qualification failed.');
     } finally {
       setQualifyingId(null);
     }
@@ -257,7 +269,7 @@ export default function AppRoot() {
   const renderDashboard = () => (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">Pipeline Dashboard</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-slate-500">Total Companies</h3>
@@ -286,6 +298,13 @@ export default function AppRoot() {
           </div>
           <div className="text-3xl font-bold text-slate-900">{overdueFollowUpsCount}</div>
         </div>
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-slate-500">Tracking Due</h3>
+            <Target className="w-4 h-4 text-orange-500" />
+          </div>
+          <div className="text-3xl font-bold text-slate-900">{trackingDueCount}</div>
+        </div>
       </div>
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
         <div className="flex items-center gap-2 mb-4">
@@ -311,7 +330,7 @@ export default function AppRoot() {
             className="bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-md text-sm font-medium outline-none"
           >
             <option value="">All Users</option>
-            {internalUsers.map((user) => (
+            {userOptions.map((user) => (
               <option key={user} value={user}>
                 {user}
               </option>
@@ -407,8 +426,10 @@ export default function AppRoot() {
               <th className="px-6 py-3 font-medium">Score</th>
               <th className="px-6 py-3 font-medium">Tech Fit</th>
               <th className="px-6 py-3 font-medium">Status</th>
+              <th className="px-6 py-3 font-medium">Tracking</th>
               <th className="px-6 py-3 font-medium">Assigned To</th>
               <th className="px-6 py-3 font-medium">Follow Up</th>
+              <th className="px-6 py-3 font-medium">Next Track</th>
               <th className="px-6 py-3 font-medium text-right">Revenue</th>
               <th className="px-6 py-3 font-medium text-right">Actions</th>
             </tr>
@@ -416,13 +437,13 @@ export default function AppRoot() {
           <tbody className="divide-y divide-slate-200">
             {loading ? (
               <tr>
-                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">
+                <td colSpan={12} className="px-6 py-8 text-center text-slate-500">
                   Loading companies...
                 </td>
               </tr>
             ) : filteredCompanies.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">
+                <td colSpan={12} className="px-6 py-8 text-center text-slate-500">
                   No companies matched the current filters.
                 </td>
               </tr>
@@ -462,11 +483,28 @@ export default function AppRoot() {
                     )}
                   </td>
                   <td className="px-6 py-4">{company.lead_status}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex flex-col gap-1">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200">
+                        {company.tracking_level || 'WATCHLIST'}
+                      </span>
+                      <span className="text-xs text-slate-500">{company.tracking_status || 'PENDING'}</span>
+                    </div>
+                  </td>
                   <td className="px-6 py-4 text-slate-700 text-sm">{company.assigned_to || 'Unassigned'}</td>
                   <td className="px-6 py-4">
                     {company.follow_up_date ? (
                       <span className={`text-xs font-medium ${isPastDate(company.follow_up_date) ? 'text-red-600' : 'text-slate-600'}`}>
                         {new Date(company.follow_up_date).toLocaleDateString()}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-xs">-</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    {company.next_tracking_date ? (
+                      <span className={`text-xs font-medium ${isPastDate(company.next_tracking_date) ? 'text-red-600' : 'text-slate-600'}`}>
+                        {new Date(company.next_tracking_date).toLocaleDateString()}
                       </span>
                     ) : (
                       <span className="text-slate-400 text-xs">-</span>
@@ -502,7 +540,10 @@ export default function AppRoot() {
     { key: 'commissions', label: 'Commissions', icon: Euro },
     { key: 'research', label: 'Lead Research', icon: Search },
     { key: 'followups', label: 'Follow-ups', icon: CalendarClock },
+    { key: 'tracking', label: 'Company Tracking', icon: Target },
     { key: 'import', label: 'Import Leads', icon: Upload },
+    { key: 'users', label: 'Users', icon: Users },
+    { key: 'settings', label: 'Settings', icon: Bot },
   ];
 
   return (
@@ -566,17 +607,25 @@ export default function AppRoot() {
                 setInitialTab('overview');
               }}
               initialTab={initialTab}
+              onDataChanged={handleDataChanged}
+              users={userOptions}
             />
           ) : activeTab === 'contacts' ? (
             <ContactsTab />
           ) : activeTab === 'commissions' ? (
             <CommissionsTab />
           ) : activeTab === 'research' ? (
-            <ResearchTab />
+            <ResearchTab users={userOptions} />
           ) : activeTab === 'followups' ? (
             <FollowUpsTab onCompanyClick={(id) => openCompany(id, 'activities')} onChange={setFollowUps} />
+          ) : activeTab === 'tracking' ? (
+            <TrackingTab companies={companies} onCompanyClick={(id) => openCompany(id)} />
           ) : activeTab === 'dashboard' ? (
             renderDashboard()
+          ) : activeTab === 'users' ? (
+            <UsersTab users={users} onUsersChanged={loadUsers} />
+          ) : activeTab === 'settings' ? (
+            <SettingsTab />
           ) : activeTab === 'import' ? (
             <div className="space-y-6 max-w-2xl mx-auto mt-10">
               <div className="text-center">
@@ -610,6 +659,7 @@ export default function AppRoot() {
         onClose={() => setShowCompanyForm(false)}
         onSubmit={handleCreateCompany}
         submitting={savingCompany}
+        users={userOptions}
       />
     </div>
   );

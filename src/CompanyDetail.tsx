@@ -1,6 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Building2, Globe, Users, Euro, Phone, Mail, Linkedin, Plus, Calendar, CheckCircle2, MessageSquare, Briefcase, Trash2, Activity, Edit2, Clock, AlertCircle, Edit, Download } from 'lucide-react';
-import { internalUsers as sharedInternalUsers, technicalFitOptions } from './companyData';
+import {
+  companyTypeOptions,
+  industryOptions,
+  leadStatusOptions,
+  regionOptions,
+  technicalFitOptions,
+  trackingLevelOptions,
+  trackingStatusOptions,
+} from './companyData';
 import { formatCompactEur, formatEur, parseStringArray } from './formatters';
 
 interface Contact {
@@ -48,9 +56,17 @@ interface CompanyDetailProps {
   companyId: number;
   onBack: () => void;
   initialTab?: string;
+  onDataChanged?: () => Promise<void>;
+  users: string[];
 }
 
-export default function CompanyDetail({ companyId, onBack, initialTab = 'overview' }: CompanyDetailProps) {
+export default function CompanyDetail({
+  companyId,
+  onBack,
+  initialTab = 'overview',
+  onDataChanged,
+  users,
+}: CompanyDetailProps) {
   const [company, setCompany] = useState<any>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [activities, setActivities] = useState<ActivityLog[]>([]);
@@ -65,7 +81,15 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
 
   // Activity Form State
   const [showActivityForm, setShowActivityForm] = useState(false);
-  const [activityForm, setActivityForm] = useState({ activity_type: 'CALL_MADE', activity_date: new Date().toISOString().split('T')[0], performed_by: 'Sageer A. Shaikh', subject: '', details: '', outcome: 'NEUTRAL', follow_up_date: '' });
+  const [activityForm, setActivityForm] = useState({
+    activity_type: 'CALL_MADE',
+    activity_date: new Date().toISOString().split('T')[0],
+    performed_by: users[0] || 'System',
+    subject: '',
+    details: '',
+    outcome: 'NEUTRAL',
+    follow_up_date: '',
+  });
 
   const [showEditCompany, setShowEditCompany] = useState(false);
   const [companyForm, setCompanyForm] = useState<any>({});
@@ -119,6 +143,12 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
     void fetchData();
   }, [companyId]);
 
+  useEffect(() => {
+    if (!activityForm.performed_by && users[0]) {
+      setActivityForm((currentValue) => ({ ...currentValue, performed_by: users[0] }));
+    }
+  }, [activityForm.performed_by, users]);
+
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -138,7 +168,8 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
       setShowContactForm(false);
       setEditingContactId(null);
       setContactForm({ full_name: '', job_title: '', email: '', phone_direct: '', linkedin_url: '', notes: '', is_verified: false, verification_source: '' });
-      fetchData();
+      await fetchData();
+      await onDataChanged?.();
     } catch (err) {
       console.error(err);
       alert('Failed to save contact');
@@ -164,7 +195,8 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
     if (!confirm('Are you sure you want to delete this contact?')) return;
     try {
       await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
-      fetchData();
+      await fetchData();
+      await onDataChanged?.();
     } catch (err) {
       console.error(err);
     }
@@ -179,8 +211,9 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
         body: JSON.stringify({ ...activityForm, company_id: companyId })
       });
       setShowActivityForm(false);
-      setActivityForm({ activity_type: 'CALL_MADE', activity_date: new Date().toISOString().split('T')[0], performed_by: 'Sageer A. Shaikh', subject: '', details: '', outcome: 'NEUTRAL', follow_up_date: '' });
-      fetchData();
+      setActivityForm({ activity_type: 'CALL_MADE', activity_date: new Date().toISOString().split('T')[0], performed_by: users[0] || 'System', subject: '', details: '', outcome: 'NEUTRAL', follow_up_date: '' });
+      await fetchData();
+      await onDataChanged?.();
     } catch (err) {
       console.error(err);
       alert('Failed to log activity');
@@ -205,7 +238,8 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
         payment_received: false,
         innovista_contribution: 'LEAD_GEN'
       });
-      fetchData();
+      await fetchData();
+      await onDataChanged?.();
     } catch (err) {
       console.error(err);
       alert('Failed to save order');
@@ -221,7 +255,8 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
         body: JSON.stringify(companyForm)
       });
       setShowEditCompany(false);
-      fetchData();
+      await fetchData();
+      await onDataChanged?.();
     } catch (err) {
       console.error(err);
       alert('Failed to update company');
@@ -370,6 +405,41 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
             </div>
             
             <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-orange-500" />
+                  Company Tracking
+                </h3>
+                <div className="bg-slate-50 rounded-lg p-4 border border-slate-100">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-slate-500 font-medium block">Tracking Level</span>
+                      <span className="text-slate-900 font-medium">{company.tracking_level || 'WATCHLIST'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-medium block">Tracking Status</span>
+                      <span className="text-slate-900 font-medium">{company.tracking_status || 'PENDING'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-medium block">Next Tracking Date</span>
+                      <span className="text-slate-900">
+                        {company.next_tracking_date ? new Date(company.next_tracking_date).toLocaleDateString() : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-medium block">Owner</span>
+                      <span className="text-slate-900">{company.assigned_to || 'Unassigned'}</span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-slate-500 font-medium block">Tracking Notes</span>
+                      <p className="text-slate-700 mt-1 whitespace-pre-wrap">
+                        {company.tracking_notes || 'No company-level tracking notes yet.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
                   <Activity className="w-5 h-5 text-blue-500" />
@@ -572,7 +642,7 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-slate-700 mb-1">Performed By</label>
                   <select value={activityForm.performed_by} onChange={e => setActivityForm({...activityForm, performed_by: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">
-                      {sharedInternalUsers.map(user => (
+                      {users.map(user => (
                       <option key={user} value={user}>{user}</option>
                     ))}
                   </select>
@@ -785,56 +855,33 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Region</label>
                   <select value={companyForm.region || ''} onChange={e => setCompanyForm({...companyForm, region: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                    <option value="">Select Region...</option>
-                    <option value="DACH">DACH</option>
-                    <option value="GCC">GCC</option>
-                    <option value="UK_IE">UK & Ireland</option>
+                    {regionOptions.map((option) => (
+                      <option key={option.value || 'blank'} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Industry</label>
                   <select value={companyForm.industry || ''} onChange={e => setCompanyForm({...companyForm, industry: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                    <option value="BEARING_TRADER">Bearing Traders / Distributors</option>
-                    <option value="OIL_GAS">Oil & Gas / Petrochemicals</option>
-                    <option value="FOOD_BEV">Food & Beverage Manufacturing</option>
-                    <option value="PHARMA">Pharmaceutical / Cleanroom</option>
-                    <option value="CHEMICAL">Chemical Processing & Pumps</option>
-                    <option value="DESAL_WATER">Desalination / Water Treatment</option>
-                    <option value="CEMENT">Cement & Construction Materials</option>
-                    <option value="POWER_GEN">Power Generation / Energy</option>
-                    <option value="MINING">Mining & Minerals</option>
-                    <option value="AUTOMOTIVE">Automotive Manufacturing</option>
-                    <option value="TEXTILE">Textile Machinery</option>
-                    <option value="VACUUM">Vacuum Technology</option>
-                    <option value="CRYO">Cryogenic Applications</option>
-                    <option value="UNIVERSITY">Universities & Scientific Institutes</option>
-                    <option value="ROBOTICS">Robotics & Automation</option>
-                    <option value="ELECTROPLATING">Electroplating / Surface Treatment</option>
-                    <option value="INDUSTRIAL_DIST">Industrial Component Distributors</option>
+                    {industryOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Company Type</label>
                   <select value={companyForm.company_type || ''} onChange={e => setCompanyForm({...companyForm, company_type: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                    <option value="BEARING_TRADER">Bearing Trader</option>
-                    <option value="MANUFACTURER">Manufacturer</option>
-                    <option value="DISTRIBUTOR">Distributor</option>
-                    <option value="UNIVERSITY">University</option>
+                    {companyTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Lead Status</label>
                   <select value={companyForm.lead_status || ''} onChange={e => setCompanyForm({...companyForm, lead_status: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                    <option value="RAW">Raw</option>
-                    <option value="ENRICHED">Enriched</option>
-                    <option value="QUALIFIED">Qualified</option>
-                    <option value="APPROVED">Approved</option>
-                    <option value="IN_OUTREACH">In Outreach</option>
-                    <option value="CONTACTED">Contacted</option>
-                    <option value="OPPORTUNITY">Opportunity</option>
-                    <option value="WON">Won</option>
-                    <option value="LOST">Lost</option>
-                    <option value="DISQUALIFIED">Disqualified</option>
+                    {leadStatusOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -849,14 +896,38 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
                   <label className="block text-sm font-medium text-slate-700 mb-1">Assigned To</label>
                   <select value={companyForm.assigned_to || ''} onChange={e => setCompanyForm({...companyForm, assigned_to: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
                     <option value="">Unassigned</option>
-                    {sharedInternalUsers.map(user => (
+                    {users.map(user => (
                       <option key={user} value={user}>{user}</option>
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Tracking Level</label>
+                  <select value={companyForm.tracking_level || 'WATCHLIST'} onChange={e => setCompanyForm({...companyForm, tracking_level: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
+                    {trackingLevelOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Tracking Status</label>
+                  <select value={companyForm.tracking_status || 'PENDING'} onChange={e => setCompanyForm({...companyForm, tracking_status: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
+                    {trackingStatusOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Next Tracking Date</label>
+                  <input type="date" value={companyForm.next_tracking_date || ''} onChange={e => setCompanyForm({...companyForm, next_tracking_date: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" />
+                </div>
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-slate-700 mb-1">Qualification Notes</label>
                   <textarea rows={3} value={companyForm.qualification_notes || ''} onChange={e => setCompanyForm({...companyForm, qualification_notes: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Tracking Notes</label>
+                  <textarea rows={3} value={companyForm.tracking_notes || ''} onChange={e => setCompanyForm({...companyForm, tracking_notes: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"></textarea>
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">

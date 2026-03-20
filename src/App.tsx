@@ -319,13 +319,14 @@ export default function App() {
               companyId={selectedCompanyId} 
               onBack={() => setSelectedCompanyId(null)} 
               initialTab={initialTab}
+              users={[...internalUsers]}
             />
           ) : activeTab === 'contacts' ? (
             <ContactsTab />
           ) : activeTab === 'commissions' ? (
             <CommissionsTab />
           ) : activeTab === 'research' ? (
-            <ResearchTab />
+            <ResearchTab users={[...internalUsers]} />
           ) : activeTab === 'followups' ? (
             <FollowUpsTab
               onCompanyClick={(id) => {

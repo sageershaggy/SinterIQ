@@ -67,3 +67,25 @@ export const technicalFitOptions: SelectOption[] = [
   { value: 'LOW', label: 'Low' },
   { value: 'NOT_FIT', label: 'Not a Fit' },
 ];
+
+export const trackingLevelOptions: SelectOption[] = [
+  { value: 'WATCHLIST', label: 'Watchlist' },
+  { value: 'ACTIVE', label: 'Active' },
+  { value: 'HIGH_PRIORITY', label: 'High Priority' },
+  { value: 'STRATEGIC', label: 'Strategic' },
+];
+
+export const trackingStatusOptions: SelectOption[] = [
+  { value: 'PENDING', label: 'Pending' },
+  { value: 'RESEARCHED', label: 'Researched' },
+  { value: 'QUALIFIED', label: 'Qualified' },
+  { value: 'NURTURING', label: 'Nurturing' },
+  { value: 'ON_HOLD', label: 'On Hold' },
+];
+
+export const userRoleOptions: SelectOption[] = [
+  { value: 'Sales', label: 'Sales' },
+  { value: 'Admin', label: 'Admin' },
+  { value: 'Research', label: 'Research' },
+  { value: 'Manager', label: 'Manager' },
+];

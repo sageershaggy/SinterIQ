@@ -3,7 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 
 function loadEnvFile(filePath: string) {
   if (!fs.existsSync(filePath)) {
@@ -72,13 +72,375 @@ function normalizeTechnicalFit(value: unknown) {
   return normalizedValue && normalizedValue !== 'UNASSESSED' ? normalizedValue : null;
 }
 
-function createAiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured');
+function normalizeBooleanFlag(value: unknown) {
+  if (typeof value === 'boolean') {
+    return value;
   }
 
-  return new GoogleGenAI({ apiKey });
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+
+  const normalizedValue = normalizeOptionalString(value)?.toLowerCase();
+  return normalizedValue === 'true' || normalizedValue === '1' || normalizedValue === 'yes';
+}
+
+function normalizeComparableValue(value: unknown) {
+  return normalizeOptionalString(value)?.toLowerCase() || '';
+}
+
+function normalizeTrackingLevel(value: unknown) {
+  const normalizedValue = normalizeOptionalString(value);
+  return normalizedValue || 'WATCHLIST';
+}
+
+function normalizeTrackingStatus(value: unknown) {
+  const normalizedValue = normalizeOptionalString(value);
+  return normalizedValue || 'PENDING';
+}
+
+function normalizeWebsiteHost(value: unknown) {
+  const normalizedValue = normalizeOptionalString(value);
+  if (!normalizedValue) {
+    return '';
+  }
+
+  try {
+    const url = normalizedValue.match(/^https?:\/\//i) ? new URL(normalizedValue) : new URL(`https://${normalizedValue}`);
+    return url.hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return normalizedValue
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/.*$/, '');
+  }
+}
+
+function normalizeCompanyNameForMatch(value: unknown) {
+  const normalizedValue = normalizeRequiredString(value)
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+  if (!normalizedValue) {
+    return '';
+  }
+
+  const ignoredTokens = new Set([
+    'gmbh',
+    'llc',
+    'ltd',
+    'limited',
+    'inc',
+    'corp',
+    'corporation',
+    'co',
+    'company',
+    'kg',
+    'ag',
+    'bv',
+    'sa',
+    'sarl',
+    'pte',
+    'plc',
+    'the',
+  ]);
+
+  return normalizedValue
+    .split(/\s+/)
+    .filter((token) => token && !ignoredTokens.has(token))
+    .join(' ');
+}
+
+function sendApiError(res: any, error: unknown, fallbackMessage: string) {
+  const message = error instanceof Error ? error.message : fallbackMessage;
+
+  if (message.includes('LLM_API_KEY') || message.includes('GEMINI_API_KEY')) {
+    return res.status(503).json({ error: message });
+  }
+
+  return res.status(500).json({ error: message || fallbackMessage });
+}
+
+const DEFAULT_USERS = [
+  'Dr. Jochen Langguth',
+  'Dr. Juergen Schellenberger',
+  'Ahmad Khan',
+  'Sageer A. Shaikh',
+  'Christoph Langguth',
+  'Patton Lucas',
+  'Dr. Kathrin Langguth',
+];
+
+type LlmProviderType = 'gemini' | 'openai_compatible';
+
+interface LlmSettings {
+  apiKey: string | null;
+  baseUrl: string | null;
+  model: string;
+  providerName: string;
+  providerType: LlmProviderType;
+  source: 'database' | 'environment' | 'default';
+  supportsWebSearch: boolean;
+}
+
+function getSettingValue(settingKey: string) {
+  const row = db
+    .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
+    .get(settingKey) as { setting_value: string } | undefined;
+
+  return row?.setting_value ?? null;
+}
+
+function saveSettings(settingEntries: Record<string, string | null>) {
+  const upsertSetting = db.prepare(`
+    INSERT INTO app_settings (setting_key, setting_value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(setting_key) DO UPDATE SET
+      setting_value = excluded.setting_value,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  const saveAllSettings = db.transaction(() => {
+    for (const [settingKey, settingValue] of Object.entries(settingEntries)) {
+      upsertSetting.run(settingKey, settingValue ?? '');
+    }
+  });
+
+  saveAllSettings();
+}
+
+function getLlmSettings(): LlmSettings {
+  const storedProviderType = normalizeOptionalString(getSettingValue('llm.provider_type'));
+  const storedProviderName = normalizeOptionalString(getSettingValue('llm.provider_name'));
+  const storedModel = normalizeOptionalString(getSettingValue('llm.model'));
+  const storedApiKey = normalizeOptionalString(getSettingValue('llm.api_key'));
+  const storedBaseUrl = normalizeOptionalString(getSettingValue('llm.base_url'));
+
+  if (storedProviderType === 'openai_compatible' || storedProviderType === 'gemini') {
+    const fallbackApiKey = storedProviderType === 'gemini'
+      ? normalizeOptionalString(process.env.GEMINI_API_KEY)
+      : normalizeOptionalString(process.env.LLM_API_KEY) || normalizeOptionalString(process.env.OPENAI_API_KEY);
+
+    return {
+      providerType: storedProviderType,
+      providerName: storedProviderName || (storedProviderType === 'gemini' ? 'Gemini' : 'OpenAI-Compatible'),
+      model: storedModel || (storedProviderType === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4.1-mini'),
+      apiKey: storedApiKey || fallbackApiKey,
+      baseUrl: storedProviderType === 'openai_compatible' ? storedBaseUrl || 'https://api.openai.com/v1' : null,
+      source: storedApiKey ? 'database' : fallbackApiKey ? 'environment' : 'database',
+      supportsWebSearch: storedProviderType === 'gemini',
+    };
+  }
+
+  if (process.env.GEMINI_API_KEY) {
+    return {
+      providerType: 'gemini',
+      providerName: 'Gemini',
+      model: normalizeOptionalString(process.env.GEMINI_MODEL) || 'gemini-2.5-flash',
+      apiKey: process.env.GEMINI_API_KEY,
+      baseUrl: null,
+      source: 'environment',
+      supportsWebSearch: true,
+    };
+  }
+
+  if (process.env.LLM_API_KEY || process.env.OPENAI_API_KEY) {
+    return {
+      providerType: 'openai_compatible',
+      providerName: normalizeOptionalString(process.env.LLM_PROVIDER_NAME) || 'OpenAI-Compatible',
+      model: normalizeOptionalString(process.env.LLM_MODEL) || 'gpt-4.1-mini',
+      apiKey: normalizeOptionalString(process.env.LLM_API_KEY) || normalizeOptionalString(process.env.OPENAI_API_KEY),
+      baseUrl: normalizeOptionalString(process.env.LLM_BASE_URL) || 'https://api.openai.com/v1',
+      source: 'environment',
+      supportsWebSearch: false,
+    };
+  }
+
+  return {
+    providerType: 'gemini',
+    providerName: 'Gemini',
+    model: 'gemini-2.5-flash',
+    apiKey: null,
+    baseUrl: null,
+    source: 'default',
+    supportsWebSearch: true,
+  };
+}
+
+function ensureLlmConfigured(settings: LlmSettings) {
+  if (!settings.apiKey) {
+    throw new Error(`LLM_API_KEY is not configured for ${settings.providerName}. Add it in Settings or .env.local and restart the app.`);
+  }
+}
+
+function stripHtmlToText(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeWebsiteUrl(value: unknown) {
+  const normalizedValue = normalizeOptionalString(value);
+  if (!normalizedValue) {
+    return null;
+  }
+
+  try {
+    return normalizedValue.match(/^https?:\/\//i) ? normalizedValue : `https://${normalizedValue}`;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWebsiteContext(value: unknown) {
+  const websiteUrl = normalizeWebsiteUrl(value);
+  if (!websiteUrl) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(websiteUrl, {
+      headers: { 'User-Agent': 'SinterIQ/1.0' },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const html = await response.text();
+    const text = stripHtmlToText(html).slice(0, 4000);
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+async function generateJsonWithLlm({
+  systemPrompt,
+  userPrompt,
+  useWebSearch,
+}: {
+  systemPrompt: string;
+  userPrompt: string;
+  useWebSearch: boolean;
+}) {
+  const settings = getLlmSettings();
+  ensureLlmConfigured(settings);
+
+  if (settings.providerType === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: settings.apiKey! });
+    const response = await ai.models.generateContent({
+      model: settings.model,
+      contents: `${systemPrompt}\n\n${userPrompt}`,
+      config: {
+        responseMimeType: 'application/json',
+        ...(useWebSearch && settings.supportsWebSearch ? { tools: [{ googleSearch: {} }] } : {}),
+      },
+    });
+
+    return response.text || '';
+  }
+
+  const response = await fetch(`${settings.baseUrl!.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${settings.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${userPrompt}\n\nReturn only valid JSON.` },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `LLM request failed for ${settings.providerName}`);
+  }
+
+  const payload = await response.json();
+  const messageContent = payload?.choices?.[0]?.message?.content;
+  if (typeof messageContent === 'string') {
+    return messageContent;
+  }
+
+  if (Array.isArray(messageContent)) {
+    return messageContent
+      .map((item) => (typeof item?.text === 'string' ? item.text : ''))
+      .join('');
+  }
+
+  return '';
+}
+
+function parseJsonResponse<T>(rawText: string, fallbackValue: T) {
+  if (!rawText) {
+    return fallbackValue;
+  }
+
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    const arrayMatch = rawText.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0]) as T;
+      } catch {}
+    }
+
+    const objectMatch = rawText.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0]) as T;
+      } catch {}
+    }
+  }
+
+  return fallbackValue;
+}
+
+function findExistingCompanyForResearch(companyName: unknown, website: unknown) {
+  const companies = db.prepare('SELECT id, company_name, website FROM companies').all() as Array<{
+    company_name: string;
+    id: number;
+    website: string | null;
+  }>;
+
+  const normalizedWebsiteHost = normalizeWebsiteHost(website);
+  if (normalizedWebsiteHost) {
+    const websiteMatch = companies.find((company) => normalizeWebsiteHost(company.website) === normalizedWebsiteHost);
+    if (websiteMatch) {
+      return { company: websiteMatch, matchedBy: 'website' as const };
+    }
+  }
+
+  const normalizedCompanyName = normalizeCompanyNameForMatch(companyName);
+  if (!normalizedCompanyName) {
+    return null;
+  }
+
+  const companyNameMatch = companies.find(
+    (company) => normalizeCompanyNameForMatch(company.company_name) === normalizedCompanyName,
+  );
+
+  if (companyNameMatch) {
+    return { company: companyNameMatch, matchedBy: 'company_name' as const };
+  }
+
+  return null;
 }
 
 // Create tables
@@ -110,7 +472,11 @@ db.exec(`
     social_media_urls TEXT,
     social_media_active BOOLEAN DEFAULT 0,
     mentions_technology BOOLEAN DEFAULT 0,
-    follow_up_date DATETIME
+    follow_up_date DATETIME,
+    tracking_level TEXT DEFAULT 'WATCHLIST',
+    tracking_status TEXT DEFAULT 'PENDING',
+    tracking_notes TEXT,
+    next_tracking_date DATETIME
   );
 
   CREATE TABLE IF NOT EXISTS contacts (
@@ -169,6 +535,23 @@ db.exec(`
     notes TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    full_name TEXT NOT NULL,
+    email TEXT,
+    role TEXT DEFAULT 'Sales',
+    is_active BOOLEAN DEFAULT 1,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key TEXT PRIMARY KEY,
+    setting_value TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Add new columns to companies if they don't exist
@@ -177,10 +560,170 @@ try { db.exec("ALTER TABLE companies ADD COLUMN social_media_urls TEXT;"); } cat
 try { db.exec("ALTER TABLE companies ADD COLUMN social_media_active BOOLEAN DEFAULT 0;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN mentions_technology BOOLEAN DEFAULT 0;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN follow_up_date DATETIME;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN tracking_level TEXT DEFAULT 'WATCHLIST';"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN tracking_status TEXT DEFAULT 'PENDING';"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN tracking_notes TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN next_tracking_date DATETIME;"); } catch (e) {}
+
+db.prepare("UPDATE companies SET tracking_level = 'WATCHLIST' WHERE tracking_level IS NULL OR tracking_level = ''").run();
+db.prepare("UPDATE companies SET tracking_status = 'PENDING' WHERE tracking_status IS NULL OR tracking_status = ''").run();
+
+const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+if (userCount.count === 0) {
+  const insertUser = db.prepare(`
+    INSERT INTO users (full_name, email, role, is_active, notes)
+    VALUES (?, ?, 'Sales', 1, '')
+  `);
+
+  const seedUsers = db.transaction(() => {
+    for (const fullName of DEFAULT_USERS) {
+      const emailSlug = fullName.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/(^\.|\.$)/g, '');
+      insertUser.run(fullName, `${emailSlug}@example.com`);
+    }
+  });
+
+  seedUsers();
+}
 
 // API Routes
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/api/settings/llm', (req, res) => {
+  try {
+    const settings = getLlmSettings();
+    const storedApiKey = normalizeOptionalString(getSettingValue('llm.api_key'));
+
+    res.json({
+      provider_type: settings.providerType,
+      provider_name: settings.providerName,
+      model: settings.model,
+      base_url: settings.baseUrl || '',
+      api_key: storedApiKey || '',
+      has_api_key: Boolean(settings.apiKey),
+      source: settings.source,
+      supports_web_search: settings.supportsWebSearch,
+    });
+  } catch (error) {
+    sendApiError(res, error, 'Failed to load LLM settings');
+  }
+});
+
+app.put('/api/settings/llm', (req, res) => {
+  try {
+    const providerType = normalizeOptionalString(req.body.provider_type);
+    if (providerType !== 'gemini' && providerType !== 'openai_compatible') {
+      return res.status(400).json({ error: 'provider_type must be gemini or openai_compatible' });
+    }
+
+    saveSettings({
+      'llm.provider_type': providerType,
+      'llm.provider_name': normalizeOptionalString(req.body.provider_name) || (providerType === 'gemini' ? 'Gemini' : 'OpenAI-Compatible'),
+      'llm.model': normalizeOptionalString(req.body.model) || (providerType === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4.1-mini'),
+      'llm.base_url': providerType === 'openai_compatible'
+        ? normalizeOptionalString(req.body.base_url) || 'https://api.openai.com/v1'
+        : '',
+      'llm.api_key': normalizeOptionalString(req.body.api_key) || '',
+    });
+
+    const settings = getLlmSettings();
+    res.json({
+      provider_type: settings.providerType,
+      provider_name: settings.providerName,
+      model: settings.model,
+      base_url: settings.baseUrl || '',
+      has_api_key: Boolean(settings.apiKey),
+      source: settings.source,
+      supports_web_search: settings.supportsWebSearch,
+    });
+  } catch (error) {
+    sendApiError(res, error, 'Failed to save LLM settings');
+  }
+});
+
+app.get('/api/users', (req, res) => {
+  try {
+    const activeOnly = req.query.activeOnly === 'true';
+    const users = db.prepare(`
+      SELECT *
+      FROM users
+      ${activeOnly ? 'WHERE is_active = 1' : ''}
+      ORDER BY is_active DESC, full_name ASC
+    `).all();
+
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load users' });
+  }
+});
+
+app.post('/api/users', (req, res) => {
+  try {
+    const fullName = normalizeRequiredString(req.body.full_name);
+    if (!fullName) {
+      return res.status(400).json({ error: 'full_name is required' });
+    }
+
+    const existingUser = db
+      .prepare('SELECT id FROM users WHERE lower(full_name) = lower(?)')
+      .get(fullName) as { id: number } | undefined;
+
+    if (existingUser) {
+      return res.status(409).json({ error: 'A user with this name already exists' });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO users (full_name, email, role, is_active, notes, updated_at)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      fullName,
+      normalizeOptionalString(req.body.email),
+      normalizeOptionalString(req.body.role) || 'Sales',
+      normalizeBooleanFlag(req.body.is_active) ? 1 : 0,
+      normalizeOptionalString(req.body.notes),
+    );
+
+    const createdUser = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json(createdUser);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create user' });
+  }
+});
+
+app.put('/api/users/:id', (req, res) => {
+  try {
+    const fullName = normalizeRequiredString(req.body.full_name);
+    if (!fullName) {
+      return res.status(400).json({ error: 'full_name is required' });
+    }
+
+    const existingUser = db
+      .prepare('SELECT id FROM users WHERE lower(full_name) = lower(?) AND id != ?')
+      .get(fullName, req.params.id) as { id: number } | undefined;
+
+    if (existingUser) {
+      return res.status(409).json({ error: 'A user with this name already exists' });
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET full_name = ?, email = ?, role = ?, is_active = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      fullName,
+      normalizeOptionalString(req.body.email),
+      normalizeOptionalString(req.body.role) || 'Sales',
+      normalizeBooleanFlag(req.body.is_active) ? 1 : 0,
+      normalizeOptionalString(req.body.notes),
+      req.params.id,
+    );
+
+    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+    res.json(updatedUser);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update user' });
+  }
 });
 
 app.get('/api/companies', (req, res) => {
@@ -230,10 +773,14 @@ app.post('/api/companies', (req, res) => {
         technical_fit,
         assigned_to,
         qualification_notes,
+        tracking_level,
+        tracking_status,
+        tracking_notes,
+        next_tracking_date,
         source,
         created_by
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
     `).run(
       companyName,
       normalizeOptionalString(req.body.website),
@@ -248,6 +795,10 @@ app.post('/api/companies', (req, res) => {
       normalizeTechnicalFit(req.body.technical_fit),
       normalizeOptionalString(req.body.assigned_to),
       normalizeOptionalString(req.body.qualification_notes),
+      normalizeTrackingLevel(req.body.tracking_level),
+      normalizeTrackingStatus(req.body.tracking_status),
+      normalizeOptionalString(req.body.tracking_notes),
+      normalizeOptionalString(req.body.next_tracking_date),
     );
 
     const createdCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(result.lastInsertRowid);
@@ -282,7 +833,7 @@ app.put('/api/companies/:id', (req, res) => {
 
     db.prepare(`
       UPDATE companies 
-      SET company_name = ?, website = ?, country = ?, city = ?, region = ?, industry = ?, company_type = ?, employee_count = ?, revenue_eur = ?, lead_status = ?, technical_fit = ?, assigned_to = ?, qualification_notes = ?, updated_at = CURRENT_TIMESTAMP
+      SET company_name = ?, website = ?, country = ?, city = ?, region = ?, industry = ?, company_type = ?, employee_count = ?, revenue_eur = ?, lead_status = ?, technical_fit = ?, assigned_to = ?, qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?, next_tracking_date = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       companyName,
@@ -298,6 +849,10 @@ app.put('/api/companies/:id', (req, res) => {
       normalizeTechnicalFit(req.body.technical_fit),
       normalizeOptionalString(req.body.assigned_to),
       normalizeOptionalString(req.body.qualification_notes),
+      normalizeTrackingLevel(req.body.tracking_level),
+      normalizeTrackingStatus(req.body.tracking_status),
+      normalizeOptionalString(req.body.tracking_notes),
+      normalizeOptionalString(req.body.next_tracking_date),
       req.params.id,
     );
     res.json({ success: true });
@@ -313,39 +868,31 @@ app.post('/api/contacts/enrich', async (req, res) => {
       return res.status(400).json({ error: 'company_name and full_name are required' });
     }
 
-    const ai = createAiClient();
-    const prompt = `
-      You are an expert lead researcher. Find the professional contact details for:
-      Name: ${full_name}
-      Company: ${company_name}
-      
-      Return the best available information. If a field cannot be found, return an empty string.
-      Do not hallucinate.
-    `;
+    const rawResponse = await generateJsonWithLlm({
+      systemPrompt:
+        'You are an expert B2B contact researcher. Return only strict JSON and leave unknown fields as empty strings.',
+      userPrompt: `
+        Find the best available professional contact details for the following person.
+        Person: ${full_name}
+        Company: ${company_name}
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            job_title: { type: Type.STRING },
-            email: { type: Type.STRING },
-            linkedin_url: { type: Type.STRING }
-          },
-          required: ["job_title", "email", "linkedin_url"]
-        }
-      }
+        Return a JSON object with these keys:
+        - job_title
+        - email
+        - linkedin_url
+      `,
+      useWebSearch: true,
     });
 
-    const result = JSON.parse(response.text || '{}');
+    const result = parseJsonResponse(rawResponse, {
+      email: '',
+      job_title: '',
+      linkedin_url: '',
+    });
     res.json(result);
   } catch (error) {
     console.error('Contact enrichment error:', error);
-    res.status(500).json({ error: 'Contact enrichment failed' });
+    sendApiError(res, error, 'Contact enrichment failed');
   }
 });
 
@@ -490,66 +1037,63 @@ app.post('/api/orders', (req, res) => {
 
 app.post('/api/research/contacts', async (req, res) => {
   try {
-    const ai = createAiClient();
     const { companyName, website } = req.body;
-    const prompt = `
-      Find key contacts (e.g., CEO, Maintenance Manager, Production Manager, R&D Manager, Purchasing) 
-      for the company "${companyName}" with website "${website}".
-      Return a JSON array of objects with the following keys:
-      - full_name
-      - job_title
-      - email (if available, otherwise empty string)
-      - phone_direct (if available, otherwise empty string)
-      - linkedin_url (if available, otherwise empty string)
-      
-      Only return the raw JSON array, no markdown formatting or other text.
-    `;
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        tools: [{ googleSearch: {} }]
-      }
+    const websiteContext = await fetchWebsiteContext(website);
+    const rawResponse = await generateJsonWithLlm({
+      systemPrompt:
+        'You are an expert industrial lead researcher. Return only strict JSON. Do not invent contact details. Use empty strings when data is unknown.',
+      userPrompt: `
+        Find key contacts for the company "${companyName}" with website "${website}".
+        Prioritize decision-makers such as CEO, Maintenance Manager, Production Manager, R&D, Procurement, and Operations.
+
+        ${websiteContext ? `Website context:\n${websiteContext}\n` : 'Website context could not be fetched.\n'}
+
+        Return a JSON array of objects with these keys:
+        - full_name
+        - job_title
+        - email
+        - phone_direct
+        - linkedin_url
+      `,
+      useWebSearch: true,
     });
 
-    const text = response.text || '[]';
-    let contacts = [];
-    try {
-      contacts = JSON.parse(text);
-    } catch (e) {
-      // fallback if it didn't return pure JSON
-      const match = text.match(/\\[[\\s\\S]*\\]/);
-      if (match) contacts = JSON.parse(match[0]);
-    }
-    
+    const contacts = parseJsonResponse<any[]>(rawResponse, []);
     res.json(contacts);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to research contacts' });
+    sendApiError(res, err, 'Failed to research contacts');
   }
 });
 
 app.post('/api/research/save', (req, res) => {
   try {
     const { companyName, website, contacts, assignedTo, industry, companyType, technicalFit, qualificationNotes } = req.body;
-    
-    // Check if company exists
-    let company = db.prepare('SELECT id FROM companies WHERE company_name = ?').get(companyName) as any;
-    let companyId;
-    
-    if (company) {
-      companyId = company.id;
-      // Update website and assigned_to if missing
+
+    const normalizedCompanyName = normalizeRequiredString(companyName);
+    if (!normalizedCompanyName) {
+      return res.status(400).json({ error: 'companyName is required' });
+    }
+
+    const matchedCompany = findExistingCompanyForResearch(companyName, website);
+    let companyId: number;
+    let matchedBy: 'website' | 'company_name' | 'new' = 'new';
+
+    if (matchedCompany) {
+      companyId = matchedCompany.company.id;
+      matchedBy = matchedCompany.matchedBy;
       db.prepare(`
         UPDATE companies
         SET website = COALESCE(NULLIF(website, ''), ?),
             assigned_to = COALESCE(NULLIF(assigned_to, ''), ?),
             industry = ?,
             company_type = ?,
-            technical_fit = ?,
-            qualification_notes = ?,
+            technical_fit = COALESCE(technical_fit, ?),
+            qualification_notes = COALESCE(NULLIF(qualification_notes, ''), ?),
+            tracking_status = CASE
+              WHEN tracking_status IS NULL OR tracking_status = '' OR tracking_status = 'PENDING' THEN 'RESEARCHED'
+              ELSE tracking_status
+            END,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
@@ -562,12 +1106,11 @@ app.post('/api/research/save', (req, res) => {
         companyId,
       );
     } else {
-      // Create new company
       const info = db.prepare(`
-        INSERT INTO companies (company_name, website, country, industry, company_type, lead_status, source, assigned_to, technical_fit, qualification_notes)
-        VALUES (?, ?, 'Unknown', ?, ?, 'RAW', 'AI_RESEARCH', ?, ?, ?)
+        INSERT INTO companies (company_name, website, country, industry, company_type, lead_status, source, assigned_to, technical_fit, qualification_notes, tracking_level, tracking_status)
+        VALUES (?, ?, 'Unknown', ?, ?, 'RAW', 'AI_RESEARCH', ?, ?, ?, 'WATCHLIST', 'RESEARCHED')
       `).run(
-        normalizeRequiredString(companyName),
+        normalizedCompanyName,
         normalizeOptionalString(website),
         normalizeRequiredString(industry) || 'Unknown',
         normalizeRequiredString(companyType) || 'Unknown',
@@ -575,48 +1118,100 @@ app.post('/api/research/save', (req, res) => {
         normalizeTechnicalFit(technicalFit),
         normalizeOptionalString(qualificationNotes),
       );
-      companyId = info.lastInsertRowid;
+      companyId = Number(info.lastInsertRowid);
     }
-    
-    // Insert contacts
+
     const insertContact = db.prepare(`
       INSERT INTO contacts (company_id, full_name, job_title, email, phone_direct, linkedin_url)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    
+    const updateContact = db.prepare(`
+      UPDATE contacts
+      SET full_name = ?,
+          job_title = ?,
+          email = ?,
+          phone_direct = ?,
+          linkedin_url = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
     const insertActivity = db.prepare(`
       INSERT INTO activities (company_id, activity_type, activity_date, performed_by, subject, details, outcome)
       VALUES (?, 'IMPORT', ?, 'System', 'AI Research Import', ?, 'NEUTRAL')
     `);
-    
-    db.transaction(() => {
-      for (const contact of contacts) {
-        const fullName = normalizeRequiredString(contact.full_name) || 'Unknown';
-        const alreadyExists = db.prepare(
-          'SELECT id FROM contacts WHERE company_id = ? AND lower(full_name) = lower(?) AND COALESCE(lower(job_title), \'\') = COALESCE(lower(?), \'\')',
-        ).get(companyId, fullName, normalizeOptionalString(contact.job_title)) as { id: number } | undefined;
 
-        if (alreadyExists) {
+    let insertedContacts = 0;
+    let updatedContacts = 0;
+
+    db.transaction(() => {
+      const existingContacts = db.prepare(`
+        SELECT id, full_name, job_title, email, phone_direct, linkedin_url
+        FROM contacts
+        WHERE company_id = ?
+      `).all(companyId) as Array<{
+        email: string | null;
+        full_name: string;
+        id: number;
+        job_title: string | null;
+        linkedin_url: string | null;
+        phone_direct: string | null;
+      }>;
+
+      for (const contact of Array.isArray(contacts) ? contacts : []) {
+        const fullName = normalizeRequiredString(contact.full_name) || 'Unknown';
+        const jobTitle = normalizeOptionalString(contact.job_title) || '';
+        const email = normalizeOptionalString(contact.email) || '';
+        const phoneDirect = normalizeOptionalString(contact.phone_direct) || '';
+        const linkedInUrl = normalizeOptionalString(contact.linkedin_url) || '';
+
+        const matchingContact = existingContacts.find((existingContact) => {
+          if (email && normalizeComparableValue(existingContact.email) === email.toLowerCase()) {
+            return true;
+          }
+
+          if (linkedInUrl && normalizeComparableValue(existingContact.linkedin_url) === linkedInUrl.toLowerCase()) {
+            return true;
+          }
+
+          return (
+            normalizeComparableValue(existingContact.full_name) === fullName.toLowerCase()
+            && normalizeComparableValue(existingContact.job_title) === jobTitle.toLowerCase()
+          );
+        });
+
+        if (matchingContact) {
+          updateContact.run(
+            matchingContact.full_name || fullName,
+            matchingContact.job_title || jobTitle,
+            matchingContact.email || email,
+            matchingContact.phone_direct || phoneDirect,
+            matchingContact.linkedin_url || linkedInUrl,
+            matchingContact.id,
+          );
+          updatedContacts += 1;
           continue;
         }
 
-        insertContact.run(
-          companyId, 
-          fullName, 
-          normalizeOptionalString(contact.job_title) || '', 
-          normalizeOptionalString(contact.email) || '', 
-          normalizeOptionalString(contact.phone_direct) || '', 
-          normalizeOptionalString(contact.linkedin_url) || ''
-        );
+        const result = insertContact.run(companyId, fullName, jobTitle, email, phoneDirect, linkedInUrl);
+        existingContacts.push({
+          id: Number(result.lastInsertRowid),
+          full_name: fullName,
+          job_title: jobTitle,
+          email,
+          phone_direct: phoneDirect,
+          linkedin_url: linkedInUrl,
+        });
+        insertedContacts += 1;
       }
+
       insertActivity.run(
-        companyId, 
-        new Date().toISOString().split('T')[0], 
-        `Imported ${contacts.length} contacts via AI Research`
+        companyId,
+        new Date().toISOString().split('T')[0],
+        `AI research merged ${insertedContacts} new contacts and updated ${updatedContacts} existing contacts via ${matchedBy}`,
       );
     })();
-    
-    res.json({ success: true, companyId });
+
+    res.json({ success: true, companyId, insertedContacts, matchedBy, updatedContacts });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to save research data' });
@@ -625,93 +1220,86 @@ app.post('/api/research/save', (req, res) => {
 
 app.post('/api/companies/:id/ai-qualify', async (req, res) => {
   try {
-    const ai = createAiClient();
     const companyId = req.params.id;
     const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
     if (!company) return res.status(404).json({ error: 'Company not found' });
+    const websiteContext = await fetchWebsiteContext(company.website);
 
-    const prompt = `
-      You are an expert AI lead qualification agent for a German technology company (est. 1962).
-      
-      OUR PITCH & CRITERIA:
-      We sell precision ceramic bearings and electric burner technology for decarbonization.
-      We are seeking long-term strategic partners in the Middle East to jointly build an industrial ecosystem, as well as standard bearing customers.
-      
-      We need to qualify this lead based on the following criteria:
-      1. Is it a stable company? (Check social media access, website working fine, number of employees, positive reviews).
-      2. Are there any recent news related to the company? Are they purchasing or applying for things from their social media?
-      3. Do they fit our strategic partner profile or bearing customer profile?
-      4. What is their technical fit for our specific products (Precision Ceramic Bearings and Electric Burner Technology)?
-      5. Do they mention ceramic technology or e-burner technology on their website or social media?
-      
-      LEAD COMPANY DATA:
-      Name: ${company.company_name}
-      Country: ${company.country}
-      Industry: ${company.industry}
-      Type: ${company.company_type}
-      Revenue: ${company.revenue_eur}
-      Employees: ${company.employee_count}
-      Website: ${company.website}
-      Current Notes: ${company.qualification_notes}
-      
-      Use the Google Search tool to look up the company's recent news, social media presence, and reviews.
-      
-      Provide a JSON response with:
-      - score: 0-100 integer. Calculate out of 100 points based on: Has working website (15pts), Active social media (15pts), Mentions relevant technology (30pts), Good revenue/size (20pts), Positive news/reviews (20pts).
-      - category: "STRATEGIC_PARTNER", "BEARING_CUSTOMER", "LOW_FIT", or "NO_FIT"
-      - technical_fit: "HIGH", "MEDIUM", "LOW", or "NO_FIT" based on specific product alignment.
-      - reasoning: A detailed paragraph explaining why this lead has been qualified (or disqualified), mentioning their stability, recent news, social media presence, and how sales should approach them.
-      - product_fit: "Ceramic Bearings", "E-Burner Technology", "Both", or "None"
-      - social_media_urls: Array of strings containing found social media profiles (LinkedIn, Twitter, etc.)
-      - social_media_active: Boolean indicating if they have posted recently
-      - mentions_technology: Boolean indicating if they mention ceramic bearings or e-burners
-    `;
+    const rawResponse = await generateJsonWithLlm({
+      systemPrompt:
+        'You are an expert B2B lead qualification agent for precision ceramic bearings and electric burner technology. Return only strict JSON.',
+      userPrompt: `
+        Qualify this lead for SinterIQ.
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            score: { type: Type.INTEGER },
-            category: { type: Type.STRING },
-            technical_fit: { type: Type.STRING },
-            reasoning: { type: Type.STRING },
-            product_fit: { type: Type.STRING },
-            social_media_urls: { type: Type.ARRAY, items: { type: Type.STRING } },
-            social_media_active: { type: Type.BOOLEAN },
-            mentions_technology: { type: Type.BOOLEAN }
-          },
-          required: ["score", "category", "technical_fit", "reasoning", "product_fit", "social_media_urls", "social_media_active", "mentions_technology"]
-        }
-      }
+        Qualification criteria:
+        1. Stability of the company based on website quality, scale, and visible credibility.
+        2. Strategic fit for ceramic bearings or electric burner technology.
+        3. Technical fit for the products.
+        4. Social presence and evidence of current activity if available.
+        5. Recent news or expansion signals if available.
+
+        Company data:
+        - Name: ${company.company_name}
+        - Country: ${company.country}
+        - Industry: ${company.industry}
+        - Type: ${company.company_type}
+        - Revenue: ${company.revenue_eur || 'Unknown'}
+        - Employees: ${company.employee_count || 'Unknown'}
+        - Website: ${company.website || 'Unknown'}
+        - Current Notes: ${company.qualification_notes || 'None'}
+
+        ${websiteContext ? `Website context:\n${websiteContext}\n` : 'Website context could not be fetched.\n'}
+
+        Return a JSON object with:
+        - score: integer from 0 to 100
+        - category: "STRATEGIC_PARTNER", "BEARING_CUSTOMER", "LOW_FIT", or "NO_FIT"
+        - technical_fit: "HIGH", "MEDIUM", "LOW", or "NO_FIT"
+        - reasoning: detailed paragraph for sales
+        - product_fit: "Ceramic Bearings", "E-Burner Technology", "Both", or "None"
+        - social_media_urls: array of strings
+        - social_media_active: boolean
+        - mentions_technology: boolean
+      `,
+      useWebSearch: true,
     });
 
-    const result = JSON.parse(response.text || '{}');
+    const result = parseJsonResponse<{
+      category?: string;
+      mentions_technology?: boolean;
+      product_fit?: string;
+      reasoning?: string;
+      score?: number;
+      social_media_active?: boolean;
+      social_media_urls?: string[];
+      technical_fit?: string;
+    }>(rawResponse, {});
     
     // Map category to lead_status
     let newStatus = 'QUALIFIED';
     if (result.category === 'NO_FIT' || result.category === 'LOW_FIT') newStatus = 'DISQUALIFIED';
     if (result.category === 'STRATEGIC_PARTNER') newStatus = 'APPROVED';
-    const technicalFit = result.technical_fit === 'NO_FIT' ? 'NOT_FIT' : result.technical_fit;
+    const technicalFit = result.technical_fit === 'NO_FIT' ? 'NOT_FIT' : (result.technical_fit || null);
     
     db.prepare(`
       UPDATE companies 
       SET lead_score = ?, technical_fit = ?, qualification_notes = ?, lead_status = ?,
-          product_fit = ?, social_media_urls = ?, social_media_active = ?, mentions_technology = ?
+          product_fit = ?, social_media_urls = ?, social_media_active = ?, mentions_technology = ?,
+          tracking_status = CASE
+            WHEN ? IN ('APPROVED', 'QUALIFIED') THEN 'QUALIFIED'
+            ELSE tracking_status
+          END,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
-      result.score, 
+      normalizeNullableNumber(result.score) || 0, 
       technicalFit, 
-      result.reasoning, 
+      normalizeOptionalString(result.reasoning), 
       newStatus, 
-      result.product_fit,
-      JSON.stringify(result.social_media_urls || []),
+      normalizeOptionalString(result.product_fit),
+      JSON.stringify(Array.isArray(result.social_media_urls) ? result.social_media_urls : []),
       result.social_media_active ? 1 : 0,
       result.mentions_technology ? 1 : 0,
+      newStatus,
       companyId
     );
       
@@ -719,7 +1307,7 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
     res.json(updatedCompany);
   } catch (error) {
     console.error('AI Qualification error:', error);
-    res.status(500).json({ error: 'AI Qualification failed' });
+    sendApiError(res, error, 'AI qualification failed');
   }
 });
 
