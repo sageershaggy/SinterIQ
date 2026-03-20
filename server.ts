@@ -41,6 +41,46 @@ app.use(express.json());
 // Initialize SQLite database
 const db = new Database('sintertechnik.db');
 
+function normalizeOptionalString(value: unknown) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  return trimmedValue ? trimmedValue : null;
+}
+
+function normalizeRequiredString(value: unknown) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim();
+}
+
+function normalizeNullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const parsedValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
+function normalizeTechnicalFit(value: unknown) {
+  const normalizedValue = normalizeOptionalString(value);
+  return normalizedValue && normalizedValue !== 'UNASSESSED' ? normalizedValue : null;
+}
+
+function createAiClient() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured');
+  }
+
+  return new GoogleGenAI({ apiKey });
+}
+
 // Create tables
 db.exec(`
   CREATE TABLE IF NOT EXISTS companies (
