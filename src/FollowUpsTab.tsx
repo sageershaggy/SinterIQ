@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { CalendarClock, Building2, User, CheckCircle2, Clock } from 'lucide-react';
+import { getDateOnly } from './formatters';
 
 interface FollowUp {
   id: number;
@@ -14,7 +15,13 @@ interface FollowUp {
   follow_up_done: number;
 }
 
-export default function FollowUpsTab({ onCompanyClick }: { onCompanyClick: (id: number) => void }) {
+export default function FollowUpsTab({
+  onCompanyClick,
+  onChange,
+}: {
+  onCompanyClick: (id: number) => void;
+  onChange?: (followUps: FollowUp[]) => void;
+}) {
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -24,6 +31,7 @@ export default function FollowUpsTab({ onCompanyClick }: { onCompanyClick: (id: 
       if (res.ok) {
         const data = await res.json();
         setFollowUps(data);
+        onChange?.(data);
       }
     } catch (err) {
       console.error(err);
@@ -47,11 +55,11 @@ export default function FollowUpsTab({ onCompanyClick }: { onCompanyClick: (id: 
 
   if (loading) return <div className="p-8 text-center text-slate-500">Loading follow-ups...</div>;
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getDateOnly(new Date().toISOString());
   
-  const overdue = followUps.filter(f => f.follow_up_date < today && !f.follow_up_done);
-  const dueToday = followUps.filter(f => f.follow_up_date === today && !f.follow_up_done);
-  const upcoming = followUps.filter(f => f.follow_up_date > today && !f.follow_up_done);
+  const overdue = followUps.filter(f => getDateOnly(f.follow_up_date) < today && !f.follow_up_done);
+  const dueToday = followUps.filter(f => getDateOnly(f.follow_up_date) === today && !f.follow_up_done);
+  const upcoming = followUps.filter(f => getDateOnly(f.follow_up_date) > today && !f.follow_up_done);
 
   const renderList = (list: FollowUp[], title: string, colorClass: string, icon: React.ReactNode) => {
     if (list.length === 0) return null;

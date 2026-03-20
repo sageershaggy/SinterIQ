@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Users, Building2, Globe, Sparkles, Plus, CheckCircle2 } from 'lucide-react';
+import { companyTypeOptions, industryOptions, internalUsers as sharedInternalUsers, technicalFitOptions } from './companyData';
 
 export default function ResearchTab() {
   const [companyName, setCompanyName] = useState('');
@@ -13,7 +14,7 @@ export default function ResearchTab() {
   const [assignedTo, setAssignedTo] = useState('');
   const [industry, setIndustry] = useState('BEARING_TRADER');
   const [companyType, setCompanyType] = useState('BEARING_TRADER');
-  const [technicalFit, setTechnicalFit] = useState('UNASSESSED');
+  const [technicalFit, setTechnicalFit] = useState('');
   const [qualificationNotes, setQualificationNotes] = useState('');
 
   const internalUsers = [
@@ -151,42 +152,25 @@ export default function ResearchTab() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Industry</label>
                 <select value={industry} onChange={e => setIndustry(e.target.value)} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                  <option value="BEARING_TRADER">Bearing Traders / Distributors</option>
-                  <option value="OIL_GAS">Oil & Gas / Petrochemicals</option>
-                  <option value="FOOD_BEV">Food & Beverage Manufacturing</option>
-                  <option value="PHARMA">Pharmaceutical / Cleanroom</option>
-                  <option value="CHEMICAL">Chemical Processing & Pumps</option>
-                  <option value="DESAL_WATER">Desalination / Water Treatment</option>
-                  <option value="CEMENT">Cement & Construction Materials</option>
-                  <option value="POWER_GEN">Power Generation / Energy</option>
-                  <option value="MINING">Mining & Minerals</option>
-                  <option value="AUTOMOTIVE">Automotive Manufacturing</option>
-                  <option value="TEXTILE">Textile Machinery</option>
-                  <option value="VACUUM">Vacuum Technology</option>
-                  <option value="CRYO">Cryogenic Applications</option>
-                  <option value="UNIVERSITY">Universities & Scientific Institutes</option>
-                  <option value="ROBOTICS">Robotics & Automation</option>
-                  <option value="ELECTROPLATING">Electroplating / Surface Treatment</option>
-                  <option value="INDUSTRIAL_DIST">Industrial Component Distributors</option>
+                  {industryOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Company Type</label>
                 <select value={companyType} onChange={e => setCompanyType(e.target.value)} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                  <option value="BEARING_TRADER">Bearing Trader</option>
-                  <option value="MANUFACTURER">Manufacturer</option>
-                  <option value="DISTRIBUTOR">Distributor</option>
-                  <option value="UNIVERSITY">University</option>
+                  {companyTypeOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Technical Fit</label>
                 <select value={technicalFit} onChange={e => setTechnicalFit(e.target.value)} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                  <option value="UNASSESSED">Unassessed</option>
-                  <option value="HIGH">High</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="LOW">Low</option>
-                  <option value="NOT_FIT">Not a Fit</option>
+                  {technicalFitOptions.map(option => (
+                    <option key={option.value || 'blank'} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
               <div className="col-span-2">
@@ -217,7 +201,7 @@ export default function ResearchTab() {
                       className="border border-slate-300 rounded-md px-3 py-1.5 text-sm outline-none bg-white"
                     >
                       <option value="">Assign To...</option>
-                      {internalUsers.map(user => (
+                      {sharedInternalUsers.map(user => (
                         <option key={user} value={user}>{user}</option>
                       ))}
                     </select>

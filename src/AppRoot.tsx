@@ -9,6 +9,7 @@ import {
   Euro,
   Filter,
   Flame,
+  LucideIcon,
   MapPin,
   Plus,
   Search,
@@ -494,6 +495,16 @@ export default function AppRoot() {
     </div>
   );
 
+  const navigationItems: Array<{ icon: LucideIcon; key: string; label: string }> = [
+    { key: 'dashboard', label: 'Dashboard', icon: Activity },
+    { key: 'companies', label: 'Companies', icon: Building2 },
+    { key: 'contacts', label: 'Contacts', icon: Users },
+    { key: 'commissions', label: 'Commissions', icon: Euro },
+    { key: 'research', label: 'Lead Research', icon: Search },
+    { key: 'followups', label: 'Follow-ups', icon: CalendarClock },
+    { key: 'import', label: 'Import Leads', icon: Upload },
+  ];
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex">
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col border-r border-slate-800 shrink-0">
@@ -507,15 +518,7 @@ export default function AppRoot() {
           <div className="text-xs text-slate-400 font-medium ml-11">Precision Lead Intelligence</div>
         </div>
         <nav className="flex-1 p-4 space-y-1">
-          {[
-            ['dashboard', 'Dashboard', Activity],
-            ['companies', 'Companies', Building2],
-            ['contacts', 'Contacts', Users],
-            ['commissions', 'Commissions', Euro],
-            ['research', 'Lead Research', Search],
-            ['followups', 'Follow-ups', CalendarClock],
-            ['import', 'Import Leads', Upload],
-          ].map(([key, label, Icon]) => (
+          {navigationItems.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => {
@@ -556,7 +559,14 @@ export default function AppRoot() {
 
         <div className="flex-1 overflow-auto p-6">
           {selectedCompanyId ? (
-            <CompanyDetail companyId={selectedCompanyId} onBack={() => setSelectedCompanyId(null)} initialTab={initialTab} />
+            <CompanyDetail
+              companyId={selectedCompanyId}
+              onBack={() => {
+                setSelectedCompanyId(null);
+                setInitialTab('overview');
+              }}
+              initialTab={initialTab}
+            />
           ) : activeTab === 'contacts' ? (
             <ContactsTab />
           ) : activeTab === 'commissions' ? (
@@ -564,7 +574,7 @@ export default function AppRoot() {
           ) : activeTab === 'research' ? (
             <ResearchTab />
           ) : activeTab === 'followups' ? (
-            <FollowUpsTab onCompanyClick={(id) => openCompany(id, 'activities')} />
+            <FollowUpsTab onCompanyClick={(id) => openCompany(id, 'activities')} onChange={setFollowUps} />
           ) : activeTab === 'dashboard' ? (
             renderDashboard()
           ) : activeTab === 'import' ? (

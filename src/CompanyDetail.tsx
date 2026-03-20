@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Building2, Globe, Users, Euro, Phone, Mail, Linkedin, Plus, Calendar, CheckCircle2, MessageSquare, Briefcase, Trash2, Activity, Edit2, Clock, AlertCircle, Edit, Download } from 'lucide-react';
+import { internalUsers as sharedInternalUsers, technicalFitOptions } from './companyData';
+import { formatCompactEur, formatEur, parseStringArray } from './formatters';
 
 interface Contact {
   id: number;
@@ -79,6 +81,7 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
     payment_received: false,
     innovista_contribution: 'LEAD_GEN'
   });
+  const socialMediaUrls = parseStringArray(company?.social_media_urls);
 
   const internalUsers = [
     'Dr. Jochen Langguth',
@@ -91,6 +94,7 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
   ];
 
   const fetchData = async () => {
+    setLoading(true);
     try {
       const res = await fetch(`/api/companies/${companyId}`);
       if (!res.ok) throw new Error('Failed to fetch');
@@ -108,7 +112,11 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
   };
 
   useEffect(() => {
-    fetchData();
+    setActiveTab(initialTab);
+  }, [companyId, initialTab]);
+
+  useEffect(() => {
+    void fetchData();
   }, [companyId]);
 
   const handleAddContact = async (e: React.FormEvent) => {
@@ -386,8 +394,8 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
                         <div className="col-span-2">
                           <span className="text-slate-500 font-medium block">Social Media URLs</span>
                           <div className="flex flex-wrap gap-2 mt-1">
-                            {company.social_media_urls && JSON.parse(company.social_media_urls).length > 0 ? (
-                              JSON.parse(company.social_media_urls).map((url: string, i: number) => (
+                            {socialMediaUrls.length > 0 ? (
+                              socialMediaUrls.map((url: string, i: number) => (
                                 <a key={i} href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs break-all">
                                   {url}
                                 </a>
@@ -564,7 +572,7 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-slate-700 mb-1">Performed By</label>
                   <select value={activityForm.performed_by} onChange={e => setActivityForm({...activityForm, performed_by: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">
-                    {internalUsers.map(user => (
+                      {sharedInternalUsers.map(user => (
                       <option key={user} value={user}>{user}</option>
                     ))}
                   </select>
@@ -832,18 +840,16 @@ export default function CompanyDetail({ companyId, onBack, initialTab = 'overvie
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Technical Fit</label>
                   <select value={companyForm.technical_fit || ''} onChange={e => setCompanyForm({...companyForm, technical_fit: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                    <option value="">Unassessed</option>
-                    <option value="HIGH">High</option>
-                    <option value="MEDIUM">Medium</option>
-                    <option value="LOW">Low</option>
-                    <option value="NOT_FIT">Not a Fit</option>
+                    {technicalFitOptions.map(option => (
+                      <option key={option.value || 'blank'} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Assigned To</label>
                   <select value={companyForm.assigned_to || ''} onChange={e => setCompanyForm({...companyForm, assigned_to: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
                     <option value="">Unassigned</option>
-                    {internalUsers.map(user => (
+                    {sharedInternalUsers.map(user => (
                       <option key={user} value={user}>{user}</option>
                     ))}
                   </select>

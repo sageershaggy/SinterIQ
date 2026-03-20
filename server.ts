@@ -185,12 +185,77 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/companies', (req, res) => {
   const companies = db.prepare(`
-    SELECT c.*, COUNT(con.id) as contact_count 
-    FROM companies c 
-    LEFT JOIN contacts con ON c.id = con.company_id 
+    SELECT
+      c.*,
+      COUNT(DISTINCT con.id) as contact_count,
+      MIN(CASE WHEN a.follow_up_done = 0 AND a.follow_up_date IS NOT NULL THEN a.follow_up_date END) as follow_up_date
+    FROM companies c
+    LEFT JOIN contacts con ON c.id = con.company_id
+    LEFT JOIN activities a ON c.id = a.company_id
     GROUP BY c.id
+    ORDER BY c.updated_at DESC, c.company_name ASC
   `).all();
   res.json(companies);
+});
+
+app.post('/api/companies', (req, res) => {
+  try {
+    const companyName = normalizeRequiredString(req.body.company_name);
+    const country = normalizeRequiredString(req.body.country);
+
+    if (!companyName || !country) {
+      return res.status(400).json({ error: 'company_name and country are required' });
+    }
+
+    const existingCompany = db
+      .prepare('SELECT id FROM companies WHERE lower(company_name) = lower(?)')
+      .get(companyName) as { id: number } | undefined;
+
+    if (existingCompany) {
+      return res.status(409).json({ error: 'A company with this name already exists' });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO companies (
+        company_name,
+        website,
+        country,
+        city,
+        region,
+        industry,
+        company_type,
+        employee_count,
+        revenue_eur,
+        lead_status,
+        technical_fit,
+        assigned_to,
+        qualification_notes,
+        source,
+        created_by
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
+    `).run(
+      companyName,
+      normalizeOptionalString(req.body.website),
+      country,
+      normalizeOptionalString(req.body.city),
+      normalizeOptionalString(req.body.region),
+      normalizeRequiredString(req.body.industry) || 'BEARING_TRADER',
+      normalizeRequiredString(req.body.company_type) || 'BEARING_TRADER',
+      normalizeNullableNumber(req.body.employee_count),
+      normalizeNullableNumber(req.body.revenue_eur),
+      normalizeRequiredString(req.body.lead_status) || 'RAW',
+      normalizeTechnicalFit(req.body.technical_fit),
+      normalizeOptionalString(req.body.assigned_to),
+      normalizeOptionalString(req.body.qualification_notes),
+    );
+
+    const createdCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json(createdCompany);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create company' });
+  }
 });
 
 app.get('/api/companies/:id', (req, res) => {
@@ -208,12 +273,33 @@ app.get('/api/companies/:id', (req, res) => {
 
 app.put('/api/companies/:id', (req, res) => {
   try {
-    const { company_name, website, country, city, region, industry, company_type, lead_status, technical_fit, assigned_to, qualification_notes } = req.body;
+    const companyName = normalizeRequiredString(req.body.company_name);
+    const country = normalizeRequiredString(req.body.country);
+
+    if (!companyName || !country) {
+      return res.status(400).json({ error: 'company_name and country are required' });
+    }
+
     db.prepare(`
       UPDATE companies 
-      SET company_name = ?, website = ?, country = ?, city = ?, region = ?, industry = ?, company_type = ?, lead_status = ?, technical_fit = ?, assigned_to = ?, qualification_notes = ?, updated_at = CURRENT_TIMESTAMP
+      SET company_name = ?, website = ?, country = ?, city = ?, region = ?, industry = ?, company_type = ?, employee_count = ?, revenue_eur = ?, lead_status = ?, technical_fit = ?, assigned_to = ?, qualification_notes = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(company_name, website, country, city, region, industry, company_type, lead_status, technical_fit, assigned_to, qualification_notes, req.params.id);
+    `).run(
+      companyName,
+      normalizeOptionalString(req.body.website),
+      country,
+      normalizeOptionalString(req.body.city),
+      normalizeOptionalString(req.body.region),
+      normalizeRequiredString(req.body.industry) || 'BEARING_TRADER',
+      normalizeRequiredString(req.body.company_type) || 'BEARING_TRADER',
+      normalizeNullableNumber(req.body.employee_count),
+      normalizeNullableNumber(req.body.revenue_eur),
+      normalizeRequiredString(req.body.lead_status) || 'RAW',
+      normalizeTechnicalFit(req.body.technical_fit),
+      normalizeOptionalString(req.body.assigned_to),
+      normalizeOptionalString(req.body.qualification_notes),
+      req.params.id,
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update company' });
@@ -227,7 +313,7 @@ app.post('/api/contacts/enrich', async (req, res) => {
       return res.status(400).json({ error: 'company_name and full_name are required' });
     }
 
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = createAiClient();
     const prompt = `
       You are an expert lead researcher. Find the professional contact details for:
       Name: ${full_name}
@@ -404,7 +490,7 @@ app.post('/api/orders', (req, res) => {
 
 app.post('/api/research/contacts', async (req, res) => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = createAiClient();
     const { companyName, website } = req.body;
     const prompt = `
       Find key contacts (e.g., CEO, Maintenance Manager, Production Manager, R&D Manager, Purchasing) 
@@ -456,13 +542,39 @@ app.post('/api/research/save', (req, res) => {
     if (company) {
       companyId = company.id;
       // Update website and assigned_to if missing
-      db.prepare('UPDATE companies SET website = COALESCE(NULLIF(website, ""), ?), assigned_to = COALESCE(NULLIF(assigned_to, ""), ?), industry = ?, company_type = ?, technical_fit = ?, qualification_notes = ? WHERE id = ?').run(website, assignedTo || null, industry || 'Unknown', companyType || 'Unknown', technicalFit || 'UNASSESSED', qualificationNotes || '', companyId);
+      db.prepare(`
+        UPDATE companies
+        SET website = COALESCE(NULLIF(website, ''), ?),
+            assigned_to = COALESCE(NULLIF(assigned_to, ''), ?),
+            industry = ?,
+            company_type = ?,
+            technical_fit = ?,
+            qualification_notes = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        normalizeOptionalString(website),
+        normalizeOptionalString(assignedTo),
+        normalizeRequiredString(industry) || 'Unknown',
+        normalizeRequiredString(companyType) || 'Unknown',
+        normalizeTechnicalFit(technicalFit),
+        normalizeOptionalString(qualificationNotes),
+        companyId,
+      );
     } else {
       // Create new company
       const info = db.prepare(`
         INSERT INTO companies (company_name, website, country, industry, company_type, lead_status, source, assigned_to, technical_fit, qualification_notes)
         VALUES (?, ?, 'Unknown', ?, ?, 'RAW', 'AI_RESEARCH', ?, ?, ?)
-      `).run(companyName, website, industry || 'Unknown', companyType || 'Unknown', assignedTo || null, technicalFit || 'UNASSESSED', qualificationNotes || '');
+      `).run(
+        normalizeRequiredString(companyName),
+        normalizeOptionalString(website),
+        normalizeRequiredString(industry) || 'Unknown',
+        normalizeRequiredString(companyType) || 'Unknown',
+        normalizeOptionalString(assignedTo),
+        normalizeTechnicalFit(technicalFit),
+        normalizeOptionalString(qualificationNotes),
+      );
       companyId = info.lastInsertRowid;
     }
     
@@ -479,13 +591,22 @@ app.post('/api/research/save', (req, res) => {
     
     db.transaction(() => {
       for (const contact of contacts) {
+        const fullName = normalizeRequiredString(contact.full_name) || 'Unknown';
+        const alreadyExists = db.prepare(
+          'SELECT id FROM contacts WHERE company_id = ? AND lower(full_name) = lower(?) AND COALESCE(lower(job_title), \'\') = COALESCE(lower(?), \'\')',
+        ).get(companyId, fullName, normalizeOptionalString(contact.job_title)) as { id: number } | undefined;
+
+        if (alreadyExists) {
+          continue;
+        }
+
         insertContact.run(
           companyId, 
-          contact.full_name || 'Unknown', 
-          contact.job_title || '', 
-          contact.email || '', 
-          contact.phone_direct || '', 
-          contact.linkedin_url || ''
+          fullName, 
+          normalizeOptionalString(contact.job_title) || '', 
+          normalizeOptionalString(contact.email) || '', 
+          normalizeOptionalString(contact.phone_direct) || '', 
+          normalizeOptionalString(contact.linkedin_url) || ''
         );
       }
       insertActivity.run(
@@ -504,7 +625,7 @@ app.post('/api/research/save', (req, res) => {
 
 app.post('/api/companies/:id/ai-qualify', async (req, res) => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = createAiClient();
     const companyId = req.params.id;
     const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
     if (!company) return res.status(404).json({ error: 'Company not found' });
@@ -550,6 +671,7 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
+        tools: [{ googleSearch: {} }],
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -574,6 +696,7 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
     let newStatus = 'QUALIFIED';
     if (result.category === 'NO_FIT' || result.category === 'LOW_FIT') newStatus = 'DISQUALIFIED';
     if (result.category === 'STRATEGIC_PARTNER') newStatus = 'APPROVED';
+    const technicalFit = result.technical_fit === 'NO_FIT' ? 'NOT_FIT' : result.technical_fit;
     
     db.prepare(`
       UPDATE companies 
@@ -582,7 +705,7 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
       WHERE id = ?
     `).run(
       result.score, 
-      result.technical_fit, 
+      technicalFit, 
       result.reasoning, 
       newStatus, 
       result.product_fit,
