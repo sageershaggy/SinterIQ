@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Building2, Globe, Users, Euro, Phone, Mail, Linkedin, Plus, Calendar, CheckCircle2, MessageSquare, Briefcase, Trash2, Activity, Edit2, Clock, AlertCircle, Edit, Download } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Building2, Globe, Users, Euro, Phone, Mail, Linkedin, Plus, Calendar, CheckCircle2, MessageSquare, Briefcase, Trash2, Activity, Edit2, Clock, AlertCircle, Edit, Download, Send, Sparkles, Copy, Check, ChevronDown, ChevronUp, Target, TrendingUp, Zap } from 'lucide-react';
 import {
   companyTypeOptions,
   industryOptions,
@@ -93,8 +93,11 @@ export default function CompanyDetail({
 
   const [showEditCompany, setShowEditCompany] = useState(false);
   const [companyForm, setCompanyForm] = useState<any>({});
+  const [qualifying, setQualifying] = useState(false);
+  const [copiedScript, setCopiedScript] = useState<string | null>(null);
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
-  // Order Form State
+  // Order Form State (kept for data integrity)
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [orderForm, setOrderForm] = useState({
     order_reference: '',
@@ -105,6 +108,14 @@ export default function CompanyDetail({
     payment_received: false,
     innovista_contribution: 'LEAD_GEN'
   });
+
+  // Notes (Team Communication) State
+  const [notes, setNotes] = useState<Array<{ id: number; author: string; message: string; type: string; created_at: string }>>([]);
+  const [noteText, setNoteText] = useState('');
+  const [noteAuthor, setNoteAuthor] = useState(users[0] || 'Team');
+  const [submittingNote, setSubmittingNote] = useState(false);
+  const notesEndRef = useRef<HTMLDivElement>(null);
+
   const socialMediaUrls = parseStringArray(company?.social_media_urls);
 
   const internalUsers = [
@@ -117,12 +128,24 @@ export default function CompanyDetail({
     'Dr. Kathrin Langguth'
   ];
 
+  const fetchNotes = async () => {
+    try {
+      const res = await fetch(`/api/companies/${companyId}/notes`);
+      if (res.ok) setNotes(await res.json());
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/companies/${companyId}`);
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data = await res.json();
+      const [companyRes] = await Promise.all([
+        fetch(`/api/companies/${companyId}`),
+        fetchNotes(),
+      ]);
+      if (!companyRes.ok) throw new Error('Failed to fetch');
+      const data = await companyRes.json();
       setCompany(data);
       setCompanyForm(data);
       setContacts(data.contacts || []);
@@ -263,6 +286,55 @@ export default function CompanyDetail({
     }
   };
 
+  const handleAIQualify = async () => {
+    setQualifying(true);
+    try {
+      const res = await fetch(`/api/companies/${companyId}/ai-qualify`, { method: 'POST' });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'AI qualification failed');
+      setCompany(payload);
+      setCompanyForm(payload);
+      await onDataChanged?.();
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'AI qualification failed');
+    } finally {
+      setQualifying(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedScript(key);
+      setTimeout(() => setCopiedScript(null), 2000);
+    } catch (_) {}
+  };
+
+  const handleAddNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!noteText.trim()) return;
+    setSubmittingNote(true);
+    try {
+      const res = await fetch(`/api/companies/${companyId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author: noteAuthor, message: noteText.trim(), type: 'note' })
+      });
+      if (res.ok) {
+        const newNote = await res.json();
+        setNotes((prev) => [...prev, newNote]);
+        setNoteText('');
+        setTimeout(() => notesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to add note');
+    } finally {
+      setSubmittingNote(false);
+    }
+  };
+
   if (loading) return <div className="p-8 text-center text-slate-500">Loading company details...</div>;
   if (!company) return <div className="p-8 text-center text-red-500">Company not found.</div>;
 
@@ -293,17 +365,25 @@ export default function CompanyDetail({
             </div>
           </div>
         </div>
-        <div className="flex gap-3">
-          <button 
+        <div className="flex gap-3 items-center">
+          <button
+            onClick={() => void handleAIQualify()}
+            disabled={qualifying}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+          >
+            <Sparkles className="w-4 h-4" />
+            {qualifying ? 'Researching...' : company.ai_qualified_at ? 'Re-qualify' : 'AI Qualify'}
+          </button>
+          <button
             onClick={() => setShowEditCompany(true)}
             className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700"
           >
             <Edit className="w-4 h-4" /> Edit
           </button>
-          {company.lead_score !== null && (
-            <div className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex flex-col items-center shadow-sm">
+          {company.lead_score !== null && company.lead_score > 0 && (
+            <div className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex flex-col items-center shadow-sm min-w-[56px]">
               <span className="text-xs text-slate-500 font-medium uppercase">Score</span>
-              <span className="text-lg font-bold text-slate-900">{company.lead_score}</span>
+              <span className={`text-lg font-bold ${company.lead_score >= 70 ? 'text-green-600' : company.lead_score >= 40 ? 'text-yellow-600' : 'text-red-600'}`}>{company.lead_score}</span>
             </div>
           )}
           {company.technical_fit && (
@@ -322,7 +402,7 @@ export default function CompanyDetail({
       {/* Tabs */}
       <div className="border-b border-slate-200">
         <nav className="-mb-px flex space-x-8">
-          {['overview', 'contacts', 'activities', 'orders'].map((tab) => (
+          {['overview', 'contacts', 'activities', 'notes'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -332,7 +412,15 @@ export default function CompanyDetail({
                   : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
               }`}
             >
-              {tab === 'activities' ? 'Activity History' : tab === 'orders' ? 'Orders & Commissions' : tab}
+              {tab === 'activities' ? 'Activity History' : tab === 'notes' ? (
+                <span className="flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Team Notes
+                  {notes.length > 0 && (
+                    <span className="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full font-medium">{notes.length}</span>
+                  )}
+                </span>
+              ) : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </nav>
@@ -341,152 +429,283 @@ export default function CompanyDetail({
       {/* Tab Content */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
         {activeTab === 'overview' && (
-          <div className="grid grid-cols-2 gap-8">
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900 mb-4">Company Details</h3>
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-4 text-sm">
-                  <div>
-                    <dt className="text-slate-500 font-medium">Type</dt>
-                    <dd className="text-slate-900 mt-1">{company.company_type || '-'}</dd>
+          <div className="space-y-6">
+
+            {/* AI Qualification loading overlay */}
+            {qualifying && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex items-center gap-3">
+                <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                <div>
+                  <div className="text-sm font-semibold text-indigo-800">AI Research in progress...</div>
+                  <div className="text-xs text-indigo-600">Searching the web, scoring fit, generating sales scripts. This takes 15–30 seconds.</div>
+                </div>
+              </div>
+            )}
+
+            {/* Score Dashboard — shown after AI qualify */}
+            {company.ai_qualified_at && (
+              <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl p-5 text-white">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-indigo-400" />
+                    <span className="font-semibold text-sm">AI Qualification Results</span>
+                    <span className="text-xs text-slate-400">· {new Date(company.ai_qualified_at).toLocaleDateString()}</span>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Revenue</dt>
-                    <dd className="text-slate-900 mt-1">{company.revenue_eur ? `€${(company.revenue_eur / 1000000).toFixed(2)}M` : '-'}</dd>
+                  {company.product_fit && (
+                    <span className="text-xs bg-indigo-600 px-2.5 py-1 rounded-full font-medium">{company.product_fit}</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {/* Overall Score */}
+                  <div className="bg-white/10 rounded-lg p-3">
+                    <div className="text-xs text-slate-400 mb-1 flex items-center gap-1"><Target className="w-3 h-3" /> Lead Score</div>
+                    <div className={`text-3xl font-bold ${(company.lead_score || 0) >= 70 ? 'text-green-400' : (company.lead_score || 0) >= 40 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {company.lead_score ?? '-'}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">out of 100</div>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Employees</dt>
-                    <dd className="text-slate-900 mt-1">{company.employee_count || '-'}</dd>
+                  {/* Buying Probability */}
+                  <div className="bg-white/10 rounded-lg p-3">
+                    <div className="text-xs text-slate-400 mb-1 flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Buy Probability</div>
+                    <div className={`text-3xl font-bold ${(company.buying_probability || 0) >= 60 ? 'text-green-400' : (company.buying_probability || 0) >= 30 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {company.buying_probability != null ? `${company.buying_probability}%` : '-'}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">ceramic bearings</div>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Website</dt>
-                    <dd className="text-blue-600 mt-1 hover:underline">
-                      {company.website ? <a href={company.website.startsWith('http') ? company.website : `https://${company.website}`} target="_blank" rel="noreferrer">{company.website}</a> : '-'}
+                  {/* Website Score */}
+                  <div className="bg-white/10 rounded-lg p-3">
+                    <div className="text-xs text-slate-400 mb-1 flex items-center gap-1"><Globe className="w-3 h-3" /> Website Score</div>
+                    <div className={`text-3xl font-bold ${(company.website_score || 0) >= 60 ? 'text-green-400' : (company.website_score || 0) >= 30 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {company.website_score ?? '-'}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">activity level</div>
+                  </div>
+                  {/* Social Score */}
+                  <div className="bg-white/10 rounded-lg p-3">
+                    <div className="text-xs text-slate-400 mb-1 flex items-center gap-1"><Users className="w-3 h-3" /> Social Score</div>
+                    <div className={`text-3xl font-bold ${(company.social_score || 0) >= 60 ? 'text-green-400' : (company.social_score || 0) >= 30 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {company.social_score ?? '-'}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      {company.social_media_active ? 'active' : 'inactive'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tech Fit + Social tags */}
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {company.technical_fit && (
+                    <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                      company.technical_fit === 'HIGH' ? 'bg-green-500/20 text-green-300' :
+                      company.technical_fit === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-300' :
+                      company.technical_fit === 'LOW' ? 'bg-orange-500/20 text-orange-300' : 'bg-red-500/20 text-red-300'
+                    }`}>Tech Fit: {company.technical_fit}</span>
+                  )}
+                  {company.mentions_technology && (
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-300 font-medium">Mentions Bearings/Technology</span>
+                  )}
+                  {company.social_media_active && (
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-purple-500/20 text-purple-300 font-medium">Active on Social Media</span>
+                  )}
+                  {socialMediaUrls.map((url: string, i: number) => (
+                    <a key={i} href={url} target="_blank" rel="noreferrer"
+                      className="text-xs px-2.5 py-1 rounded-full bg-white/10 text-slate-300 hover:bg-white/20 transition-colors font-medium truncate max-w-[200px]">
+                      {url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* No AI yet prompt */}
+            {!company.ai_qualified_at && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5 flex items-start gap-4">
+                <Sparkles className="w-6 h-6 text-indigo-500 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-indigo-900 mb-1">Run AI Qualification for deep insights</div>
+                  <div className="text-sm text-indigo-700">Get website score, social media presence, buying probability, ceramic bearing opportunity analysis, approach strategy, sales call script, and a personalised email draft — all generated by AI with live web search.</div>
+                  <button onClick={() => void handleAIQualify()} className="mt-3 bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" /> Run AI Qualification
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-3 gap-6">
+              {/* Left: Company Details */}
+              <div className="col-span-1 space-y-4">
+                <h3 className="text-base font-semibold text-slate-900">Company Details</h3>
+                <dl className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Type</dt>
+                    <dd className="text-slate-900 font-medium text-right">{company.company_type || '-'}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Revenue</dt>
+                    <dd className="text-slate-900 font-medium">{company.revenue_eur ? `€${(company.revenue_eur/1000000).toFixed(1)}M` : '-'}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Employees</dt>
+                    <dd className="text-slate-900 font-medium">{company.employee_count || '-'}</dd>
+                  </div>
+                  <div className="flex justify-between items-start gap-2">
+                    <dt className="text-slate-500 shrink-0">Website</dt>
+                    <dd className="text-right">
+                      {company.website
+                        ? <a href={company.website.startsWith('http') ? company.website : `https://${company.website}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs break-all">{company.website}</a>
+                        : <span className="text-slate-400 text-xs italic">Not set — run AI Qualify to find it</span>}
                     </dd>
                   </div>
-                  <div className="col-span-2">
-                    <dt className="text-slate-500 font-medium">Source</dt>
-                    <dd className="text-slate-900 mt-1">{company.source || '-'}</dd>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Region</dt>
+                    <dd className="text-slate-900 font-medium">{company.region || '-'}</dd>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Region</dt>
-                    <dd className="text-slate-900 mt-1">{company.region || '-'}</dd>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Source</dt>
+                    <dd className="text-slate-900 font-medium">{company.source || '-'}</dd>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">DUNS Number</dt>
-                    <dd className="text-slate-900 mt-1">{company.duns_number || '-'}</dd>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Assigned To</dt>
+                    <dd className="text-slate-900 font-medium">{company.assigned_to || 'Unassigned'}</dd>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Corporate Parent</dt>
-                    <dd className="text-slate-900 mt-1">{company.corporate_parent || '-'}</dd>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">DUNS</dt>
+                    <dd className="text-slate-900 font-medium">{company.duns_number || '-'}</dd>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Is Subsidiary?</dt>
-                    <dd className="text-slate-900 mt-1">{company.is_subsidiary ? 'Yes' : 'No'}</dd>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Corp. Parent</dt>
+                    <dd className="text-slate-900 font-medium">{company.corporate_parent || '-'}</dd>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Assigned To</dt>
-                    <dd className="text-slate-900 mt-1">{company.assigned_to || 'Unassigned'}</dd>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Subsidiary?</dt>
+                    <dd className="text-slate-900 font-medium">{company.is_subsidiary ? 'Yes' : 'No'}</dd>
                   </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Created By</dt>
-                    <dd className="text-slate-900 mt-1">{company.created_by || 'System'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Created At</dt>
-                    <dd className="text-slate-900 mt-1">{company.created_at ? new Date(company.created_at).toLocaleDateString() : '-'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-500 font-medium">Updated At</dt>
-                    <dd className="text-slate-900 mt-1">{company.updated_at ? new Date(company.updated_at).toLocaleDateString() : '-'}</dd>
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Created</dt>
+                    <dd className="text-slate-600 text-xs">{company.created_at ? new Date(company.created_at).toLocaleDateString() : '-'}</dd>
                   </div>
                 </dl>
-              </div>
-            </div>
-            
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-orange-500" />
-                  Company Tracking
-                </h3>
-                <div className="bg-slate-50 rounded-lg p-4 border border-slate-100">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-slate-500 font-medium block">Tracking Level</span>
-                      <span className="text-slate-900 font-medium">{company.tracking_level || 'WATCHLIST'}</span>
+
+                {/* Tracking */}
+                <div className="pt-4 border-t border-slate-100">
+                  <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-orange-500" /> Tracking
+                  </h4>
+                  <dl className="space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <dt className="text-slate-500">Level</dt>
+                      <dd className="font-medium text-slate-800">{company.tracking_level || 'WATCHLIST'}</dd>
                     </div>
-                    <div>
-                      <span className="text-slate-500 font-medium block">Tracking Status</span>
-                      <span className="text-slate-900 font-medium">{company.tracking_status || 'PENDING'}</span>
+                    <div className="flex justify-between">
+                      <dt className="text-slate-500">Status</dt>
+                      <dd className="font-medium text-slate-800">{company.tracking_status || 'PENDING'}</dd>
                     </div>
-                    <div>
-                      <span className="text-slate-500 font-medium block">Next Tracking Date</span>
-                      <span className="text-slate-900">
-                        {company.next_tracking_date ? new Date(company.next_tracking_date).toLocaleDateString() : '-'}
-                      </span>
+                    <div className="flex justify-between">
+                      <dt className="text-slate-500">Next Date</dt>
+                      <dd className="font-medium text-slate-800">{company.next_tracking_date ? new Date(company.next_tracking_date).toLocaleDateString() : '-'}</dd>
                     </div>
-                    <div>
-                      <span className="text-slate-500 font-medium block">Owner</span>
-                      <span className="text-slate-900">{company.assigned_to || 'Unassigned'}</span>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-slate-500 font-medium block">Tracking Notes</span>
-                      <p className="text-slate-700 mt-1 whitespace-pre-wrap">
-                        {company.tracking_notes || 'No company-level tracking notes yet.'}
-                      </p>
-                    </div>
-                  </div>
+                  </dl>
+                  {company.tracking_notes && (
+                    <p className="text-xs text-slate-600 mt-2 italic">{company.tracking_notes}</p>
+                  )}
                 </div>
               </div>
 
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-blue-500" />
-                  AI Research & Reasoning
-                </h3>
-                <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 space-y-4">
-                  {company.qualification_notes ? (
-                    <>
-                      <div className="grid grid-cols-2 gap-4 text-sm mb-4 border-b border-slate-200 pb-4">
-                        <div>
-                          <span className="text-slate-500 font-medium block">Product Fit</span>
-                          <span className="text-slate-900 font-medium">{company.product_fit || '-'}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 font-medium block">Mentions Technology</span>
-                          <span className="text-slate-900">{company.mentions_technology ? 'Yes' : 'No'}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 font-medium block">Social Media Active</span>
-                          <span className="text-slate-900">{company.social_media_active ? 'Yes' : 'No'}</span>
-                        </div>
-                        <div className="col-span-2">
-                          <span className="text-slate-500 font-medium block">Social Media URLs</span>
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            {socialMediaUrls.length > 0 ? (
-                              socialMediaUrls.map((url: string, i: number) => (
-                                <a key={i} href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs break-all">
-                                  {url}
-                                </a>
-                              ))
-                            ) : (
-                              <span className="text-slate-400 text-xs">None found</span>
-                            )}
-                          </div>
-                        </div>
+              {/* Right: AI Intelligence (2/3 width) */}
+              <div className="col-span-2 space-y-4">
+
+                {/* Strategic Analysis */}
+                {company.qualification_notes && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <h4 className="text-sm font-semibold text-slate-800 mb-2 flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-blue-500" /> Strategic Analysis
+                    </h4>
+                    <p className="text-sm text-slate-700 leading-relaxed">{company.qualification_notes}</p>
+                  </div>
+                )}
+
+                {/* Opportunity Notes */}
+                {company.opportunity_notes && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                    <h4 className="text-sm font-semibold text-amber-800 mb-2 flex items-center gap-1.5">
+                      <Zap className="w-4 h-4 text-amber-500" /> Opportunity & Pain Points
+                    </h4>
+                    <p className="text-sm text-amber-900 leading-relaxed whitespace-pre-wrap">{company.opportunity_notes}</p>
+                  </div>
+                )}
+
+                {/* Approach Strategy */}
+                {company.approach_strategy && (
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                    <h4 className="text-sm font-semibold text-green-800 mb-2 flex items-center gap-1.5">
+                      <Target className="w-4 h-4 text-green-500" /> Recommended Approach
+                    </h4>
+                    <p className="text-sm text-green-900 leading-relaxed whitespace-pre-wrap">{company.approach_strategy}</p>
+                  </div>
+                )}
+
+                {/* Sales Script */}
+                {company.sales_script && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => setExpandedSection(expandedSection === 'sales' ? null : 'sales')}
+                      className="w-full flex items-center justify-between px-4 py-3 hover:bg-blue-100 transition-colors"
+                    >
+                      <span className="text-sm font-semibold text-blue-800 flex items-center gap-1.5">
+                        <MessageSquare className="w-4 h-4" /> Sales Call Script
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void copyToClipboard(company.sales_script, 'sales'); }}
+                          className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs px-2 py-0.5 rounded hover:bg-blue-200 transition-colors"
+                        >
+                          {copiedScript === 'sales' ? <><Check className="w-3 h-3" /> Copied</> : <><Copy className="w-3 h-3" /> Copy</>}
+                        </button>
+                        {expandedSection === 'sales' ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
                       </div>
-                      <div>
-                        <span className="text-slate-500 font-medium block mb-1 text-sm">Reasoning</span>
-                        <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                          {company.qualification_notes}
-                        </p>
+                    </button>
+                    {expandedSection === 'sales' && (
+                      <div className="px-4 pb-4">
+                        <pre className="text-sm text-blue-900 whitespace-pre-wrap font-sans leading-relaxed">{company.sales_script}</pre>
                       </div>
-                    </>
-                  ) : (
-                    <p className="text-slate-400 text-sm italic">No AI qualification has been run for this lead yet. Click "AI Qualify" from the companies list to generate research.</p>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Email Script */}
+                {company.email_script && (
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => setExpandedSection(expandedSection === 'email' ? null : 'email')}
+                      className="w-full flex items-center justify-between px-4 py-3 hover:bg-purple-100 transition-colors"
+                    >
+                      <span className="text-sm font-semibold text-purple-800 flex items-center gap-1.5">
+                        <Mail className="w-4 h-4" /> Cold Outreach Email
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void copyToClipboard(company.email_script, 'email'); }}
+                          className="text-purple-600 hover:text-purple-800 flex items-center gap-1 text-xs px-2 py-0.5 rounded hover:bg-purple-200 transition-colors"
+                        >
+                          {copiedScript === 'email' ? <><Check className="w-3 h-3" /> Copied</> : <><Copy className="w-3 h-3" /> Copy</>}
+                        </button>
+                        {expandedSection === 'email' ? <ChevronUp className="w-4 h-4 text-purple-600" /> : <ChevronDown className="w-4 h-4 text-purple-600" />}
+                      </div>
+                    </button>
+                    {expandedSection === 'email' && (
+                      <div className="px-4 pb-4">
+                        <pre className="text-sm text-purple-900 whitespace-pre-wrap font-sans leading-relaxed">{company.email_script}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* No AI data yet */}
+                {!company.qualification_notes && !company.approach_strategy && !company.sales_script && !company.email_script && !company.ai_qualified_at && (
+                  <div className="text-center py-8 text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl">
+                    No AI research yet — click <strong className="text-indigo-600">AI Qualify</strong> above to generate deep analysis
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -714,11 +933,83 @@ export default function CompanyDetail({
           </div>
         )}
 
-        {activeTab === 'orders' && (
+        {activeTab === 'notes' && (
+          <div className="flex flex-col h-full" style={{ minHeight: '480px' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-blue-500" />
+                Team Notes
+              </h3>
+              <span className="text-xs text-slate-500">{notes.length} note{notes.length !== 1 ? 's' : ''}</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-1" style={{ maxHeight: '380px' }}>
+              {notes.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">No notes yet. Be the first to add a team note.</p>
+                </div>
+              ) : (
+                notes.map((note) => (
+                  <div key={note.id} className="flex gap-3 group">
+                    <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+                      {note.author.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2 mb-1">
+                        <span className="text-sm font-semibold text-slate-900">{note.author}</span>
+                        <span className="text-xs text-slate-400">
+                          {new Date(note.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl rounded-tl-none px-4 py-3 text-sm text-slate-700 whitespace-pre-wrap">
+                        {note.message}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+              <div ref={notesEndRef} />
+            </div>
+
+            <form onSubmit={handleAddNote} className="border-t border-slate-200 pt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <select
+                  value={noteAuthor}
+                  onChange={(e) => setNoteAuthor(e.target.value)}
+                  className="border border-slate-200 rounded-md px-2 py-1 text-sm bg-white text-slate-700 outline-none"
+                >
+                  {users.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <span className="text-xs text-slate-400">posting as</span>
+              </div>
+              <div className="flex gap-2">
+                <textarea
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void handleAddNote(e as any); }}}
+                  placeholder="Write a team note... (Ctrl+Enter to post)"
+                  rows={2}
+                  className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm resize-none outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                />
+                <button
+                  type="submit"
+                  disabled={submittingNote || !noteText.trim()}
+                  className="px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 text-sm font-medium shrink-0"
+                >
+                  <Send className="w-4 h-4" />
+                  Post
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {false && activeTab === 'orders_hidden' && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold text-slate-900">Orders & Commissions</h3>
-              <button 
+              <button
                 onClick={() => setShowOrderForm(!showOrderForm)}
                 className="flex items-center gap-2 bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
               >

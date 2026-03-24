@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(curl -s http://localhost:3000/api/settings/llm)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(''''Provider:'''', d.get\\(''''provider_type''''\\)\\); print\\(''''Model:'''', d.get\\(''''model''''\\)\\); print\\(''''Has key:'''', d.get\\(''''has_api_key''''\\)\\); print\\(''''Source:'''', d.get\\(''''source''''\\)\\)\")"
+    ]
+  }
+}

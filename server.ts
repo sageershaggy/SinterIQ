@@ -338,12 +338,14 @@ async function generateJsonWithLlm({
 
   if (settings.providerType === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: settings.apiKey! });
+    const usingWebSearch = useWebSearch && settings.supportsWebSearch;
     const response = await ai.models.generateContent({
       model: settings.model,
-      contents: `${systemPrompt}\n\n${userPrompt}`,
+      contents: `${systemPrompt}\n\n${userPrompt}${usingWebSearch ? '\n\nIMPORTANT: Your entire response must be valid JSON only — no markdown, no code fences, no explanation.' : ''}`,
       config: {
-        responseMimeType: 'application/json',
-        ...(useWebSearch && settings.supportsWebSearch ? { tools: [{ googleSearch: {} }] } : {}),
+        // responseMimeType is incompatible with tool use (googleSearch) — only set it when not using tools
+        ...(!usingWebSearch ? { responseMimeType: 'application/json' } : {}),
+        ...(usingWebSearch ? { tools: [{ googleSearch: {} }] } : {}),
       },
     });
 
@@ -564,6 +566,25 @@ try { db.exec("ALTER TABLE companies ADD COLUMN tracking_level TEXT DEFAULT 'WAT
 try { db.exec("ALTER TABLE companies ADD COLUMN tracking_status TEXT DEFAULT 'PENDING';"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN tracking_notes TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN next_tracking_date DATETIME;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN website_score INTEGER;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN social_score INTEGER;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN buying_probability INTEGER;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN approach_strategy TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN sales_script TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN email_script TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN ai_qualified_at DATETIME;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN opportunity_notes TEXT;"); } catch (e) {}
+
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    author TEXT NOT NULL DEFAULT 'Team',
+    message TEXT NOT NULL,
+    type TEXT DEFAULT 'note',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`); } catch (e) {}
 
 db.prepare("UPDATE companies SET tracking_level = 'WATCHLIST' WHERE tracking_level IS NULL OR tracking_level = ''").run();
 db.prepare("UPDATE companies SET tracking_status = 'PENDING' WHERE tracking_status IS NULL OR tracking_status = ''").run();
@@ -979,6 +1000,62 @@ app.put('/api/activities/:id/done', (req, res) => {
   }
 });
 
+app.get('/api/activities/recent', (req, res) => {
+  try {
+    const activities = db.prepare(`
+      SELECT a.id, a.company_id, a.activity_type, a.activity_date, a.performed_by,
+             a.subject, a.details, a.outcome, a.follow_up_date, a.created_at,
+             c.company_name
+      FROM activities a
+      JOIN companies c ON a.company_id = c.id
+      ORDER BY a.created_at DESC
+      LIMIT 15
+    `).all();
+    res.json(activities);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch recent activities' });
+  }
+});
+
+app.get('/api/companies/:id/notes', (req, res) => {
+  try {
+    const notes = db.prepare('SELECT * FROM notes WHERE company_id = ? ORDER BY created_at ASC').all(req.params.id);
+    res.json(notes);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch notes' });
+  }
+});
+
+app.post('/api/companies/:id/notes', (req, res) => {
+  try {
+    const message = normalizeOptionalString(req.body.message);
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+    const author = normalizeOptionalString(req.body.author) || 'Team';
+    const type = normalizeOptionalString(req.body.type) || 'note';
+    const info = db.prepare(
+      'INSERT INTO notes (company_id, author, message, type) VALUES (?, ?, ?, ?)'
+    ).run(req.params.id, author, message, type);
+    const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(info.lastInsertRowid);
+    res.json(note);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to add note' });
+  }
+});
+
+app.patch('/api/companies/:id/status', (req, res) => {
+  try {
+    const newStatus = normalizeOptionalString(req.body.lead_status);
+    if (!newStatus) return res.status(400).json({ error: 'lead_status is required' });
+    db.prepare('UPDATE companies SET lead_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update status' });
+  }
+});
+
 app.get('/api/contacts', (req, res) => {
   try {
     const contacts = db.prepare(`
@@ -1226,64 +1303,89 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
     const websiteContext = await fetchWebsiteContext(company.website);
 
     const rawResponse = await generateJsonWithLlm({
-      systemPrompt:
-        'You are an expert B2B lead qualification agent for precision ceramic bearings and electric burner technology. Return only strict JSON.',
+      systemPrompt: `You are an expert B2B sales intelligence agent for Sintertechnik GmbH (Germany), a manufacturer of precision ceramic bearings, hybrid bearings, and ceramic components. Your job is to deeply qualify leads and generate actionable sales intelligence. Return only strict JSON with no markdown or code fences.`,
       userPrompt: `
-        Qualify this lead for SinterIQ.
+Perform a comprehensive lead qualification and sales intelligence analysis for the following company.
 
-        Qualification criteria:
-        1. Stability of the company based on website quality, scale, and visible credibility.
-        2. Strategic fit for ceramic bearings or electric burner technology.
-        3. Technical fit for the products.
-        4. Social presence and evidence of current activity if available.
-        5. Recent news or expansion signals if available.
+COMPANY DATA:
+- Name: ${company.company_name}
+- Country: ${company.country}
+- City: ${company.city || 'Unknown'}
+- Industry: ${company.industry}
+- Company Type: ${company.company_type}
+- Revenue (EUR): ${company.revenue_eur ? `€${(company.revenue_eur/1000000).toFixed(1)}M` : 'Unknown'}
+- Employees: ${company.employee_count || 'Unknown'}
+- Website: ${company.website || 'Unknown — search the web to find it'}
+- Existing Notes: ${company.qualification_notes || 'None'}
 
-        Company data:
-        - Name: ${company.company_name}
-        - Country: ${company.country}
-        - Industry: ${company.industry}
-        - Type: ${company.company_type}
-        - Revenue: ${company.revenue_eur || 'Unknown'}
-        - Employees: ${company.employee_count || 'Unknown'}
-        - Website: ${company.website || 'Unknown'}
-        - Current Notes: ${company.qualification_notes || 'None'}
+${websiteContext ? `WEBSITE CONTENT SNAPSHOT:\n${websiteContext.substring(0, 2000)}\n` : 'Website could not be fetched — use web search to gather information.\n'}
 
-        ${websiteContext ? `Website context:\n${websiteContext}\n` : 'Website context could not be fetched.\n'}
+SINTERTECHNIK PRODUCTS:
+- Full ceramic bearings (ZrO2, Si3N4, Al2O3) — ideal for corrosive/hygienic/high-temp environments
+- Hybrid ceramic bearings (steel races + ceramic balls) — higher speed, longer life, reduced maintenance
+- Ceramic components (shafts, bushings, rollers, seal seats)
+- Key applications: pumps, food processing, pharma, chemical, desalination, oil & gas, vacuum, cryogenic, electroplating
 
-        Return a JSON object with:
-        - score: integer from 0 to 100
-        - category: "STRATEGIC_PARTNER", "BEARING_CUSTOMER", "LOW_FIT", or "NO_FIT"
-        - technical_fit: "HIGH", "MEDIUM", "LOW", or "NO_FIT"
-        - reasoning: detailed paragraph for sales
-        - product_fit: "Ceramic Bearings", "E-Burner Technology", "Both", or "None"
-        - social_media_urls: array of strings
-        - social_media_active: boolean
-        - mentions_technology: boolean
-      `,
+RESEARCH TASKS:
+1. Search the web for this company — find their website, LinkedIn, social media, recent news
+2. Assess their industry fit for ceramic bearings (pump manufacturers, bearing distributors, food/pharma/chemical end-users are top fits)
+3. Estimate employee fit (5-500 employees = addressable SME; 500+ = larger procurement process)
+4. Check if they have active social media and recent posts
+5. Look for signals: expansion, new facilities, sustainability goals, engineering team presence, bearing mentions
+
+Return a JSON object with EXACTLY these fields:
+{
+  "score": <integer 0-100, overall lead quality>,
+  "buying_probability": <integer 0-100, likelihood they need ceramic bearings in next 12 months>,
+  "technical_fit": <"HIGH" | "MEDIUM" | "LOW" | "NOT_FIT">,
+  "product_fit": <"Ceramic Bearings" | "Hybrid Bearings" | "Ceramic Components" | "Multiple Products" | "None">,
+  "category": <"STRATEGIC_PARTNER" | "BEARING_CUSTOMER" | "LOW_FIT" | "NO_FIT">,
+  "website_score": <integer 0-100, website quality and activity level>,
+  "social_score": <integer 0-100, social media presence and activity>,
+  "social_media_active": <boolean>,
+  "social_media_urls": <array of strings, LinkedIn/Twitter/etc URLs found>,
+  "mentions_technology": <boolean, do they mention bearings, ceramics, precision components>,
+  "reasoning": <string, 3-5 sentence strategic analysis explaining the score and fit — written for a sales manager>,
+  "opportunity_notes": <string, specific opportunities or pain points relevant to ceramic bearings — be specific to their industry>,
+  "approach_strategy": <string, 2-3 sentence recommended approach: who to contact, what angle to use, timing>,
+  "sales_script": <string, 5-8 bullet talking points for a sales call — specific to this company and industry, mention their applications>,
+  "email_script": <string, complete cold outreach email — subject line + body, max 150 words, personalized to this company, mention a specific product application relevant to their industry>
+}`,
       useWebSearch: true,
     });
 
     const result = parseJsonResponse<{
-      category?: string;
-      mentions_technology?: boolean;
-      product_fit?: string;
-      reasoning?: string;
       score?: number;
+      buying_probability?: number;
+      technical_fit?: string;
+      product_fit?: string;
+      category?: string;
+      website_score?: number;
+      social_score?: number;
       social_media_active?: boolean;
       social_media_urls?: string[];
-      technical_fit?: string;
+      mentions_technology?: boolean;
+      reasoning?: string;
+      opportunity_notes?: string;
+      approach_strategy?: string;
+      sales_script?: string;
+      email_script?: string;
     }>(rawResponse, {});
-    
+
     // Map category to lead_status
     let newStatus = 'QUALIFIED';
-    if (result.category === 'NO_FIT' || result.category === 'LOW_FIT') newStatus = 'DISQUALIFIED';
+    if (result.category === 'NO_FIT') newStatus = 'DISQUALIFIED';
+    if (result.category === 'LOW_FIT') newStatus = 'ENRICHED';
     if (result.category === 'STRATEGIC_PARTNER') newStatus = 'APPROVED';
     const technicalFit = result.technical_fit === 'NO_FIT' ? 'NOT_FIT' : (result.technical_fit || null);
-    
+
     db.prepare(`
-      UPDATE companies 
+      UPDATE companies
       SET lead_score = ?, technical_fit = ?, qualification_notes = ?, lead_status = ?,
           product_fit = ?, social_media_urls = ?, social_media_active = ?, mentions_technology = ?,
+          website_score = ?, social_score = ?, buying_probability = ?,
+          approach_strategy = ?, sales_script = ?, email_script = ?, opportunity_notes = ?,
+          ai_qualified_at = CURRENT_TIMESTAMP,
           tracking_status = CASE
             WHEN ? IN ('APPROVED', 'QUALIFIED') THEN 'QUALIFIED'
             ELSE tracking_status
@@ -1291,18 +1393,25 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
-      normalizeNullableNumber(result.score) || 0, 
-      technicalFit, 
-      normalizeOptionalString(result.reasoning), 
-      newStatus, 
+      normalizeNullableNumber(result.score) || 0,
+      technicalFit,
+      normalizeOptionalString(result.reasoning),
+      newStatus,
       normalizeOptionalString(result.product_fit),
       JSON.stringify(Array.isArray(result.social_media_urls) ? result.social_media_urls : []),
       result.social_media_active ? 1 : 0,
       result.mentions_technology ? 1 : 0,
+      normalizeNullableNumber(result.website_score),
+      normalizeNullableNumber(result.social_score),
+      normalizeNullableNumber(result.buying_probability),
+      normalizeOptionalString(result.approach_strategy),
+      normalizeOptionalString(result.sales_script),
+      normalizeOptionalString(result.email_script),
+      normalizeOptionalString(result.opportunity_notes),
       newStatus,
       companyId
     );
-      
+
     const updatedCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId);
     res.json(updatedCompany);
   } catch (error) {

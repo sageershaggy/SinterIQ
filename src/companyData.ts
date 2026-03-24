@@ -15,9 +15,18 @@ export const internalUsers = [
 
 export const regionOptions: SelectOption[] = [
   { value: '', label: 'Select Region...' },
-  { value: 'DACH', label: 'DACH' },
-  { value: 'GCC', label: 'GCC' },
+  { value: 'DACH', label: 'DACH (Germany, Austria, Switzerland)' },
+  { value: 'GCC', label: 'GCC (Gulf Cooperation Council)' },
   { value: 'UK_IE', label: 'UK & Ireland' },
+  { value: 'MIDDLE_EAST', label: 'Middle East (General)' },
+  { value: 'UAE', label: 'UAE' },
+  { value: 'SAUDI_ARABIA', label: 'Saudi Arabia' },
+  { value: 'QATAR', label: 'Qatar' },
+  { value: 'OMAN', label: 'Oman' },
+  { value: 'BAHRAIN', label: 'Bahrain' },
+  { value: 'KUWAIT', label: 'Kuwait' },
+  { value: 'INDIA', label: 'India' },
+  { value: 'SOUTHEAST_ASIA', label: 'Southeast Asia' },
 ];
 
 export const industryOptions: SelectOption[] = [
@@ -45,6 +54,11 @@ export const companyTypeOptions: SelectOption[] = [
   { value: 'MANUFACTURER', label: 'Manufacturer' },
   { value: 'DISTRIBUTOR', label: 'Distributor' },
   { value: 'UNIVERSITY', label: 'University' },
+  { value: 'OEM', label: 'OEM (Original Equipment Manufacturer)' },
+  { value: 'END_USER', label: 'End User' },
+  { value: 'CONSULTANT', label: 'Consultant / Engineering Firm' },
+  { value: 'TRADING_COMPANY', label: 'Trading Company' },
+  { value: 'EPC_CONTRACTOR', label: 'EPC Contractor' },
 ];
 
 export const leadStatusOptions: SelectOption[] = [

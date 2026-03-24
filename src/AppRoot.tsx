@@ -9,6 +9,7 @@ import {
   Euro,
   Filter,
   Flame,
+  Kanban,
   LucideIcon,
   MapPin,
   Bot,
@@ -16,16 +17,19 @@ import {
   Search,
   Sparkles,
   Target,
+  TrendingUp,
   Upload,
   Users,
+  X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { AppUser, Company } from './appTypes';
 import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
 import CompanyDetail from './CompanyDetail';
-import CommissionsTab from './CommissionsTab';
 import ContactsTab from './ContactsTab';
 import FollowUpsTab from './FollowUpsTab';
+import KanbanBoard from './KanbanBoard';
 import ResearchTab from './ResearchTab';
 import SettingsTab from './SettingsTab';
 import TrackingTab from './TrackingTab';
@@ -38,10 +42,42 @@ interface FollowUp {
   follow_up_done: number;
 }
 
+interface RecentActivity {
+  id: number;
+  company_id: number;
+  company_name: string;
+  activity_type: string;
+  activity_date: string;
+  performed_by: string;
+  subject: string;
+  outcome: string;
+}
+
+interface SearchResult {
+  type: 'company';
+  id: number;
+  label: string;
+  sublabel: string;
+}
+
+const PIPELINE_STAGE_COLORS: Record<string, string> = {
+  RAW: '#94a3b8',
+  ENRICHED: '#60a5fa',
+  QUALIFIED: '#a78bfa',
+  APPROVED: '#34d399',
+  IN_OUTREACH: '#fbbf24',
+  CONTACTED: '#fb923c',
+  OPPORTUNITY: '#f59e0b',
+  WON: '#10b981',
+  LOST: '#f87171',
+  DISQUALIFIED: '#e2e8f0',
+};
+
 export default function AppRoot() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
@@ -52,6 +88,8 @@ export default function AppRoot() {
   const [savingCompany, setSavingCompany] = useState(false);
   const [companyForm, setCompanyForm] = useState<CompanyFormData>(emptyCompanyForm);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [minScore, setMinScore] = useState('');
   const [maxScore, setMaxScore] = useState('');
   const [assignedFilter, setAssignedFilter] = useState('');
@@ -60,46 +98,55 @@ export default function AppRoot() {
   const [statusFilter, setStatusFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   const loadCompanies = async () => {
     const response = await fetch('/api/companies');
-    if (!response.ok) {
-      throw new Error('Failed to load companies');
-    }
-
+    if (!response.ok) throw new Error('Failed to load companies');
     setCompanies(await response.json());
   };
 
   const loadUsers = async () => {
     const response = await fetch('/api/users');
-    if (!response.ok) {
-      throw new Error('Failed to load users');
-    }
-
+    if (!response.ok) throw new Error('Failed to load users');
     setUsers(await response.json());
   };
 
   const loadFollowUps = async () => {
     const response = await fetch('/api/activities/follow-ups');
-    if (!response.ok) {
-      throw new Error('Failed to load follow-ups');
-    }
-
+    if (!response.ok) throw new Error('Failed to load follow-ups');
     setFollowUps(await response.json());
+  };
+
+  const loadRecentActivities = async () => {
+    try {
+      const response = await fetch('/api/activities/recent');
+      if (response.ok) setRecentActivities(await response.json());
+    } catch (_) {}
   };
 
   useEffect(() => {
     const loadAppData = async () => {
       try {
-        await Promise.all([loadCompanies(), loadFollowUps(), loadUsers()]);
+        await Promise.all([loadCompanies(), loadFollowUps(), loadUsers(), loadRecentActivities()]);
       } catch (error) {
         console.error('Failed to load app data:', error);
       } finally {
         setLoading(false);
       }
     };
-
     void loadAppData();
+  }, []);
+
+  // Close search dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowSearchDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
   const totalRevenue = companies.reduce((sum, company) => sum + (company.revenue_eur || 0), 0);
@@ -115,75 +162,76 @@ export default function AppRoot() {
   ).length;
 
   const filteredCompanies = companies.filter((company) => {
-    if (minScore && company.lead_score !== null && company.lead_score < parseInt(minScore, 10)) {
-      return false;
-    }
-
-    if (maxScore && company.lead_score !== null && company.lead_score > parseInt(maxScore, 10)) {
-      return false;
-    }
-
-    if (assignedFilter && company.assigned_to !== assignedFilter) {
-      return false;
-    }
-
-    if (industryFilter && company.industry !== industryFilter) {
-      return false;
-    }
-
-    if (companyTypeFilter && company.company_type !== companyTypeFilter) {
-      return false;
-    }
-
-    if (statusFilter && company.lead_status !== statusFilter) {
-      return false;
-    }
-
-    if (!searchQuery.trim()) {
-      return true;
-    }
-
-    const haystack = [
-      company.company_name,
-      company.country,
-      company.city,
-      company.industry,
-      company.company_type,
-      company.assigned_to,
-      company.tracking_level,
-      company.tracking_status,
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
-
+    if (minScore && company.lead_score !== null && company.lead_score < parseInt(minScore, 10)) return false;
+    if (maxScore && company.lead_score !== null && company.lead_score > parseInt(maxScore, 10)) return false;
+    if (assignedFilter && company.assigned_to !== assignedFilter) return false;
+    if (industryFilter && company.industry !== industryFilter) return false;
+    if (companyTypeFilter && company.company_type !== companyTypeFilter) return false;
+    if (statusFilter && company.lead_status !== statusFilter) return false;
+    if (!searchQuery.trim()) return true;
+    const haystack = [company.company_name, company.country, company.city, company.industry, company.company_type, company.assigned_to]
+      .filter(Boolean).join(' ').toLowerCase();
     return haystack.includes(searchQuery.trim().toLowerCase());
   });
+
+  const handleSearchChange = (query: string) => {
+    setSearchQuery(query);
+    if (!query.trim()) {
+      setSearchResults([]);
+      setShowSearchDropdown(false);
+      return;
+    }
+    const q = query.trim().toLowerCase();
+    const results: SearchResult[] = companies
+      .filter((c) => {
+        const haystack = [c.company_name, c.country, c.city, c.industry, c.assigned_to].filter(Boolean).join(' ').toLowerCase();
+        return haystack.includes(q);
+      })
+      .slice(0, 8)
+      .map((c) => ({
+        type: 'company' as const,
+        id: c.id,
+        label: c.company_name,
+        sublabel: `${c.city ? c.city + ', ' : ''}${c.country} · ${c.lead_status}`,
+      }));
+    setSearchResults(results);
+    setShowSearchDropdown(results.length > 0);
+  };
+
+  const handleSearchSelect = (result: SearchResult) => {
+    setShowSearchDropdown(false);
+    setSearchQuery('');
+    openCompany(result.id);
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && searchResults.length > 0) {
+      handleSearchSelect(searchResults[0]);
+    }
+    if (e.key === 'Escape') {
+      setShowSearchDropdown(false);
+    }
+  };
 
   const openCompany = (id: number, tab = 'overview') => {
     setInitialTab(tab);
     setSelectedCompanyId(id);
     setActiveTab('companies');
+    setSearchQuery('');
+    setShowSearchDropdown(false);
   };
 
   const handleDataChanged = async () => {
-    await Promise.all([loadCompanies(), loadFollowUps()]);
+    await Promise.all([loadCompanies(), loadFollowUps(), loadRecentActivities()]);
   };
 
   const handleAIQualify = async (id: number) => {
     setQualifyingId(id);
-
     try {
       const response = await fetch(`/api/companies/${id}/ai-qualify`, { method: 'POST' });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.error || 'AI qualification failed');
-      }
-
-      const updatedCompany = payload;
-      setCompanies((currentCompanies) =>
-        currentCompanies.map((company) => (company.id === id ? { ...company, ...updatedCompany } : company)),
-      );
+      if (!response.ok) throw new Error(payload?.error || 'AI qualification failed');
+      setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...payload } : c)));
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : 'AI qualification failed.');
@@ -192,31 +240,37 @@ export default function AppRoot() {
     }
   };
 
+  const handleStatusChange = async (id: number, newStatus: string) => {
+    try {
+      const response = await fetch(`/api/companies/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_status: newStatus }),
+      });
+      if (response.ok) {
+        setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, lead_status: newStatus } : c)));
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
+    if (!file) return;
     setImporting(true);
     const reader = new FileReader();
-
     reader.onload = async (loadEvent) => {
       try {
         const workbook = XLSX.read(loadEvent.target?.result, { type: 'binary' });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const importedRows = XLSX.utils.sheet_to_json(sheet);
-
         const response = await fetch('/api/companies/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ companies: importedRows }),
         });
-
-        if (!response.ok) {
-          throw new Error('Import failed');
-        }
-
+        if (!response.ok) throw new Error('Import failed');
         await loadCompanies();
         setActiveTab('companies');
         alert('Import successful.');
@@ -225,19 +279,15 @@ export default function AppRoot() {
         alert('Failed to import file.');
       } finally {
         setImporting(false);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     };
-
     reader.readAsBinaryString(file);
   };
 
   const handleCreateCompany = async (event: React.FormEvent) => {
     event.preventDefault();
     setSavingCompany(true);
-
     try {
       const response = await fetch('/api/companies', {
         method: 'POST',
@@ -248,12 +298,8 @@ export default function AppRoot() {
           revenue_eur: companyForm.revenue_eur ? parseFloat(companyForm.revenue_eur) : null,
         }),
       });
-
       const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(payload?.error || 'Failed to create company');
-      }
-
+      if (!response.ok) throw new Error(payload?.error || 'Failed to create company');
       await loadCompanies();
       setShowCompanyForm(false);
       setCompanyForm(emptyCompanyForm);
@@ -266,56 +312,228 @@ export default function AppRoot() {
     }
   };
 
+  // --- Dashboard ---
+  const pipelineByStage = leadStatusOptions.map((opt) => ({
+    name: opt.label,
+    key: opt.value,
+    count: companies.filter((c) => c.lead_status === opt.value).length,
+    value: companies.filter((c) => c.lead_status === opt.value).reduce((s, c) => s + (c.revenue_eur || 0), 0),
+  })).filter((s) => s.count > 0);
+
+  const regionCounts = companies.reduce<Record<string, number>>((acc, c) => {
+    const r = c.country || 'Unknown';
+    acc[r] = (acc[r] || 0) + 1;
+    return acc;
+  }, {});
+  const regionData = Object.entries(regionCounts).map(([name, value]) => ({ name, value }));
+
+  const activityTypeLabel: Record<string, string> = {
+    CALL_MADE: 'Call', EMAIL_SENT: 'Email', MEETING_HELD: 'Meeting',
+    LINKEDIN_MESSAGE: 'LinkedIn', NOTE: 'Note',
+  };
+
+  const renderSkeletonCards = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {[1, 2, 3, 4].map((i) => (
+        <div key={i} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm animate-pulse">
+          <div className="h-3 bg-slate-200 rounded mb-3 w-28" />
+          <div className="h-8 bg-slate-200 rounded w-20" />
+        </div>
+      ))}
+    </div>
+  );
+
   const renderDashboard = () => (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">Pipeline Dashboard</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-slate-500">Total Companies</h3>
-            <Building2 className="w-4 h-4 text-slate-400" />
+
+      {loading ? renderSkeletonCards() : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-slate-500">Total Companies</h3>
+              <Building2 className="w-4 h-4 text-slate-400" />
+            </div>
+            <div className="text-3xl font-bold text-slate-900">{companies.length}</div>
           </div>
-          <div className="text-3xl font-bold text-slate-900">{companies.length}</div>
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-slate-500">Qualified Leads</h3>
+              <CheckCircle2 className="w-4 h-4 text-green-500" />
+            </div>
+            <div className="text-3xl font-bold text-slate-900">{qualifiedCount}</div>
+          </div>
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-slate-500">Pipeline Value</h3>
+              <Euro className="w-4 h-4 text-blue-500" />
+            </div>
+            <div className="text-3xl font-bold text-slate-900">{formatCompactEur(totalRevenue)}</div>
+          </div>
+          <div
+            className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-red-300 transition-colors"
+            onClick={() => setActiveTab('followups')}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-slate-500">Overdue Follow-ups</h3>
+              <AlertCircle className="w-4 h-4 text-red-500" />
+            </div>
+            <div className={`text-3xl font-bold ${overdueFollowUpsCount > 0 ? 'text-red-600' : 'text-slate-900'}`}>
+              {overdueFollowUpsCount}
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-slate-500">Qualified Leads</h3>
-            <CheckCircle2 className="w-4 h-4 text-green-500" />
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Pipeline by stage bar chart */}
+        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-5 h-5 text-blue-500" />
+            <h2 className="text-base font-semibold text-slate-900">Pipeline by Stage</h2>
           </div>
-          <div className="text-3xl font-bold text-slate-900">{qualifiedCount}</div>
+          {loading || pipelineByStage.length === 0 ? (
+            <div className="text-slate-400 text-sm text-center py-8">No pipeline data yet.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={pipelineByStage} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  formatter={(value: number, name: string) =>
+                    name === 'count' ? [value, 'Companies'] : [formatCompactEur(value), 'Revenue']
+                  }
+                />
+                <Bar dataKey="count" name="count" radius={[4, 4, 0, 0]}>
+                  {pipelineByStage.map((entry) => (
+                    <Cell key={entry.key} fill={PIPELINE_STAGE_COLORS[entry.key] || '#94a3b8'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-slate-500">Pipeline Value</h3>
-            <Euro className="w-4 h-4 text-blue-500" />
+
+        {/* Leads by country donut */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <MapPin className="w-5 h-5 text-indigo-500" />
+            <h2 className="text-base font-semibold text-slate-900">Leads by Country</h2>
           </div>
-          <div className="text-3xl font-bold text-slate-900">{formatCompactEur(totalRevenue)}</div>
-        </div>
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-slate-500">Overdue Follow-ups</h3>
-            <AlertCircle className="w-4 h-4 text-red-500" />
-          </div>
-          <div className="text-3xl font-bold text-slate-900">{overdueFollowUpsCount}</div>
-        </div>
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-slate-500">Tracking Due</h3>
-            <Target className="w-4 h-4 text-orange-500" />
-          </div>
-          <div className="text-3xl font-bold text-slate-900">{trackingDueCount}</div>
+          {loading || regionData.length === 0 ? (
+            <div className="text-slate-400 text-sm text-center py-8">No data yet.</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={140}>
+                <PieChart>
+                  <Pie data={regionData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={60} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                    {regionData.map((_, i) => (
+                      <Cell key={i} fill={['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4'][i % 6]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </>
+          )}
         </div>
       </div>
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Clock className="w-5 h-5 text-slate-400" />
-          <h2 className="text-lg font-semibold text-slate-900">Recent Activity</h2>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Activity */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Clock className="w-5 h-5 text-slate-400" />
+            <h2 className="text-lg font-semibold text-slate-900">Recent Activity</h2>
+          </div>
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="animate-pulse flex gap-3">
+                  <div className="w-8 h-8 bg-slate-200 rounded-full shrink-0" />
+                  <div className="flex-1 space-y-1">
+                    <div className="h-3 bg-slate-200 rounded w-3/4" />
+                    <div className="h-3 bg-slate-200 rounded w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : recentActivities.length === 0 ? (
+            <div className="text-slate-400 text-sm text-center py-6">No activities logged yet. Log your first activity on a company's Activity History tab.</div>
+          ) : (
+            <div className="space-y-3">
+              {recentActivities.slice(0, 6).map((activity) => (
+                <div
+                  key={activity.id}
+                  className="flex items-start gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors"
+                  onClick={() => openCompany(activity.company_id, 'activities')}
+                >
+                  <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
+                    {(activityTypeLabel[activity.activity_type] || 'A')[0]}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-900 truncate">{activity.subject || activity.activity_type}</div>
+                    <div className="text-xs text-slate-500">
+                      <span className="text-blue-600 hover:underline">{activity.company_name}</span>
+                      {' · '}
+                      {activity.performed_by}
+                      {' · '}
+                      {new Date(activity.activity_date).toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        <div className="text-slate-500 text-sm text-center py-8">No recent activities to display.</div>
+
+        {/* My Assigned Leads */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Users className="w-5 h-5 text-slate-400" />
+            <h2 className="text-lg font-semibold text-slate-900">Companies Overview</h2>
+          </div>
+          {loading ? (
+            <div className="space-y-2 animate-pulse">
+              {[1, 2, 3, 4].map((i) => <div key={i} className="h-10 bg-slate-100 rounded-lg" />)}
+            </div>
+          ) : companies.length === 0 ? (
+            <div className="text-slate-400 text-sm text-center py-6">No companies yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {companies.slice(0, 5).map((company) => (
+                <div
+                  key={company.id}
+                  className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors"
+                  onClick={() => openCompany(company.id)}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-900 truncate">{company.company_name}</div>
+                    <div className="text-xs text-slate-500">{company.assigned_to || 'Unassigned'}</div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2 ${
+                    company.lead_status === 'QUALIFIED' || company.lead_status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                    company.lead_status === 'WON' ? 'bg-emerald-100 text-emerald-700' :
+                    company.lead_status === 'LOST' || company.lead_status === 'DISQUALIFIED' ? 'bg-red-100 text-red-700' :
+                    'bg-slate-100 text-slate-600'
+                  }`}>
+                    {company.lead_status}
+                  </span>
+                </div>
+              ))}
+              {companies.length > 5 && (
+                <button onClick={() => setActiveTab('companies')} className="text-xs text-blue-600 hover:underline w-full text-center pt-1">
+                  View all {companies.length} companies →
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 
+  // --- Companies list ---
   const renderCompanies = () => (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -331,37 +549,20 @@ export default function AppRoot() {
           >
             <option value="">All Users</option>
             {userOptions.map((user) => (
-              <option key={user} value={user}>
-                {user}
-              </option>
+              <option key={user} value={user}>{user}</option>
             ))}
           </select>
           <div className="flex items-center gap-2 bg-white border border-slate-300 px-3 py-1.5 rounded-md text-sm">
             <span className="text-slate-500 font-medium">Score:</span>
-            <input
-              type="number"
-              placeholder="Min"
-              value={minScore}
-              onChange={(event) => setMinScore(event.target.value)}
-              className="w-14 outline-none bg-transparent placeholder:text-slate-300"
-            />
+            <input type="number" placeholder="Min" value={minScore} onChange={(e) => setMinScore(e.target.value)} className="w-14 outline-none bg-transparent placeholder:text-slate-300" />
             <span className="text-slate-300">-</span>
-            <input
-              type="number"
-              placeholder="Max"
-              value={maxScore}
-              onChange={(event) => setMaxScore(event.target.value)}
-              className="w-14 outline-none bg-transparent placeholder:text-slate-300"
-            />
+            <input type="number" placeholder="Max" value={maxScore} onChange={(e) => setMaxScore(e.target.value)} className="w-14 outline-none bg-transparent placeholder:text-slate-300" />
           </div>
           <button
-            onClick={() => setShowFilters((currentValue) => !currentValue)}
-            className={`flex items-center gap-2 border px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              showFilters ? 'bg-slate-100 border-slate-300 text-slate-800' : 'bg-white border-slate-300 hover:bg-slate-50 text-slate-700'
-            }`}
+            onClick={() => setShowFilters((v) => !v)}
+            className={`flex items-center gap-2 border px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${showFilters ? 'bg-slate-100 border-slate-300 text-slate-800' : 'bg-white border-slate-300 hover:bg-slate-50 text-slate-700'}`}
           >
-            <Filter className="w-4 h-4" />
-            Filters
+            <Filter className="w-4 h-4" /> Filters
           </button>
         </div>
       </div>
@@ -370,47 +571,23 @@ export default function AppRoot() {
         <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4 grid grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Industry</label>
-            <select
-              value={industryFilter}
-              onChange={(event) => setIndustryFilter(event.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none"
-            >
+            <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
               <option value="">All Industries</option>
-              {industryOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
+              {industryOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Company Type</label>
-            <select
-              value={companyTypeFilter}
-              onChange={(event) => setCompanyTypeFilter(event.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none"
-            >
+            <select value={companyTypeFilter} onChange={(e) => setCompanyTypeFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
               <option value="">All Types</option>
-              {companyTypeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
+              {companyTypeOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Lead Status</label>
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none"
-            >
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
               <option value="">All Statuses</option>
-              {leadStatusOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
+              {leadStatusOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
         </div>
@@ -426,10 +603,8 @@ export default function AppRoot() {
               <th className="px-6 py-3 font-medium">Score</th>
               <th className="px-6 py-3 font-medium">Tech Fit</th>
               <th className="px-6 py-3 font-medium">Status</th>
-              <th className="px-6 py-3 font-medium">Tracking</th>
               <th className="px-6 py-3 font-medium">Assigned To</th>
               <th className="px-6 py-3 font-medium">Follow Up</th>
-              <th className="px-6 py-3 font-medium">Next Track</th>
               <th className="px-6 py-3 font-medium text-right">Revenue</th>
               <th className="px-6 py-3 font-medium text-right">Actions</th>
             </tr>
@@ -437,15 +612,11 @@ export default function AppRoot() {
           <tbody className="divide-y divide-slate-200">
             {loading ? (
               <tr>
-                <td colSpan={12} className="px-6 py-8 text-center text-slate-500">
-                  Loading companies...
-                </td>
+                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">Loading companies...</td>
               </tr>
             ) : filteredCompanies.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-6 py-8 text-center text-slate-500">
-                  No companies matched the current filters.
-                </td>
+                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">No companies matched the current filters.</td>
               </tr>
             ) : (
               filteredCompanies.map((company) => (
@@ -457,16 +628,12 @@ export default function AppRoot() {
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 text-slate-700">
                       <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                      {company.city ? `${company.city}, ` : ''}
-                      {company.country}
+                      {company.city ? `${company.city}, ` : ''}{company.country}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-center">
                     <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openCompany(company.id, 'contacts');
-                      }}
+                      onClick={(e) => { e.stopPropagation(); openCompany(company.id, 'contacts'); }}
                       className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
                     >
                       {company.contact_count || 0}
@@ -475,21 +642,21 @@ export default function AppRoot() {
                   <td className="px-6 py-4">{company.lead_score ?? '-'}</td>
                   <td className="px-6 py-4">
                     {company.technical_fit ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">
-                        {company.technical_fit.replace('_', ' ')}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400 text-xs">-</span>
-                    )}
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        company.technical_fit === 'HIGH' ? 'bg-green-100 text-green-700' :
+                        company.technical_fit === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
+                        company.technical_fit === 'LOW' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'
+                      }`}>{company.technical_fit.replace('_', ' ')}</span>
+                    ) : <span className="text-slate-400 text-xs">-</span>}
                   </td>
-                  <td className="px-6 py-4">{company.lead_status}</td>
                   <td className="px-6 py-4">
-                    <div className="flex flex-col gap-1">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200">
-                        {company.tracking_level || 'WATCHLIST'}
-                      </span>
-                      <span className="text-xs text-slate-500">{company.tracking_status || 'PENDING'}</span>
-                    </div>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                      company.lead_status === 'QUALIFIED' || company.lead_status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                      company.lead_status === 'WON' ? 'bg-emerald-100 text-emerald-700' :
+                      company.lead_status === 'LOST' || company.lead_status === 'DISQUALIFIED' ? 'bg-red-100 text-red-700' :
+                      company.lead_status === 'IN_OUTREACH' || company.lead_status === 'CONTACTED' ? 'bg-blue-100 text-blue-700' :
+                      'bg-slate-100 text-slate-600'
+                    }`}>{company.lead_status.replace('_', ' ')}</span>
                   </td>
                   <td className="px-6 py-4 text-slate-700 text-sm">{company.assigned_to || 'Unassigned'}</td>
                   <td className="px-6 py-4">
@@ -497,31 +664,17 @@ export default function AppRoot() {
                       <span className={`text-xs font-medium ${isPastDate(company.follow_up_date) ? 'text-red-600' : 'text-slate-600'}`}>
                         {new Date(company.follow_up_date).toLocaleDateString()}
                       </span>
-                    ) : (
-                      <span className="text-slate-400 text-xs">-</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    {company.next_tracking_date ? (
-                      <span className={`text-xs font-medium ${isPastDate(company.next_tracking_date) ? 'text-red-600' : 'text-slate-600'}`}>
-                        {new Date(company.next_tracking_date).toLocaleDateString()}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400 text-xs">-</span>
-                    )}
+                    ) : <span className="text-slate-400 text-xs">-</span>}
                   </td>
                   <td className="px-6 py-4 text-right text-slate-700">{formatCompactEur(company.revenue_eur)}</td>
                   <td className="px-6 py-4 text-right">
                     <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleAIQualify(company.id);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); void handleAIQualify(company.id); }}
                       disabled={qualifyingId === company.id}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md text-xs font-medium transition-colors disabled:opacity-50"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
-                      {qualifyingId === company.id ? 'Qualifying...' : 'AI Qualify'}
+                      {qualifyingId === company.id ? 'Working...' : 'AI Qualify'}
                     </button>
                   </td>
                 </tr>
@@ -535,9 +688,9 @@ export default function AppRoot() {
 
   const navigationItems: Array<{ icon: LucideIcon; key: string; label: string }> = [
     { key: 'dashboard', label: 'Dashboard', icon: Activity },
+    { key: 'pipeline', label: 'Pipeline Board', icon: Kanban },
     { key: 'companies', label: 'Companies', icon: Building2 },
     { key: 'contacts', label: 'Contacts', icon: Users },
-    { key: 'commissions', label: 'Commissions', icon: Euro },
     { key: 'research', label: 'Lead Research', icon: Search },
     { key: 'followups', label: 'Follow-ups', icon: CalendarClock },
     { key: 'tracking', label: 'Company Tracking', icon: Target },
@@ -558,19 +711,16 @@ export default function AppRoot() {
           </div>
           <div className="text-xs text-slate-400 font-medium ml-11">Precision Lead Intelligence</div>
         </div>
-        <nav className="flex-1 p-4 space-y-1">
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navigationItems.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
-              onClick={() => {
-                setActiveTab(key);
-                setSelectedCompanyId(null);
-              }}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium transition-colors ${
-                activeTab === key ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'
+              onClick={() => { setActiveTab(key); setSelectedCompanyId(null); }}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium transition-colors text-sm ${
+                activeTab === key && !selectedCompanyId ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'
               }`}
             >
-              <Icon className={`w-5 h-5 ${activeTab === key ? 'text-blue-400' : ''}`} />
+              <Icon className={`w-4 h-4 shrink-0 ${activeTab === key && !selectedCompanyId ? 'text-blue-400' : ''}`} />
               {label}
             </button>
           ))}
@@ -579,22 +729,48 @@ export default function AppRoot() {
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
-          <div className="relative w-96">
+          <div className="relative w-96" ref={searchRef}>
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              onFocus={() => searchResults.length > 0 && setShowSearchDropdown(true)}
               placeholder="Search companies, countries, assignees..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-100 border-transparent rounded-md text-sm focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+              className="w-full pl-9 pr-8 py-2 bg-slate-100 border-transparent rounded-md text-sm focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
             />
+            {searchQuery && (
+              <button
+                onClick={() => { setSearchQuery(''); setSearchResults([]); setShowSearchDropdown(false); }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {showSearchDropdown && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 overflow-hidden">
+                {searchResults.map((result) => (
+                  <button
+                    key={`${result.type}-${result.id}`}
+                    onClick={() => handleSearchSelect(result)}
+                    className="w-full flex items-start gap-3 px-4 py-3 hover:bg-slate-50 text-left transition-colors"
+                  >
+                    <Building2 className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">{result.label}</div>
+                      <div className="text-xs text-slate-500">{result.sublabel}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <button
             onClick={() => setShowCompanyForm(true)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
           >
-            <Plus className="w-4 h-4" />
-            New Company
+            <Plus className="w-4 h-4" /> New Company
           </button>
         </header>
 
@@ -602,18 +778,15 @@ export default function AppRoot() {
           {selectedCompanyId ? (
             <CompanyDetail
               companyId={selectedCompanyId}
-              onBack={() => {
-                setSelectedCompanyId(null);
-                setInitialTab('overview');
-              }}
+              onBack={() => { setSelectedCompanyId(null); setInitialTab('overview'); }}
               initialTab={initialTab}
               onDataChanged={handleDataChanged}
               users={userOptions}
             />
+          ) : activeTab === 'pipeline' ? (
+            <KanbanBoard companies={companies} onCompanyClick={openCompany} onStatusChange={handleStatusChange} />
           ) : activeTab === 'contacts' ? (
-            <ContactsTab />
-          ) : activeTab === 'commissions' ? (
-            <CommissionsTab />
+            <ContactsTab onCompanyClick={openCompany} />
           ) : activeTab === 'research' ? (
             <ResearchTab users={userOptions} />
           ) : activeTab === 'followups' ? (
