@@ -119,10 +119,10 @@ export default function CompanyDetail({
   const socialMediaUrls = parseStringArray(company?.social_media_urls);
 
   const internalUsers = [
+    'Sageer A. Shaikh',
+    'Ahmad Khan',
     'Dr. Jochen Langguth',
     'Dr. Jürgen Schellenberger',
-    'Ahmad Khan',
-    'Sageer A. Shaikh',
     'Christoph Langguth',
     'Patton Lucas',
     'Dr. Kathrin Langguth'
@@ -294,6 +294,8 @@ export default function CompanyDetail({
       if (!res.ok) throw new Error(payload?.error || 'AI qualification failed');
       setCompany(payload);
       setCompanyForm(payload);
+      // Refresh contacts (AI may have added new ones)
+      await fetchData();
       await onDataChanged?.();
     } catch (err) {
       console.error(err);
@@ -363,6 +365,33 @@ export default function CompanyDetail({
               <span className="flex items-center gap-1"><Building2 className="w-4 h-4" /> {company.industry}</span>
               <span className="flex items-center gap-1"><Globe className="w-4 h-4" /> {company.city ? `${company.city}, ` : ''}{company.country}</span>
             </div>
+            {/* Quick info: website, main contact, social */}
+            <div className="flex items-center gap-3 mt-2 flex-wrap">
+              {company.website && (
+                <a href={company.website.startsWith('http') ? company.website : `https://${company.website}`} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded-full">
+                  <Globe className="w-3 h-3" /> {company.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                </a>
+              )}
+              {contacts.length > 0 && (
+                <span className="flex items-center gap-1 text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded-full">
+                  <Users className="w-3 h-3" /> {contacts[0].full_name}{contacts[0].job_title ? ` · ${contacts[0].job_title}` : ''}
+                  {contacts[0].email && <> · <a href={`mailto:${contacts[0].email}`} className="text-blue-600 hover:underline">{contacts[0].email}</a></>}
+                </span>
+              )}
+              {socialMediaUrls.map((url: string, i: number) => (
+                <a key={i} href={url} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 bg-purple-50 px-2 py-1 rounded-full">
+                  <Linkedin className="w-3 h-3" /> {url.replace(/^https?:\/\/(www\.)?/, '').split('/').slice(0, 2).join('/')}
+                </a>
+              ))}
+              {company.employee_count && (
+                <span className="text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded-full">{company.employee_count} employees</span>
+              )}
+              {company.revenue_eur && (
+                <span className="text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded-full">€{(company.revenue_eur/1000000).toFixed(1)}M revenue</span>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex gap-3 items-center">
@@ -402,7 +431,7 @@ export default function CompanyDetail({
       {/* Tabs */}
       <div className="border-b border-slate-200">
         <nav className="-mb-px flex space-x-8">
-          {['overview', 'contacts', 'activities', 'notes'].map((tab) => (
+          {['overview', 'contacts', 'activities', 'social', 'notes'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -412,7 +441,15 @@ export default function CompanyDetail({
                   : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
               }`}
             >
-              {tab === 'activities' ? 'Activity History' : tab === 'notes' ? (
+              {tab === 'activities' ? 'Activity History' : tab === 'social' ? (
+                <span className="flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5" />
+                  Social Media
+                  {socialMediaUrls.length > 0 && (
+                    <span className="bg-purple-100 text-purple-700 text-[10px] px-1.5 py-0.5 rounded-full font-medium">{socialMediaUrls.length}</span>
+                  )}
+                </span>
+              ) : tab === 'notes' ? (
                 <span className="flex items-center gap-1.5">
                   <MessageSquare className="w-3.5 h-3.5" />
                   Team Notes
@@ -710,6 +747,246 @@ export default function CompanyDetail({
             </div>
           </div>
         )}
+
+        {activeTab === 'social' && (() => {
+          let socialProfiles: Array<{ platform?: string; url?: string; followers?: string; lastActive?: string; lastPost?: string }> = [];
+          try { socialProfiles = JSON.parse(company.social_profiles_json || '[]'); } catch (e) {}
+          const platformIcon = (p: string) => {
+            const lower = p?.toLowerCase() || '';
+            if (lower.includes('linkedin')) return '🔗';
+            if (lower.includes('facebook')) return '📘';
+            if (lower.includes('instagram')) return '📷';
+            if (lower.includes('youtube')) return '🎥';
+            if (lower.includes('twitter') || lower.includes('x')) return '🐦';
+            return '🌐';
+          };
+          const platformColor = (p: string) => {
+            const lower = p?.toLowerCase() || '';
+            if (lower.includes('linkedin')) return 'border-blue-200 bg-blue-50';
+            if (lower.includes('facebook')) return 'border-indigo-200 bg-indigo-50';
+            if (lower.includes('instagram')) return 'border-pink-200 bg-pink-50';
+            if (lower.includes('youtube')) return 'border-red-200 bg-red-50';
+            if (lower.includes('twitter') || lower.includes('x')) return 'border-sky-200 bg-sky-50';
+            return 'border-slate-200 bg-slate-50';
+          };
+          const PLATFORMS = ['LinkedIn', 'Facebook', 'Instagram', 'YouTube', 'Twitter/X'];
+
+          const [editingProfiles, setEditingProfiles] = React.useState<typeof socialProfiles | null>(null);
+          const [savingProfiles, setSavingProfiles] = React.useState(false);
+
+          const startEditing = () => {
+            const current = socialProfiles.length > 0 ? [...socialProfiles] : PLATFORMS.map(p => ({ platform: p, url: '', followers: '', lastActive: '', lastPost: '' }));
+            setEditingProfiles(current);
+          };
+
+          const saveProfiles = async () => {
+            if (!editingProfiles) return;
+            setSavingProfiles(true);
+            try {
+              const filtered = editingProfiles.filter(p => p.url?.trim());
+              const res = await fetch(`/api/companies/${companyId}/social-profiles`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ profiles: filtered }),
+              });
+              if (res.ok) {
+                const updated = await res.json();
+                setCompany(updated);
+                setEditingProfiles(null);
+              }
+            } catch (err) { console.error(err); }
+            finally { setSavingProfiles(false); }
+          };
+
+          const updateEditProfile = (idx: number, field: string, value: string) => {
+            if (!editingProfiles) return;
+            const updated = [...editingProfiles];
+            updated[idx] = { ...updated[idx], [field]: value };
+            setEditingProfiles(updated);
+          };
+
+          const addEditProfile = () => {
+            if (!editingProfiles) return;
+            setEditingProfiles([...editingProfiles, { platform: '', url: '', followers: '', lastActive: '', lastPost: '' }]);
+          };
+
+          const removeEditProfile = (idx: number) => {
+            if (!editingProfiles) return;
+            setEditingProfiles(editingProfiles.filter((_, i) => i !== idx));
+          };
+
+          return (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-slate-900">Social Media Profiles</h3>
+                <div className="flex items-center gap-2">
+                  {!company.ai_qualified_at && (
+                    <button onClick={() => void handleAIQualify()} disabled={qualifying}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-60">
+                      <Sparkles className="w-3.5 h-3.5" /> {qualifying ? 'Researching...' : 'AI Discover'}
+                    </button>
+                  )}
+                  {!editingProfiles ? (
+                    <button onClick={startEditing}
+                      className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-sm font-medium">
+                      <Edit className="w-3.5 h-3.5" /> Edit Profiles
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditingProfiles(null)} className="px-3 py-1.5 text-sm text-slate-500 hover:text-slate-700">Cancel</button>
+                      <button onClick={() => void saveProfiles()} disabled={savingProfiles}
+                        className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-60">
+                        <Check className="w-3.5 h-3.5" /> {savingProfiles ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Overall social score */}
+              {company.ai_qualified_at && (
+                <div className="flex items-center gap-6 bg-slate-50 rounded-xl p-4 border border-slate-200">
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Social Score</div>
+                    <div className={`text-3xl font-bold ${(company.social_score || 0) >= 60 ? 'text-green-600' : (company.social_score || 0) >= 30 ? 'text-yellow-600' : 'text-red-500'}`}>
+                      {company.social_score ?? '-'}<span className="text-sm text-slate-400 font-normal">/100</span>
+                    </div>
+                  </div>
+                  <div className="h-12 w-px bg-slate-200" />
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Website Score</div>
+                    <div className={`text-3xl font-bold ${(company.website_score || 0) >= 60 ? 'text-green-600' : (company.website_score || 0) >= 30 ? 'text-yellow-600' : 'text-red-500'}`}>
+                      {company.website_score ?? '-'}<span className="text-sm text-slate-400 font-normal">/100</span>
+                    </div>
+                  </div>
+                  <div className="h-12 w-px bg-slate-200" />
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Status</div>
+                    <span className={`text-sm font-semibold ${company.social_media_active ? 'text-green-600' : 'text-slate-400'}`}>
+                      {company.social_media_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <div className="h-12 w-px bg-slate-200" />
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Profiles</div>
+                    <span className="text-sm font-semibold text-slate-900">{socialMediaUrls.length}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Edit mode */}
+              {editingProfiles ? (
+                <div className="space-y-3">
+                  {editingProfiles.map((profile, i) => (
+                    <div key={i} className="bg-white border border-slate-200 rounded-xl p-4">
+                      <div className="grid grid-cols-6 gap-3 items-end">
+                        <div>
+                          <label className="block text-[10px] uppercase text-slate-500 font-medium mb-1">Platform</label>
+                          <select value={profile.platform || ''} onChange={e => updateEditProfile(i, 'platform', e.target.value)}
+                            className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white">
+                            <option value="">Select...</option>
+                            {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-[10px] uppercase text-slate-500 font-medium mb-1">URL</label>
+                          <input type="text" value={profile.url || ''} onChange={e => updateEditProfile(i, 'url', e.target.value)}
+                            placeholder="https://linkedin.com/company/..."
+                            className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm font-mono text-xs" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase text-slate-500 font-medium mb-1">Followers</label>
+                          <input type="text" value={profile.followers || ''} onChange={e => updateEditProfile(i, 'followers', e.target.value)}
+                            placeholder="e.g. 5.2K"
+                            className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase text-slate-500 font-medium mb-1">Last Active</label>
+                          <input type="text" value={profile.lastActive || ''} onChange={e => updateEditProfile(i, 'lastActive', e.target.value)}
+                            placeholder="e.g. Active"
+                            className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm" />
+                        </div>
+                        <div className="flex items-end gap-1">
+                          <button onClick={() => removeEditProfile(i)} className="text-red-400 hover:text-red-600 p-1.5" title="Remove">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={addEditProfile}
+                    className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium">
+                    <Plus className="w-4 h-4" /> Add Profile
+                  </button>
+                </div>
+              ) : (
+                /* View mode */
+                <>
+                  {socialProfiles.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {socialProfiles.map((profile, i) => (
+                        <div key={i} className={`border rounded-xl p-4 ${platformColor(profile.platform || '')}`}>
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-2xl">{platformIcon(profile.platform || '')}</span>
+                              <div>
+                                <div className="font-semibold text-slate-900 text-sm">{profile.platform || 'Unknown'}</div>
+                                {profile.url && (
+                                  <a href={profile.url} target="_blank" rel="noreferrer"
+                                    className="text-xs text-blue-600 hover:underline truncate block max-w-[250px]">
+                                    {profile.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                            {profile.url && (
+                              <a href={profile.url} target="_blank" rel="noreferrer"
+                                className="text-xs text-slate-500 hover:text-blue-600 bg-white px-2 py-1 rounded-md border border-slate-200">
+                                Visit →
+                              </a>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <div className="text-[10px] uppercase text-slate-500 font-medium">Followers</div>
+                              <div className="text-sm font-semibold text-slate-900 mt-0.5">{profile.followers || 'Unknown'}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] uppercase text-slate-500 font-medium">Last Active</div>
+                              <div className="text-sm font-semibold text-slate-900 mt-0.5">{profile.lastActive || 'Unknown'}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] uppercase text-slate-500 font-medium">Last Post</div>
+                              <div className="text-xs text-slate-700 mt-0.5 line-clamp-2">{profile.lastPost || 'Unknown'}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : socialMediaUrls.length > 0 ? (
+                    <div className="space-y-3">
+                      {socialMediaUrls.map((url: string, i: number) => (
+                        <a key={i} href={url} target="_blank" rel="noreferrer"
+                          className="flex items-center gap-3 p-3 border border-slate-200 rounded-xl bg-white hover:bg-slate-50 transition-colors">
+                          <span className="text-xl">{platformIcon(url)}</span>
+                          <span className="text-sm text-blue-600 hover:underline truncate">{url}</span>
+                        </a>
+                      ))}
+                      <p className="text-xs text-slate-400 italic mt-2">Click "Edit Profiles" to correct URLs or add details.</p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
+                      <Globe className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                      <p className="text-sm">No social media profiles found yet.</p>
+                      <p className="text-xs mt-1">Click "Edit Profiles" to add manually, or run AI Qualify to discover them.</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {activeTab === 'contacts' && (
           <div className="space-y-6">

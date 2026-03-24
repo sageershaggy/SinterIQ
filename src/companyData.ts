@@ -4,10 +4,10 @@ export interface SelectOption {
 }
 
 export const internalUsers = [
+  'Sageer A. Shaikh',
+  'Ahmad Khan',
   'Dr. Jochen Langguth',
   'Dr. Juergen Schellenberger',
-  'Ahmad Khan',
-  'Sageer A. Shaikh',
   'Christoph Langguth',
   'Patton Lucas',
   'Dr. Kathrin Langguth',

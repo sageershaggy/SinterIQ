@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Mail, Phone, Linkedin, Building2, CheckCircle2, Search, Filter, X } from 'lucide-react';
+import { Mail, Phone, Linkedin, Building2, CheckCircle2, Search, Filter, X, Plus, UserPlus } from 'lucide-react';
 
 interface ContactsTabProps {
   onCompanyClick?: (id: number) => void;
@@ -7,26 +7,74 @@ interface ContactsTabProps {
 
 export default function ContactsTab({ onCompanyClick }: ContactsTabProps) {
   const [contacts, setContacts] = useState<any[]>([]);
+  const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [verifiedFilter, setVerifiedFilter] = useState<'all' | 'verified' | 'unverified'>('all');
+  const [companyFilter, setCompanyFilter] = useState('all');
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    company_id: '',
+    full_name: '',
+    job_title: '',
+    email: '',
+    phone_direct: '',
+    linkedin_url: '',
+    is_verified: false,
+  });
 
-  useEffect(() => {
-    fetch('/api/contacts')
-      .then((res) => res.json())
-      .then((data) => {
-        setContacts(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
+  const loadData = async () => {
+    try {
+      const [contactsRes, companiesRes] = await Promise.all([
+        fetch('/api/contacts'),
+        fetch('/api/companies'),
+      ]);
+      const [contactsData, companiesData] = await Promise.all([
+        contactsRes.json(),
+        companiesRes.json(),
+      ]);
+      setContacts(contactsData);
+      setCompanies(companiesData);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadData(); }, []);
+
+  const handleAddContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.full_name.trim() || !form.company_id) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          company_id: Number(form.company_id),
+          is_verified: form.is_verified ? 1 : 0,
+        }),
       });
-  }, []);
+      if (res.ok) {
+        setShowAddForm(false);
+        setForm({ company_id: '', full_name: '', job_title: '', email: '', phone_direct: '', linkedin_url: '', is_verified: false });
+        void loadData();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const filtered = contacts.filter((contact) => {
     if (verifiedFilter === 'verified' && !contact.is_verified) return false;
     if (verifiedFilter === 'unverified' && contact.is_verified) return false;
+    if (companyFilter !== 'all' && String(contact.company_id) !== companyFilter) return false;
     if (!searchQuery.trim()) return true;
     const q = searchQuery.trim().toLowerCase();
     return (
@@ -46,9 +94,111 @@ export default function ContactsTab({ onCompanyClick }: ContactsTabProps) {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">All Contacts</h1>
           <p className="text-sm text-slate-500 mt-1">{filtered.length} of {contacts.length} contacts</p>
         </div>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+          Add Contact
+        </button>
       </div>
 
-      <div className="flex items-center gap-3">
+      {/* Add Contact Form */}
+      {showAddForm && (
+        <form onSubmit={handleAddContact} className="bg-white border border-blue-200 rounded-xl shadow-sm p-5 space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <UserPlus className="w-5 h-5 text-blue-500" />
+            <h3 className="font-semibold text-slate-900">New Contact</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Company *</label>
+              <select
+                value={form.company_id}
+                onChange={e => setForm({ ...form, company_id: e.target.value })}
+                required
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
+              >
+                <option value="">Select company...</option>
+                {companies.map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.company_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Full Name *</label>
+              <input
+                type="text"
+                value={form.full_name}
+                onChange={e => setForm({ ...form, full_name: e.target.value })}
+                required
+                placeholder="John Doe"
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Job Title</label>
+              <input
+                type="text"
+                value={form.job_title}
+                onChange={e => setForm({ ...form, job_title: e.target.value })}
+                placeholder="Head of Maintenance"
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
+              <input
+                type="email"
+                value={form.email}
+                onChange={e => setForm({ ...form, email: e.target.value })}
+                placeholder="john@company.com"
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Phone</label>
+              <input
+                type="text"
+                value={form.phone_direct}
+                onChange={e => setForm({ ...form, phone_direct: e.target.value })}
+                placeholder="+49 123 456789"
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">LinkedIn URL</label>
+              <input
+                type="text"
+                value={form.linkedin_url}
+                onChange={e => setForm({ ...form, linkedin_url: e.target.value })}
+                placeholder="https://linkedin.com/in/..."
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-2">
+            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.is_verified}
+                onChange={e => setForm({ ...form, is_verified: e.target.checked })}
+                className="rounded"
+              />
+              Verified contact
+            </label>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setShowAddForm(false)} className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800">Cancel</button>
+              <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50">
+                {saving ? 'Saving...' : 'Add Contact'}
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {/* Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -64,6 +214,16 @@ export default function ContactsTab({ onCompanyClick }: ContactsTabProps) {
             </button>
           )}
         </div>
+        <select
+          value={companyFilter}
+          onChange={e => setCompanyFilter(e.target.value)}
+          className="bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+        >
+          <option value="all">All Companies</option>
+          {companies.map((c: any) => (
+            <option key={c.id} value={c.id}>{c.company_name}</option>
+          ))}
+        </select>
         <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-md p-1">
           {(['all', 'verified', 'unverified'] as const).map((v) => (
             <button
@@ -94,7 +254,9 @@ export default function ContactsTab({ onCompanyClick }: ContactsTabProps) {
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
-                    {searchQuery || verifiedFilter !== 'all' ? 'No contacts match the current filters.' : 'No contacts found.'}
+                    {searchQuery || verifiedFilter !== 'all' || companyFilter !== 'all'
+                      ? 'No contacts match the current filters.'
+                      : 'No contacts found. Click "Add Contact" to create one.'}
                   </td>
                 </tr>
               ) : (

@@ -22,13 +22,14 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { AppUser, Company } from './appTypes';
 import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
 import CompanyDetail from './CompanyDetail';
 import ContactsTab from './ContactsTab';
 import FollowUpsTab from './FollowUpsTab';
+import ImportTab from './ImportTab';
 import KanbanBoard from './KanbanBoard';
 import ResearchTab from './ResearchTab';
 import SettingsTab from './SettingsTab';
@@ -83,7 +84,7 @@ export default function AppRoot() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [initialTab, setInitialTab] = useState('overview');
   const [qualifyingId, setQualifyingId] = useState<number | null>(null);
-  const [importing, setImporting] = useState(false);
+
   const [showCompanyForm, setShowCompanyForm] = useState(false);
   const [savingCompany, setSavingCompany] = useState(false);
   const [companyForm, setCompanyForm] = useState<CompanyFormData>(emptyCompanyForm);
@@ -97,7 +98,6 @@ export default function AppRoot() {
   const [companyTypeFilter, setCompanyTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
 
   const loadCompanies = async () => {
@@ -255,35 +255,7 @@ export default function AppRoot() {
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setImporting(true);
-    const reader = new FileReader();
-    reader.onload = async (loadEvent) => {
-      try {
-        const workbook = XLSX.read(loadEvent.target?.result, { type: 'binary' });
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const importedRows = XLSX.utils.sheet_to_json(sheet);
-        const response = await fetch('/api/companies/import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ companies: importedRows }),
-        });
-        if (!response.ok) throw new Error('Import failed');
-        await loadCompanies();
-        setActiveTab('companies');
-        alert('Import successful.');
-      } catch (error) {
-        console.error(error);
-        alert('Failed to import file.');
-      } finally {
-        setImporting(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
+
 
   const handleCreateCompany = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -694,7 +666,7 @@ export default function AppRoot() {
     { key: 'research', label: 'Lead Research', icon: Search },
     { key: 'followups', label: 'Follow-ups', icon: CalendarClock },
     { key: 'tracking', label: 'Company Tracking', icon: Target },
-    { key: 'import', label: 'Import Leads', icon: Upload },
+    { key: 'import', label: 'Import Data', icon: Upload },
     { key: 'users', label: 'Users', icon: Users },
     { key: 'settings', label: 'Settings', icon: Bot },
   ];
@@ -725,6 +697,31 @@ export default function AppRoot() {
             </button>
           ))}
         </nav>
+        {/* User footer */}
+        <div className="p-4 border-t border-slate-800">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-xs text-white font-medium shrink-0">
+                {(() => { try { const u = JSON.parse(localStorage.getItem('sinteriq_user') || '{}'); return u.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2) || '?'; } catch { return '?'; } })()}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs text-white font-medium truncate">
+                  {(() => { try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').name || 'User'; } catch { return 'User'; } })()}
+                </div>
+                <div className="text-[10px] text-slate-500 truncate">
+                  {(() => { try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').role || ''; } catch { return ''; } })()}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => { localStorage.removeItem('sinteriq_user'); window.location.reload(); }}
+              className="text-slate-500 hover:text-red-400 text-xs font-medium transition-colors"
+              title="Sign out"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
       </aside>
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
@@ -788,7 +785,7 @@ export default function AppRoot() {
           ) : activeTab === 'contacts' ? (
             <ContactsTab onCompanyClick={openCompany} />
           ) : activeTab === 'research' ? (
-            <ResearchTab users={userOptions} />
+            <ResearchTab users={userOptions} onCompanyClick={openCompany} />
           ) : activeTab === 'followups' ? (
             <FollowUpsTab onCompanyClick={(id) => openCompany(id, 'activities')} onChange={setFollowUps} />
           ) : activeTab === 'tracking' ? (
@@ -800,25 +797,7 @@ export default function AppRoot() {
           ) : activeTab === 'settings' ? (
             <SettingsTab />
           ) : activeTab === 'import' ? (
-            <div className="space-y-6 max-w-2xl mx-auto mt-10">
-              <div className="text-center">
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Import Leads from D&B Hoovers</h1>
-                <p className="text-slate-500 mt-2">Upload your Excel or CSV file containing company and contact data.</p>
-              </div>
-              <div className="bg-white border-2 border-dashed border-slate-300 rounded-xl p-10 text-center hover:bg-slate-50 transition-colors">
-                <Upload className="w-10 h-10 text-slate-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-slate-900 mb-1">Upload a file</h3>
-                <p className="text-sm text-slate-500 mb-6">XLSX or CSV format up to 10MB</p>
-                <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={importing}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-md font-medium transition-colors disabled:opacity-50"
-                >
-                  {importing ? 'Importing...' : 'Select File'}
-                </button>
-              </div>
-            </div>
+            <ImportTab onImportComplete={loadCompanies} />
           ) : (
             renderCompanies()
           )}

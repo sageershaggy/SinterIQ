@@ -574,6 +574,7 @@ try { db.exec("ALTER TABLE companies ADD COLUMN sales_script TEXT;"); } catch (e
 try { db.exec("ALTER TABLE companies ADD COLUMN email_script TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN ai_qualified_at DATETIME;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN opportunity_notes TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN social_profiles_json TEXT;"); } catch (e) {}
 
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS notes (
@@ -582,6 +583,19 @@ try { db.exec(`
     author TEXT NOT NULL DEFAULT 'Team',
     message TEXT NOT NULL,
     type TEXT DEFAULT 'note',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`); } catch (e) {}
+
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS research_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_name TEXT NOT NULL,
+    website TEXT,
+    contacts_found INTEGER DEFAULT 0,
+    saved_to_company_id INTEGER,
+    saved_to_company_name TEXT,
+    results_json TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `); } catch (e) {}
@@ -991,6 +1005,19 @@ app.get('/api/activities/follow-ups', (req, res) => {
   }
 });
 
+app.put('/api/activities/:id/snooze', (req, res) => {
+  try {
+    const { days } = req.body;
+    if (!days || typeof days !== 'number') return res.status(400).json({ error: 'days is required' });
+    db.prepare(`
+      UPDATE activities SET follow_up_date = date(follow_up_date, '+' || ? || ' days') WHERE id = ?
+    `).run(days, req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to snooze follow-up' });
+  }
+});
+
 app.put('/api/activities/:id/done', (req, res) => {
   try {
     db.prepare('UPDATE activities SET follow_up_done = 1 WHERE id = ?').run(req.params.id);
@@ -1136,10 +1163,80 @@ app.post('/api/research/contacts', async (req, res) => {
     });
 
     const contacts = parseJsonResponse<any[]>(rawResponse, []);
+
+    // Log to research history
+    try {
+      db.prepare(
+        'INSERT INTO research_history (company_name, website, contacts_found, results_json) VALUES (?, ?, ?, ?)'
+      ).run(companyName, website, contacts.length, JSON.stringify(contacts));
+    } catch (e) { /* ignore logging errors */ }
+
     res.json(contacts);
   } catch (err) {
     console.error(err);
     sendApiError(res, err, 'Failed to research contacts');
+  }
+});
+
+// Research history
+app.get('/api/research/history', (req, res) => {
+  try {
+    const history = db.prepare(
+      'SELECT id, company_name, website, contacts_found, saved_to_company_id, saved_to_company_name, created_at FROM research_history ORDER BY created_at DESC LIMIT 50'
+    ).all();
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch research history' });
+  }
+});
+
+// Load previous research results
+app.get('/api/research/history/:id', (req, res) => {
+  try {
+    const entry = db.prepare('SELECT * FROM research_history WHERE id = ?').get(req.params.id) as any;
+    if (!entry) return res.status(404).json({ error: 'Not found' });
+    entry.results = JSON.parse(entry.results_json || '[]');
+    res.json(entry);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch research entry' });
+  }
+});
+
+// Add contacts to existing company
+app.post('/api/research/add-to-company', (req, res) => {
+  try {
+    const { companyId, contacts, historyId } = req.body;
+    if (!companyId || !Array.isArray(contacts)) return res.status(400).json({ error: 'companyId and contacts are required' });
+
+    const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
+    if (!company) return res.status(404).json({ error: 'Company not found' });
+
+    const existingContacts = db.prepare('SELECT full_name FROM contacts WHERE company_id = ?').all(companyId) as any[];
+    const existingNames = new Set(existingContacts.map((c: any) => c.full_name?.toLowerCase()));
+
+    const insertContact = db.prepare(
+      'INSERT INTO contacts (company_id, full_name, job_title, email, phone_direct, linkedin_url, notes) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+
+    let added = 0;
+    for (const contact of contacts) {
+      const name = (contact.full_name || '').trim();
+      if (!name) continue;
+      if (existingNames.has(name.toLowerCase())) continue;
+      insertContact.run(companyId, name, contact.job_title || '', contact.email || '', contact.phone_direct || '', contact.linkedin_url || '', 'Added from Lead Research');
+      added++;
+    }
+
+    // Update research history if provided
+    if (historyId) {
+      db.prepare('UPDATE research_history SET saved_to_company_id = ?, saved_to_company_name = ? WHERE id = ?')
+        .run(companyId, company.company_name, historyId);
+    }
+
+    res.json({ success: true, companyId, added, companyName: company.company_name });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to add contacts to company' });
   }
 });
 
@@ -1288,6 +1385,15 @@ app.post('/api/research/save', (req, res) => {
       );
     })();
 
+    // Update most recent research history entry for this company
+    try {
+      const companyObj = db.prepare('SELECT company_name FROM companies WHERE id = ?').get(companyId) as any;
+      db.prepare(
+        `UPDATE research_history SET saved_to_company_id = ?, saved_to_company_name = ?
+         WHERE id = (SELECT id FROM research_history WHERE company_name = ? ORDER BY created_at DESC LIMIT 1)`
+      ).run(companyId, companyObj?.company_name || normalizedCompanyName, normalizedCompanyName);
+    } catch (e) { /* ignore */ }
+
     res.json({ success: true, companyId, insertedContacts, matchedBy, updatedContacts });
   } catch (err) {
     console.error(err);
@@ -1340,16 +1446,20 @@ Return a JSON object with EXACTLY these fields:
   "technical_fit": <"HIGH" | "MEDIUM" | "LOW" | "NOT_FIT">,
   "product_fit": <"Ceramic Bearings" | "Hybrid Bearings" | "Ceramic Components" | "Multiple Products" | "None">,
   "category": <"STRATEGIC_PARTNER" | "BEARING_CUSTOMER" | "LOW_FIT" | "NO_FIT">,
+  "website": <string, the company's main website URL if found — IMPORTANT if company has no website set>,
+  "employee_count": <integer or null, estimated employee count if found>,
   "website_score": <integer 0-100, website quality and activity level>,
   "social_score": <integer 0-100, social media presence and activity>,
   "social_media_active": <boolean>,
-  "social_media_urls": <array of strings, LinkedIn/Twitter/etc URLs found>,
+  "social_media_urls": <array of strings, LinkedIn/Twitter/Facebook/Instagram/YouTube URLs found>,
+  "social_profiles": <array of objects with {platform, url, followers, lastActive, lastPost} — for each social media account found. platform is "LinkedIn"/"Facebook"/"Instagram"/"YouTube"/"Twitter/X". followers is a string like "5.2K" or "12,340" or "unknown". lastActive is approximate date string like "March 2026" or "Active" or "unknown". lastPost is a short description of their most recent post or "unknown">,
   "mentions_technology": <boolean, do they mention bearings, ceramics, precision components>,
   "reasoning": <string, 3-5 sentence strategic analysis explaining the score and fit — written for a sales manager>,
   "opportunity_notes": <string, specific opportunities or pain points relevant to ceramic bearings — be specific to their industry>,
   "approach_strategy": <string, 2-3 sentence recommended approach: who to contact, what angle to use, timing>,
   "sales_script": <string, 5-8 bullet talking points for a sales call — specific to this company and industry, mention their applications>,
-  "email_script": <string, complete cold outreach email — subject line + body, max 150 words, personalized to this company, mention a specific product application relevant to their industry>
+  "email_script": <string, complete cold outreach email — subject line + body, max 150 words, personalized to this company, mention a specific product application relevant to their industry>,
+  "key_contacts": <array of objects with {fullName, jobTitle, email, phone, linkedinUrl} — find 2-5 key decision makers (CEO, procurement, maintenance, engineering) from web/LinkedIn search. Leave fields as empty string if unknown>
 }`,
       useWebSearch: true,
     });
@@ -1360,6 +1470,8 @@ Return a JSON object with EXACTLY these fields:
       technical_fit?: string;
       product_fit?: string;
       category?: string;
+      website?: string;
+      employee_count?: number;
       website_score?: number;
       social_score?: number;
       social_media_active?: boolean;
@@ -1370,7 +1482,14 @@ Return a JSON object with EXACTLY these fields:
       approach_strategy?: string;
       sales_script?: string;
       email_script?: string;
+      social_profiles?: Array<{ platform?: string; url?: string; followers?: string; lastActive?: string; lastPost?: string }>;
+      key_contacts?: Array<{ fullName?: string; jobTitle?: string; email?: string; phone?: string; linkedinUrl?: string }>;
     }>(rawResponse, {});
+
+    console.log(`AI Qualify for ${company.company_name}: raw response length=${rawResponse.length}, parsed score=${result.score}, category=${result.category}`);
+    if (!result.score && !result.category) {
+      console.log('AI Qualify raw response (first 1000 chars):', rawResponse.substring(0, 1000));
+    }
 
     // Map category to lead_status
     let newStatus = 'QUALIFIED';
@@ -1379,12 +1498,19 @@ Return a JSON object with EXACTLY these fields:
     if (result.category === 'STRATEGIC_PARTNER') newStatus = 'APPROVED';
     const technicalFit = result.technical_fit === 'NO_FIT' ? 'NOT_FIT' : (result.technical_fit || null);
 
+    // Build dynamic SET clause — update website & employee_count only if currently empty
+    const websiteUpdate = !company.website && result.website ? result.website : null;
+    const employeeUpdate = !company.employee_count && result.employee_count ? result.employee_count : null;
+
     db.prepare(`
       UPDATE companies
       SET lead_score = ?, technical_fit = ?, qualification_notes = ?, lead_status = ?,
           product_fit = ?, social_media_urls = ?, social_media_active = ?, mentions_technology = ?,
           website_score = ?, social_score = ?, buying_probability = ?,
           approach_strategy = ?, sales_script = ?, email_script = ?, opportunity_notes = ?,
+          social_profiles_json = ?,
+          ${websiteUpdate ? 'website = ?,' : ''}
+          ${employeeUpdate ? 'employee_count = ?,' : ''}
           ai_qualified_at = CURRENT_TIMESTAMP,
           tracking_status = CASE
             WHEN ? IN ('APPROVED', 'QUALIFIED') THEN 'QUALIFIED'
@@ -1393,30 +1519,82 @@ Return a JSON object with EXACTLY these fields:
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
-      normalizeNullableNumber(result.score) || 0,
-      technicalFit,
-      normalizeOptionalString(result.reasoning),
-      newStatus,
-      normalizeOptionalString(result.product_fit),
-      JSON.stringify(Array.isArray(result.social_media_urls) ? result.social_media_urls : []),
-      result.social_media_active ? 1 : 0,
-      result.mentions_technology ? 1 : 0,
-      normalizeNullableNumber(result.website_score),
-      normalizeNullableNumber(result.social_score),
-      normalizeNullableNumber(result.buying_probability),
-      normalizeOptionalString(result.approach_strategy),
-      normalizeOptionalString(result.sales_script),
-      normalizeOptionalString(result.email_script),
-      normalizeOptionalString(result.opportunity_notes),
-      newStatus,
-      companyId
+      ...[
+        normalizeNullableNumber(result.score) || 0,
+        technicalFit,
+        normalizeOptionalString(result.reasoning),
+        newStatus,
+        normalizeOptionalString(result.product_fit),
+        JSON.stringify(Array.isArray(result.social_media_urls) ? result.social_media_urls : []),
+        result.social_media_active ? 1 : 0,
+        result.mentions_technology ? 1 : 0,
+        normalizeNullableNumber(result.website_score),
+        normalizeNullableNumber(result.social_score),
+        normalizeNullableNumber(result.buying_probability),
+        normalizeOptionalString(result.approach_strategy),
+        normalizeOptionalString(result.sales_script),
+        normalizeOptionalString(result.email_script),
+        normalizeOptionalString(result.opportunity_notes),
+        JSON.stringify(Array.isArray(result.social_profiles) ? result.social_profiles : []),
+        ...(websiteUpdate ? [websiteUpdate] : []),
+        ...(employeeUpdate ? [employeeUpdate] : []),
+        newStatus,
+        companyId,
+      ]
     );
+
+    // Auto-add discovered key contacts
+    if (Array.isArray(result.key_contacts) && result.key_contacts.length > 0) {
+      const existingContacts = db.prepare('SELECT full_name FROM contacts WHERE company_id = ?').all(companyId) as any[];
+      const existingNames = new Set(existingContacts.map((c: any) => c.full_name?.toLowerCase()));
+      const insertContact = db.prepare(
+        'INSERT INTO contacts (company_id, full_name, job_title, email, phone_direct, linkedin_url, notes) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      );
+      let added = 0;
+      for (const contact of result.key_contacts) {
+        if (!contact.fullName?.trim()) continue;
+        if (existingNames.has(contact.fullName.trim().toLowerCase())) continue;
+        insertContact.run(
+          companyId,
+          contact.fullName.trim(),
+          contact.jobTitle || '',
+          contact.email || '',
+          contact.phone || '',
+          contact.linkedinUrl || '',
+          'Added by AI Qualify'
+        );
+        added++;
+      }
+      if (added > 0) {
+        console.log(`AI Qualify: Added ${added} new contacts for company ${companyId}`);
+      }
+    }
 
     const updatedCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId);
     res.json(updatedCompany);
   } catch (error) {
     console.error('AI Qualification error:', error);
     sendApiError(res, error, 'AI qualification failed');
+  }
+});
+
+// Update social profiles (edit URLs, add/remove profiles)
+app.put('/api/companies/:id/social-profiles', (req, res) => {
+  try {
+    const companyId = req.params.id;
+    const { profiles } = req.body;
+    if (!Array.isArray(profiles)) return res.status(400).json({ error: 'profiles array required' });
+
+    // Update social_profiles_json and social_media_urls
+    const urls = profiles.map((p: any) => p.url).filter(Boolean);
+    db.prepare(`
+      UPDATE companies SET social_profiles_json = ?, social_media_urls = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(JSON.stringify(profiles), JSON.stringify(urls), companyId);
+
+    const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update social profiles' });
   }
 });
 
