@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -h \"fetch\\(''''/\" /d/Github/SinterIQ/src/*.tsx)",
+      "Bash(grep -E \"fetch\\\\\\(\" /d/Github/SinterIQ/src/*.tsx)",
+      "Bash(grep -E \"fetch\\\\\\(\\\\`\" /d/Github/SinterIQ/src/*.tsx)",
+      "Bash(grep -n \"useState\\\\|useEffect\" /d/Github/SinterIQ/src/*.tsx)",
+      "Bash(grep -h -o \"company\\\\.[a-zA-Z_]*\" /d/Github/SinterIQ/src/*.tsx)",
+      "Bash(grep -E \"^\\\\s+if.*useState|^\\\\s+if.*useEffect\" /d/Github/SinterIQ/src/*.tsx)",
+      "Bash(grep -h \"fetch\\(\" /d/Github/SinterIQ/src/*.tsx)",
+      "Bash(grep -v \"^//\")",
+      "Bash(npm ls:*)"
+    ]
+  }
+}

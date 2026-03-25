@@ -97,6 +97,14 @@ export default function CompanyDetail({
   const [copiedScript, setCopiedScript] = useState<string | null>(null);
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
+  // Social media editing state
+  const [editingProfiles, setEditingProfiles] = useState<Array<{ platform?: string; url?: string; followers?: string; lastActive?: string; lastPost?: string }> | null>(null);
+  const [savingProfiles, setSavingProfiles] = useState(false);
+
+  // Inline edit state for company details
+  const [editField, setEditField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+
   // Order Form State (kept for data integrity)
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [orderForm, setOrderForm] = useState({
@@ -569,84 +577,110 @@ export default function CompanyDetail({
             )}
 
             <div className="grid grid-cols-3 gap-6">
-              {/* Left: Company Details */}
-              <div className="col-span-1 space-y-4">
-                <h3 className="text-base font-semibold text-slate-900">Company Details</h3>
-                <dl className="space-y-3 text-sm">
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Type</dt>
-                    <dd className="text-slate-900 font-medium text-right">{company.company_type || '-'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Revenue</dt>
-                    <dd className="text-slate-900 font-medium">{company.revenue_eur ? `€${(company.revenue_eur/1000000).toFixed(1)}M` : '-'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Employees</dt>
-                    <dd className="text-slate-900 font-medium">{company.employee_count || '-'}</dd>
-                  </div>
-                  <div className="flex justify-between items-start gap-2">
-                    <dt className="text-slate-500 shrink-0">Website</dt>
-                    <dd className="text-right">
-                      {company.website
-                        ? <a href={company.website.startsWith('http') ? company.website : `https://${company.website}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-xs break-all">{company.website}</a>
-                        : <span className="text-slate-400 text-xs italic">Not set — run AI Qualify to find it</span>}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Region</dt>
-                    <dd className="text-slate-900 font-medium">{company.region || '-'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Source</dt>
-                    <dd className="text-slate-900 font-medium">{company.source || '-'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Assigned To</dt>
-                    <dd className="text-slate-900 font-medium">{company.assigned_to || 'Unassigned'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">DUNS</dt>
-                    <dd className="text-slate-900 font-medium">{company.duns_number || '-'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Corp. Parent</dt>
-                    <dd className="text-slate-900 font-medium">{company.corporate_parent || '-'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Subsidiary?</dt>
-                    <dd className="text-slate-900 font-medium">{company.is_subsidiary ? 'Yes' : 'No'}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Created</dt>
-                    <dd className="text-slate-600 text-xs">{company.created_at ? new Date(company.created_at).toLocaleDateString() : '-'}</dd>
-                  </div>
-                </dl>
+              {/* Left: Company Details — inline editable */}
+              {(() => {
+                const startEdit = (field: string, value: any) => { setEditField(field); setEditValue(value ?? ''); };
+                const cancelEdit = () => { setEditField(null); setEditValue(''); };
+                const saveField = async (field: string) => {
+                  const updates: any = { ...company, [field]: editValue };
+                  if (field === 'revenue_eur') updates.revenue_eur = editValue ? Number(editValue) : null;
+                  if (field === 'employee_count') updates.employee_count = editValue ? Number(editValue) : null;
+                  try {
+                    await fetch(`/api/companies/${companyId}`, {
+                      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(updates),
+                    });
+                    await fetchData();
+                    await onDataChanged?.();
+                  } catch (err) { console.error(err); }
+                  cancelEdit();
+                };
+                const handleKeyDown = (e: React.KeyboardEvent, field: string) => {
+                  if (e.key === 'Enter') void saveField(field);
+                  if (e.key === 'Escape') cancelEdit();
+                };
 
-                {/* Tracking */}
-                <div className="pt-4 border-t border-slate-100">
-                  <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-orange-500" /> Tracking
-                  </h4>
-                  <dl className="space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <dt className="text-slate-500">Level</dt>
-                      <dd className="font-medium text-slate-800">{company.tracking_level || 'WATCHLIST'}</dd>
+                const EditableField = ({ label, field, value, displayValue, type = 'text', options }: {
+                  label: string; field: string; value: any; displayValue?: string; type?: string;
+                  options?: Array<{ value: string; label: string }>;
+                }) => (
+                  <div className="flex justify-between items-center group min-h-[28px]">
+                    <dt className="text-slate-500 shrink-0">{label}</dt>
+                    {editField === field ? (
+                      <dd className="flex items-center gap-1">
+                        {options ? (
+                          <select value={editValue} onChange={e => setEditValue(e.target.value)}
+                            onBlur={() => void saveField(field)} autoFocus
+                            className="border border-blue-300 rounded px-1.5 py-0.5 text-xs w-36 bg-white outline-none focus:ring-1 focus:ring-blue-400">
+                            <option value="">—</option>
+                            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        ) : (
+                          <input type={type} value={editValue}
+                            onChange={e => setEditValue(e.target.value)}
+                            onBlur={() => void saveField(field)}
+                            onKeyDown={e => handleKeyDown(e, field)}
+                            autoFocus
+                            className="border border-blue-300 rounded px-1.5 py-0.5 text-xs w-36 outline-none focus:ring-1 focus:ring-blue-400 text-right" />
+                        )}
+                      </dd>
+                    ) : (
+                      <dd
+                        onClick={() => startEdit(field, value)}
+                        className="text-slate-900 font-medium text-right cursor-pointer hover:bg-blue-50 hover:text-blue-700 px-1.5 py-0.5 rounded transition-colors -mr-1.5 max-w-[180px] truncate"
+                        title="Click to edit"
+                      >
+                        {displayValue || value || '-'}
+                        <Edit2 className="w-2.5 h-2.5 inline ml-1 opacity-0 group-hover:opacity-40" />
+                      </dd>
+                    )}
+                  </div>
+                );
+
+                return (
+                  <div className="col-span-1 space-y-4">
+                    <h3 className="text-base font-semibold text-slate-900">Company Details</h3>
+                    <dl className="space-y-3 text-sm">
+                      <EditableField label="Type" field="company_type" value={company.company_type}
+                        options={companyTypeOptions.map(o => ({ value: o.value, label: o.label }))} />
+                      <EditableField label="Revenue" field="revenue_eur" value={company.revenue_eur || ''}
+                        displayValue={company.revenue_eur ? `€${(company.revenue_eur/1000000).toFixed(1)}M` : '-'} type="number" />
+                      <EditableField label="Employees" field="employee_count" value={company.employee_count || ''} type="number" />
+                      <EditableField label="Website" field="website" value={company.website || ''} />
+                      <EditableField label="Region" field="region" value={company.region}
+                        options={regionOptions.map(o => ({ value: o.value, label: o.label }))} />
+                      <EditableField label="Industry" field="industry" value={company.industry}
+                        options={industryOptions.map(o => ({ value: o.value, label: o.label }))} />
+                      <EditableField label="Assigned To" field="assigned_to" value={company.assigned_to}
+                        options={[{ value: '', label: 'Unassigned' }, ...internalUsers.map(u => ({ value: u, label: u }))]} />
+                      <EditableField label="DUNS" field="duns_number" value={company.duns_number || ''} />
+                      <EditableField label="Corp. Parent" field="corporate_parent" value={company.corporate_parent || ''} />
+                      <EditableField label="Source" field="source" value={company.source || ''} />
+                      <div className="flex justify-between">
+                        <dt className="text-slate-500">Created</dt>
+                        <dd className="text-slate-600 text-xs">{company.created_at ? new Date(company.created_at).toLocaleDateString() : '-'}</dd>
+                      </div>
+                    </dl>
+
+                    {/* Tracking */}
+                    <div className="pt-4 border-t border-slate-100">
+                      <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-orange-500" /> Tracking
+                      </h4>
+                      <dl className="space-y-2 text-xs">
+                        <EditableField label="Level" field="tracking_level" value={company.tracking_level || 'WATCHLIST'}
+                          options={[{ value: 'WATCHLIST', label: 'Watchlist' }, { value: 'ACTIVE', label: 'Active' }, { value: 'PRIORITY', label: 'Priority' }]} />
+                        <EditableField label="Status" field="tracking_status" value={company.tracking_status || 'PENDING'}
+                          options={[{ value: 'PENDING', label: 'Pending' }, { value: 'QUALIFIED', label: 'Qualified' }, { value: 'IN_PROGRESS', label: 'In Progress' }, { value: 'DONE', label: 'Done' }]} />
+                        <EditableField label="Next Date" field="next_tracking_date"
+                          value={company.next_tracking_date ? company.next_tracking_date.split('T')[0] : ''}
+                          displayValue={company.next_tracking_date ? new Date(company.next_tracking_date).toLocaleDateString() : '-'}
+                          type="date" />
+                      </dl>
                     </div>
-                    <div className="flex justify-between">
-                      <dt className="text-slate-500">Status</dt>
-                      <dd className="font-medium text-slate-800">{company.tracking_status || 'PENDING'}</dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-slate-500">Next Date</dt>
-                      <dd className="font-medium text-slate-800">{company.next_tracking_date ? new Date(company.next_tracking_date).toLocaleDateString() : '-'}</dd>
-                    </div>
-                  </dl>
-                  {company.tracking_notes && (
-                    <p className="text-xs text-slate-600 mt-2 italic">{company.tracking_notes}</p>
-                  )}
-                </div>
-              </div>
+                  </div>
+                );
+              })()}
 
               {/* Right: AI Intelligence (2/3 width) */}
               <div className="col-span-2 space-y-4">
@@ -770,9 +804,6 @@ export default function CompanyDetail({
             return 'border-slate-200 bg-slate-50';
           };
           const PLATFORMS = ['LinkedIn', 'Facebook', 'Instagram', 'YouTube', 'Twitter/X'];
-
-          const [editingProfiles, setEditingProfiles] = React.useState<typeof socialProfiles | null>(null);
-          const [savingProfiles, setSavingProfiles] = React.useState(false);
 
           const startEditing = () => {
             const current = socialProfiles.length > 0 ? [...socialProfiles] : PLATFORMS.map(p => ({ platform: p, url: '', followers: '', lastActive: '', lastPost: '' }));

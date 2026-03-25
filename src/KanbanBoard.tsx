@@ -13,6 +13,7 @@ const PIPELINE_STAGES = [
   { key: 'OPPORTUNITY', label: 'Opportunity', bg: 'bg-amber-50', border: 'border-amber-200', header: 'bg-amber-100 text-amber-700' },
   { key: 'WON', label: 'Won', bg: 'bg-emerald-50', border: 'border-emerald-200', header: 'bg-emerald-100 text-emerald-700' },
   { key: 'LOST', label: 'Lost', bg: 'bg-red-50', border: 'border-red-200', header: 'bg-red-100 text-red-700' },
+  { key: 'DISQUALIFIED', label: 'Disqualified', bg: 'bg-gray-50', border: 'border-gray-300', header: 'bg-gray-200 text-gray-700' },
 ];
 
 interface KanbanBoardProps {

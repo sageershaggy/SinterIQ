@@ -3,7 +3,6 @@ import {
   Activity,
   AlertCircle,
   Building2,
-  CalendarClock,
   CheckCircle2,
   Clock,
   Euro,
@@ -16,25 +15,22 @@ import {
   Plus,
   Search,
   Sparkles,
-  Target,
   TrendingUp,
   Upload,
   Users,
   X,
+  Download,
 } from 'lucide-react';
 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { AppUser, Company } from './appTypes';
 import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
 import CompanyDetail from './CompanyDetail';
-import ContactsTab from './ContactsTab';
 import FollowUpsTab from './FollowUpsTab';
 import ImportTab from './ImportTab';
 import KanbanBoard from './KanbanBoard';
 import ResearchTab from './ResearchTab';
 import SettingsTab from './SettingsTab';
-import TrackingTab from './TrackingTab';
-import UsersTab from './UsersTab';
 import { companyTypeOptions, industryOptions, internalUsers as defaultInternalUsers, leadStatusOptions } from './companyData';
 import { formatCompactEur, getDateOnly, isPastDate } from './formatters';
 
@@ -98,6 +94,10 @@ export default function AppRoot() {
   const [companyTypeFilter, setCompanyTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
   const searchRef = useRef<HTMLDivElement>(null);
 
   const loadCompanies = async () => {
@@ -124,6 +124,27 @@ export default function AppRoot() {
       if (response.ok) setRecentActivities(await response.json());
     } catch (_) {}
   };
+
+  // URL routing: read hash on load
+  useEffect(() => {
+    const hash = window.location.hash.replace('#/', '').replace('#', '');
+    if (hash.startsWith('company/')) {
+      const parts = hash.split('/');
+      setSelectedCompanyId(Number(parts[1]));
+      if (parts[2]) setInitialTab(parts[2]);
+    } else if (hash && ['dashboard', 'companies', 'pipeline', 'research', 'import', 'settings'].includes(hash)) {
+      setActiveTab(hash);
+    }
+  }, []);
+
+  // URL routing: update hash on navigation
+  useEffect(() => {
+    if (selectedCompanyId) {
+      window.history.replaceState(null, '', `#/company/${selectedCompanyId}`);
+    } else {
+      window.history.replaceState(null, '', `#/${activeTab}`);
+    }
+  }, [activeTab, selectedCompanyId]);
 
   useEffect(() => {
     const loadAppData = async () => {
@@ -168,11 +189,19 @@ export default function AppRoot() {
     if (industryFilter && company.industry !== industryFilter) return false;
     if (companyTypeFilter && company.company_type !== companyTypeFilter) return false;
     if (statusFilter && company.lead_status !== statusFilter) return false;
+    if (dateFrom && company.updated_at && company.updated_at < dateFrom) return false;
+    if (dateTo && company.updated_at && company.updated_at > dateTo + 'T23:59:59') return false;
     if (!searchQuery.trim()) return true;
     const haystack = [company.company_name, company.country, company.city, company.industry, company.company_type, company.assigned_to]
       .filter(Boolean).join(' ').toLowerCase();
     return haystack.includes(searchQuery.trim().toLowerCase());
   });
+
+  const totalPages = Math.ceil(filteredCompanies.length / PAGE_SIZE);
+  const paginatedCompanies = filteredCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, assignedFilter, industryFilter, companyTypeFilter, statusFilter, minScore, maxScore, dateFrom, dateTo]);
 
   const handleSearchChange = (query: string) => {
     setSearchQuery(query);
@@ -536,6 +565,27 @@ export default function AppRoot() {
           >
             <Filter className="w-4 h-4" /> Filters
           </button>
+          <button
+            onClick={() => {
+              const headers = ['Company Name','Type','Country','City','Industry','Region','Employees','Revenue','Website','Score','Tech Fit','Status','Assigned To','Updated At'];
+              const rows = filteredCompanies.map(c => [
+                c.company_name, c.company_type, c.country, c.city || '', c.industry, c.region || '',
+                c.employee_count || '', c.revenue_eur || '', c.website || '', c.lead_score ?? '',
+                c.technical_fit || '', c.lead_status, c.assigned_to || '', c.updated_at || ''
+              ]);
+              const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+              const blob = new Blob([csv], { type: 'text/csv' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `sinteriq_companies_${new Date().toISOString().split('T')[0]}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="flex items-center gap-2 border border-slate-300 bg-white hover:bg-slate-50 px-3 py-1.5 rounded-md text-sm font-medium text-slate-700 transition-colors"
+          >
+            <Download className="w-4 h-4" /> Export
+          </button>
         </div>
       </div>
 
@@ -562,6 +612,16 @@ export default function AppRoot() {
               {leadStatusOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Updated From</label>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Updated To</label>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none" />
+          </div>
         </div>
       )}
 
@@ -573,25 +633,24 @@ export default function AppRoot() {
               <th className="px-6 py-3 font-medium">Location</th>
               <th className="px-6 py-3 font-medium text-center">Contacts</th>
               <th className="px-6 py-3 font-medium">Score</th>
-              <th className="px-6 py-3 font-medium">Tech Fit</th>
-              <th className="px-6 py-3 font-medium">Status</th>
-              <th className="px-6 py-3 font-medium">Assigned To</th>
-              <th className="px-6 py-3 font-medium">Follow Up</th>
-              <th className="px-6 py-3 font-medium text-right">Revenue</th>
-              <th className="px-6 py-3 font-medium text-right">Actions</th>
+              <th className="px-4 py-3 font-medium">Tech Fit</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Assigned To</th>
+              <th className="px-4 py-3 font-medium">Updated</th>
+              <th className="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
             {loading ? (
               <tr>
-                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">Loading companies...</td>
+                <td colSpan={9} className="px-6 py-8 text-center text-slate-500">Loading companies...</td>
               </tr>
             ) : filteredCompanies.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">No companies matched the current filters.</td>
+                <td colSpan={9} className="px-6 py-8 text-center text-slate-500">No companies matched the current filters.</td>
               </tr>
             ) : (
-              filteredCompanies.map((company) => (
+              paginatedCompanies.map((company) => (
                 <tr key={company.id} onClick={() => openCompany(company.id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900">{company.company_name}</div>
@@ -612,7 +671,7 @@ export default function AppRoot() {
                     </button>
                   </td>
                   <td className="px-6 py-4">{company.lead_score ?? '-'}</td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-4">
                     {company.technical_fit ? (
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                         company.technical_fit === 'HIGH' ? 'bg-green-100 text-green-700' :
@@ -621,7 +680,7 @@ export default function AppRoot() {
                       }`}>{company.technical_fit.replace('_', ' ')}</span>
                     ) : <span className="text-slate-400 text-xs">-</span>}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-4">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                       company.lead_status === 'QUALIFIED' || company.lead_status === 'APPROVED' ? 'bg-green-100 text-green-700' :
                       company.lead_status === 'WON' ? 'bg-emerald-100 text-emerald-700' :
@@ -630,16 +689,11 @@ export default function AppRoot() {
                       'bg-slate-100 text-slate-600'
                     }`}>{company.lead_status.replace('_', ' ')}</span>
                   </td>
-                  <td className="px-6 py-4 text-slate-700 text-sm">{company.assigned_to || 'Unassigned'}</td>
-                  <td className="px-6 py-4">
-                    {company.follow_up_date ? (
-                      <span className={`text-xs font-medium ${isPastDate(company.follow_up_date) ? 'text-red-600' : 'text-slate-600'}`}>
-                        {new Date(company.follow_up_date).toLocaleDateString()}
-                      </span>
-                    ) : <span className="text-slate-400 text-xs">-</span>}
+                  <td className="px-4 py-4 text-slate-700 text-xs">{company.assigned_to || <span className="text-slate-400">—</span>}</td>
+                  <td className="px-4 py-4 text-slate-500 text-xs">
+                    {company.updated_at ? new Date(company.updated_at).toLocaleDateString() : '-'}
                   </td>
-                  <td className="px-6 py-4 text-right text-slate-700">{formatCompactEur(company.revenue_eur)}</td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-4 py-4 text-right">
                     <button
                       onClick={(e) => { e.stopPropagation(); void handleAIQualify(company.id); }}
                       disabled={qualifyingId === company.id}
@@ -655,19 +709,74 @@ export default function AppRoot() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+          <div className="text-sm text-slate-500">
+            Showing {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, filteredCompanies.length)} of {filteredCompanies.length}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+              className="px-2 py-1 text-xs rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-default"
+            >
+              First
+            </button>
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-2.5 py-1 text-xs rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-default"
+            >
+              ← Prev
+            </button>
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              let page: number;
+              if (totalPages <= 5) { page = i + 1; }
+              else if (currentPage <= 3) { page = i + 1; }
+              else if (currentPage >= totalPages - 2) { page = totalPages - 4 + i; }
+              else { page = currentPage - 2 + i; }
+              return (
+                <button
+                  key={page}
+                  onClick={() => setCurrentPage(page)}
+                  className={`px-2.5 py-1 text-xs rounded border ${
+                    currentPage === page
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {page}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="px-2.5 py-1 text-xs rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-default"
+            >
+              Next →
+            </button>
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+              className="px-2 py-1 text-xs rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-default"
+            >
+              Last
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 
   const navigationItems: Array<{ icon: LucideIcon; key: string; label: string }> = [
     { key: 'dashboard', label: 'Dashboard', icon: Activity },
-    { key: 'pipeline', label: 'Pipeline Board', icon: Kanban },
     { key: 'companies', label: 'Companies', icon: Building2 },
-    { key: 'contacts', label: 'Contacts', icon: Users },
+    { key: 'pipeline', label: 'Pipeline', icon: Kanban },
     { key: 'research', label: 'Lead Research', icon: Search },
-    { key: 'followups', label: 'Follow-ups', icon: CalendarClock },
-    { key: 'tracking', label: 'Company Tracking', icon: Target },
     { key: 'import', label: 'Import Data', icon: Upload },
-    { key: 'users', label: 'Users', icon: Users },
     { key: 'settings', label: 'Settings', icon: Bot },
   ];
 
@@ -780,20 +889,18 @@ export default function AppRoot() {
               onDataChanged={handleDataChanged}
               users={userOptions}
             />
+          ) : activeTab === 'dashboard' ? (
+            <div className="space-y-6">
+              {renderDashboard()}
+              {/* Action Items — follow-ups merged into dashboard */}
+              <div className="mt-2">
+                <FollowUpsTab onCompanyClick={(id) => openCompany(id, 'activities')} onChange={setFollowUps} />
+              </div>
+            </div>
           ) : activeTab === 'pipeline' ? (
             <KanbanBoard companies={companies} onCompanyClick={openCompany} onStatusChange={handleStatusChange} />
-          ) : activeTab === 'contacts' ? (
-            <ContactsTab onCompanyClick={openCompany} />
           ) : activeTab === 'research' ? (
             <ResearchTab users={userOptions} onCompanyClick={openCompany} />
-          ) : activeTab === 'followups' ? (
-            <FollowUpsTab onCompanyClick={(id) => openCompany(id, 'activities')} onChange={setFollowUps} />
-          ) : activeTab === 'tracking' ? (
-            <TrackingTab companies={companies} onCompanyClick={(id) => openCompany(id)} />
-          ) : activeTab === 'dashboard' ? (
-            renderDashboard()
-          ) : activeTab === 'users' ? (
-            <UsersTab users={users} onUsersChanged={loadUsers} />
           ) : activeTab === 'settings' ? (
             <SettingsTab />
           ) : activeTab === 'import' ? (
