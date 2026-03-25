@@ -9,7 +9,10 @@
       "Bash(grep -E \"^\\\\s+if.*useState|^\\\\s+if.*useEffect\" /d/Github/SinterIQ/src/*.tsx)",
       "Bash(grep -h \"fetch\\(\" /d/Github/SinterIQ/src/*.tsx)",
       "Bash(grep -v \"^//\")",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Bash(curl -s http://localhost:3000/api/companies/4)",
+      "Bash(node -e \":*)",
+      "Bash(curl -s http://localhost:3000/api/companies/4/notes)"
     ]
   }
 }

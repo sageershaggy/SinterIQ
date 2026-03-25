@@ -1072,6 +1072,21 @@ app.post('/api/companies/:id/notes', (req, res) => {
   }
 });
 
+app.delete('/api/companies/:id', (req, res) => {
+  try {
+    const companyId = req.params.id;
+    db.prepare('DELETE FROM contacts WHERE company_id = ?').run(companyId);
+    db.prepare('DELETE FROM activities WHERE company_id = ?').run(companyId);
+    db.prepare('DELETE FROM orders WHERE company_id = ?').run(companyId);
+    db.prepare('DELETE FROM notes WHERE company_id = ?').run(companyId);
+    db.prepare('DELETE FROM companies WHERE id = ?').run(companyId);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete company' });
+  }
+});
+
 app.patch('/api/companies/:id/status', (req, res) => {
   try {
     const newStatus = normalizeOptionalString(req.body.lead_status);

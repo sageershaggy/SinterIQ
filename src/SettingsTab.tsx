@@ -27,8 +27,9 @@ interface ProviderPreset {
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
+  // --- Google Gemini ---
   {
-    name: 'Gemini',
+    name: 'Gemini 2.5 Flash',
     type: 'gemini',
     provider_name: 'Gemini',
     model: 'gemini-2.5-flash',
@@ -37,18 +38,76 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     api_key_url: 'https://aistudio.google.com/apikey',
     supports_web_search: true,
     badge: 'Recommended',
-    description: 'Best for web research — includes Google Search grounding. Powers AI Qualify & Lead Research.',
+    description: 'Fast, cheap, web search grounding. Best for AI Qualify & Lead Research.',
   },
   {
-    name: 'GPT-4o (OpenAI)',
+    name: 'Gemini 2.5 Pro',
+    type: 'gemini',
+    provider_name: 'Gemini',
+    model: 'gemini-2.5-pro',
+    base_url: '',
+    api_key_label: 'Gemini API Key',
+    api_key_url: 'https://aistudio.google.com/apikey',
+    supports_web_search: true,
+    description: 'Most capable Gemini. Deep reasoning + web search. Higher cost.',
+  },
+  {
+    name: 'Gemini 3.1 Pro',
+    type: 'gemini',
+    provider_name: 'Gemini',
+    model: 'gemini-3.1-pro',
+    base_url: '',
+    api_key_label: 'Gemini API Key',
+    api_key_url: 'https://aistudio.google.com/apikey',
+    supports_web_search: true,
+    badge: 'Latest',
+    description: 'Latest Gemini 3.1 Pro. Best-in-class reasoning + web search grounding.',
+  },
+  {
+    name: 'Gemini 3.1 Flash',
+    type: 'gemini',
+    provider_name: 'Gemini',
+    model: 'gemini-3.1-flash',
+    base_url: '',
+    api_key_label: 'Gemini API Key',
+    api_key_url: 'https://aistudio.google.com/apikey',
+    supports_web_search: true,
+    description: 'Latest Gemini 3.1 Flash. Ultra-fast + web search at lowest cost.',
+  },
+  // --- OpenAI ---
+  {
+    name: 'GPT-5.4 (OpenAI)',
     type: 'openai_compatible',
     provider_name: 'OpenAI',
-    model: 'gpt-4o',
+    model: 'gpt-5.4',
     base_url: 'https://api.openai.com/v1',
     api_key_label: 'OpenAI API Key',
     api_key_url: 'https://platform.openai.com/api-keys',
     supports_web_search: false,
-    description: 'OpenAI GPT-4o — high quality, no built-in web search.',
+    badge: 'Latest',
+    description: 'Latest GPT-5.4 — most capable OpenAI model for deep analysis.',
+  },
+  {
+    name: 'GPT-5.4-mini (OpenAI)',
+    type: 'openai_compatible',
+    provider_name: 'OpenAI',
+    model: 'gpt-5.4-mini',
+    base_url: 'https://api.openai.com/v1',
+    api_key_label: 'OpenAI API Key',
+    api_key_url: 'https://platform.openai.com/api-keys',
+    supports_web_search: false,
+    description: 'Fast, cheap GPT-5.4-mini. Great for high-volume qualification.',
+  },
+  {
+    name: 'GPT-4.1 (OpenAI)',
+    type: 'openai_compatible',
+    provider_name: 'OpenAI',
+    model: 'gpt-4.1',
+    base_url: 'https://api.openai.com/v1',
+    api_key_label: 'OpenAI API Key',
+    api_key_url: 'https://platform.openai.com/api-keys',
+    supports_web_search: false,
+    description: 'GPT-4.1 — proven, reliable for complex analysis.',
   },
   {
     name: 'GPT-4.1-mini (OpenAI)',
@@ -59,21 +118,102 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     api_key_label: 'OpenAI API Key',
     api_key_url: 'https://platform.openai.com/api-keys',
     supports_web_search: false,
-    description: 'Faster, cheaper GPT-4.1-mini for high-volume qualification.',
+    description: 'Budget GPT-4.1-mini. Good balance of cost and quality.',
   },
   {
-    name: 'Claude 3.5 Sonnet (Anthropic)',
+    name: 'o4-mini (OpenAI)',
+    type: 'openai_compatible',
+    provider_name: 'OpenAI',
+    model: 'o4-mini',
+    base_url: 'https://api.openai.com/v1',
+    api_key_label: 'OpenAI API Key',
+    api_key_url: 'https://platform.openai.com/api-keys',
+    supports_web_search: false,
+    description: 'OpenAI reasoning model. Step-by-step thinking for complex qualification.',
+  },
+  // --- Anthropic Claude ---
+  {
+    name: 'Claude Opus 4.7 (Anthropic)',
     type: 'openai_compatible',
     provider_name: 'Anthropic',
-    model: 'claude-sonnet-4-5',
+    model: 'claude-opus-4-7',
     base_url: 'https://api.anthropic.com/v1',
     api_key_label: 'Anthropic API Key',
     api_key_url: 'https://console.anthropic.com/settings/keys',
     supports_web_search: false,
-    description: 'Excellent reasoning and analysis. Requires OpenAI-compatible proxy or use the Anthropic API.',
+    badge: 'Latest',
+    description: 'Latest Claude Opus 4.7. Most capable Claude — premium reasoning & writing.',
   },
   {
-    name: 'Llama 3.3 (Groq)',
+    name: 'Claude Sonnet 4.7 (Anthropic)',
+    type: 'openai_compatible',
+    provider_name: 'Anthropic',
+    model: 'claude-sonnet-4-7',
+    base_url: 'https://api.anthropic.com/v1',
+    api_key_label: 'Anthropic API Key',
+    api_key_url: 'https://console.anthropic.com/settings/keys',
+    supports_web_search: false,
+    description: 'Latest Claude Sonnet 4.7. Best speed-to-quality ratio for sales scripts.',
+  },
+  {
+    name: 'Claude Opus 4 (Anthropic)',
+    type: 'openai_compatible',
+    provider_name: 'Anthropic',
+    model: 'claude-opus-4-0-20250514',
+    base_url: 'https://api.anthropic.com/v1',
+    api_key_label: 'Anthropic API Key',
+    api_key_url: 'https://console.anthropic.com/settings/keys',
+    supports_web_search: false,
+    description: 'Claude Opus 4. Excellent reasoning, analysis & writing.',
+  },
+  {
+    name: 'Claude Sonnet 4 (Anthropic)',
+    type: 'openai_compatible',
+    provider_name: 'Anthropic',
+    model: 'claude-sonnet-4-0-20250514',
+    base_url: 'https://api.anthropic.com/v1',
+    api_key_label: 'Anthropic API Key',
+    api_key_url: 'https://console.anthropic.com/settings/keys',
+    supports_web_search: false,
+    description: 'Claude Sonnet 4. Strong balance of speed & quality.',
+  },
+  {
+    name: 'Claude Haiku 3.5 (Anthropic)',
+    type: 'openai_compatible',
+    provider_name: 'Anthropic',
+    model: 'claude-3-5-haiku-20241022',
+    base_url: 'https://api.anthropic.com/v1',
+    api_key_label: 'Anthropic API Key',
+    api_key_url: 'https://console.anthropic.com/settings/keys',
+    supports_web_search: false,
+    description: 'Fast & affordable Claude. Good for bulk qualification.',
+  },
+  // --- Meta / Groq ---
+  {
+    name: 'Llama 4 Maverick (Groq)',
+    type: 'openai_compatible',
+    provider_name: 'Groq',
+    model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+    base_url: 'https://api.groq.com/openai/v1',
+    api_key_label: 'Groq API Key',
+    api_key_url: 'https://console.groq.com/keys',
+    supports_web_search: false,
+    badge: 'Fast & Free',
+    description: 'Latest Llama 4 Maverick 128 experts. Top open-source on Groq.',
+  },
+  {
+    name: 'Llama 4 Scout (Groq)',
+    type: 'openai_compatible',
+    provider_name: 'Groq',
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    base_url: 'https://api.groq.com/openai/v1',
+    api_key_label: 'Groq API Key',
+    api_key_url: 'https://console.groq.com/keys',
+    supports_web_search: false,
+    description: 'Llama 4 Scout 16 experts. Fast inference, generous free tier.',
+  },
+  {
+    name: 'Llama 3.3 70B (Groq)',
     type: 'openai_compatible',
     provider_name: 'Groq',
     model: 'llama-3.3-70b-versatile',
@@ -81,11 +221,22 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     api_key_label: 'Groq API Key',
     api_key_url: 'https://console.groq.com/keys',
     supports_web_search: false,
-    badge: 'Fast & Free',
-    description: 'Ultra-fast inference, generous free tier. Great for testing.',
+    description: 'Proven Llama 3.3 70B. Reliable, free tier available.',
   },
   {
-    name: 'DeepSeek V3',
+    name: 'DeepSeek R1 (Groq)',
+    type: 'openai_compatible',
+    provider_name: 'Groq',
+    model: 'deepseek-r1-distill-llama-70b',
+    base_url: 'https://api.groq.com/openai/v1',
+    api_key_label: 'Groq API Key',
+    api_key_url: 'https://console.groq.com/keys',
+    supports_web_search: false,
+    description: 'DeepSeek R1 distilled on Groq. Ultra-fast reasoning at no cost.',
+  },
+  // --- DeepSeek ---
+  {
+    name: 'DeepSeek V3 (0324)',
     type: 'openai_compatible',
     provider_name: 'DeepSeek',
     model: 'deepseek-chat',
@@ -94,10 +245,22 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     api_key_url: 'https://platform.deepseek.com/api_keys',
     supports_web_search: false,
     badge: 'Cost-efficient',
-    description: 'Very cheap per token, strong reasoning. Good for bulk qualification.',
+    description: 'Latest DeepSeek V3. Very cheap, strong reasoning for bulk tasks.',
   },
   {
-    name: 'Mistral Large (Mistral AI)',
+    name: 'DeepSeek R1',
+    type: 'openai_compatible',
+    provider_name: 'DeepSeek',
+    model: 'deepseek-reasoner',
+    base_url: 'https://api.deepseek.com/v1',
+    api_key_label: 'DeepSeek API Key',
+    api_key_url: 'https://platform.deepseek.com/api_keys',
+    supports_web_search: false,
+    description: 'DeepSeek reasoning model. Chain-of-thought for complex qualification.',
+  },
+  // --- Mistral ---
+  {
+    name: 'Mistral Large (2025)',
     type: 'openai_compatible',
     provider_name: 'Mistral',
     model: 'mistral-large-latest',
@@ -105,8 +268,43 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     api_key_label: 'Mistral API Key',
     api_key_url: 'https://console.mistral.ai/api-keys',
     supports_web_search: false,
-    description: 'Strong European AI model. Good multilingual support (German/Arabic/English).',
+    description: 'Top Mistral model. Strong multilingual (German/Arabic/English).',
   },
+  {
+    name: 'Mistral Small (2025)',
+    type: 'openai_compatible',
+    provider_name: 'Mistral',
+    model: 'mistral-small-latest',
+    base_url: 'https://api.mistral.ai/v1',
+    api_key_label: 'Mistral API Key',
+    api_key_url: 'https://console.mistral.ai/api-keys',
+    supports_web_search: false,
+    description: 'Fast & cheap Mistral. Good for simple scoring and filtering.',
+  },
+  // --- xAI ---
+  {
+    name: 'Grok 3 (xAI)',
+    type: 'openai_compatible',
+    provider_name: 'xAI',
+    model: 'grok-3',
+    base_url: 'https://api.x.ai/v1',
+    api_key_label: 'xAI API Key',
+    api_key_url: 'https://console.x.ai',
+    supports_web_search: false,
+    description: 'xAI Grok 3. Strong reasoning, real-time knowledge from X/Twitter.',
+  },
+  {
+    name: 'Grok 3 Mini (xAI)',
+    type: 'openai_compatible',
+    provider_name: 'xAI',
+    model: 'grok-3-mini',
+    base_url: 'https://api.x.ai/v1',
+    api_key_label: 'xAI API Key',
+    api_key_url: 'https://console.x.ai',
+    supports_web_search: false,
+    description: 'Lightweight Grok. Fast reasoning at lower cost.',
+  },
+  // --- Local / Self-hosted ---
   {
     name: 'Ollama (Local)',
     type: 'openai_compatible',
@@ -116,7 +314,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     api_key_label: 'API Key (leave blank for local)',
     api_key_url: 'https://ollama.com',
     supports_web_search: false,
-    description: 'Run models locally — no data leaves your machine. Requires Ollama installed.',
+    description: 'Run models locally — no data leaves your machine.',
   },
   {
     name: 'Custom / Other',
@@ -317,20 +515,43 @@ export default function SettingsTab() {
           </div>
 
           {/* Status info */}
-          <div className={`rounded-lg border p-4 text-sm space-y-1 ${
-            settings.has_api_key ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'
+          <div className={`rounded-lg border p-4 text-sm space-y-2 ${
+            settings.has_api_key ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
           }`}>
             <div className="flex items-center gap-2 font-medium text-slate-900">
               <Bot className="w-4 h-4 text-indigo-500" />
-              <span>Active source: <span className="text-indigo-700">{settings.source}</span></span>
+              <span>API Key: {settings.has_api_key
+                ? <span className="text-green-700">Configured ({settings.source === 'environment' ? 'System .env' : settings.source === 'database' ? 'Saved in app' : settings.source})</span>
+                : <span className="text-red-700">Not configured — AI features will not work</span>
+              }</span>
               {settings.has_api_key && <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto" />}
             </div>
             <p className="text-slate-600">
               {settings.provider_type === 'gemini'
                 ? 'Gemini uses built-in Google Search for real-time web research during AI qualification.'
-                : `OpenAI-compatible mode — web search not automatic. AI uses company website context fetched at query time. Works with ${settings.provider_name || 'any compatible endpoint'}.`
+                : `OpenAI-compatible mode — web search not automatic. Works with ${settings.provider_name || 'any compatible endpoint'}.`
               }
             </p>
+          </div>
+
+          {/* System-level API key info */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm space-y-2">
+            <div className="font-medium text-slate-800 flex items-center gap-2">
+              <svg className="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+              System-Level API Key (Server Admin)
+            </div>
+            <p className="text-slate-500 text-xs leading-relaxed">
+              For production: set the API key as an environment variable instead of entering it in the UI. This keeps the key secure and applies to all team members automatically.
+            </p>
+            <div className="bg-white border border-slate-200 rounded-md p-3 font-mono text-xs text-slate-700 space-y-1">
+              <div><span className="text-slate-400"># Create .env.local in project root:</span></div>
+              <div>GEMINI_API_KEY=<span className="text-blue-600">your-gemini-key-here</span></div>
+              <div className="text-slate-400 mt-2"># Or for OpenAI-compatible providers:</div>
+              <div>LLM_API_KEY=<span className="text-blue-600">your-openai-key-here</span></div>
+              <div>LLM_BASE_URL=<span className="text-blue-600">https://api.openai.com/v1</span></div>
+              <div>LLM_MODEL=<span className="text-blue-600">gpt-4.1</span></div>
+            </div>
+            <p className="text-slate-400 text-xs">Restart the server after changing .env.local. System keys take precedence when no key is saved in the UI.</p>
           </div>
         </div>
 

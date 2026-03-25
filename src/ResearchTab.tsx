@@ -200,6 +200,33 @@ export default function ResearchTab({ users, onCompanyClick }: { users: string[]
           </form>
         </div>
 
+        {/* D&B Hoovers Search Keywords */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">D&B Hoovers Search Keywords (German/English)</h3>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              'Wälzlager', 'Gleitlager', 'Kugellager', 'Keramiklager',
+              'Bearing Trader', 'Ceramic Bearings', 'Hybrid Bearings',
+              'Lebensmitteltechnik', 'Food Processing',
+              'Chemiepumpen', 'Chemical Pumps',
+              'Pharmatechnik', 'Pharmaceutical Equipment',
+              'Entsalzung', 'Desalination',
+              'Öl und Gas', 'Oil & Gas',
+              'Vakuumtechnik', 'Vacuum Technology',
+              'Kryotechnik', 'Cryogenic',
+              'Galvanotechnik', 'Electroplating',
+              'Zementwerk', 'Cement Plant',
+              'Bergbau', 'Mining Equipment',
+            ].map(kw => (
+              <button key={kw} type="button"
+                onClick={() => { setCompanyName(kw); }}
+                className="text-xs bg-white border border-slate-200 px-2 py-1 rounded-md text-slate-600 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors cursor-pointer">
+                {kw}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
         {saveMessage && <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> {saveMessage}</div>}
 

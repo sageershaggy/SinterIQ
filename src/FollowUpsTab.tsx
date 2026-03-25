@@ -185,6 +185,9 @@ export default function FollowUpsTab({
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Follow-ups Queue</h1>
           <p className="text-sm text-slate-500 mt-1">{filtered.length} pending follow-ups</p>
         </div>
+        <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2">
+          To add a follow-up, log an activity on any company's <strong>Activity History</strong> tab and set a follow-up date.
+        </div>
       </div>
 
       {/* Filters */}

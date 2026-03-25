@@ -10,6 +10,8 @@ import {
   trackingStatusOptions,
 } from './companyData';
 import { formatCompactEur, formatEur, parseStringArray } from './formatters';
+import ErrorBoundary from './ErrorBoundary';
+import { showToast } from './Toast';
 
 interface Contact {
   id: number;
@@ -84,7 +86,7 @@ export default function CompanyDetail({
   const [activityForm, setActivityForm] = useState({
     activity_type: 'CALL_MADE',
     activity_date: new Date().toISOString().split('T')[0],
-    performed_by: users[0] || 'System',
+    performed_by: users.find(u => u.includes('Sageer')) || users[0] || 'System',
     subject: '',
     details: '',
     outcome: 'NEUTRAL',
@@ -120,7 +122,7 @@ export default function CompanyDetail({
   // Notes (Team Communication) State
   const [notes, setNotes] = useState<Array<{ id: number; author: string; message: string; type: string; created_at: string }>>([]);
   const [noteText, setNoteText] = useState('');
-  const [noteAuthor, setNoteAuthor] = useState(users[0] || 'Team');
+  const [noteAuthor, setNoteAuthor] = useState(users.find(u => u.includes('Sageer')) || users[0] || 'Team');
   const [submittingNote, setSubmittingNote] = useState(false);
   const notesEndRef = useRef<HTMLDivElement>(null);
 
@@ -305,9 +307,11 @@ export default function CompanyDetail({
       // Refresh contacts (AI may have added new ones)
       await fetchData();
       await onDataChanged?.();
+      showToast('success', 'AI Qualification complete', `Score: ${payload.lead_score || 0} | Status: ${payload.lead_status}`);
     } catch (err) {
       console.error(err);
-      alert(err instanceof Error ? err.message : 'AI qualification failed');
+      const msg = err instanceof Error ? err.message : 'AI qualification failed';
+      showToast('error', 'AI Qualification failed', msg + '. Check Settings to ensure your API key is configured.');
     } finally {
       setQualifying(false);
     }
@@ -473,6 +477,7 @@ export default function CompanyDetail({
 
       {/* Tab Content */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <ErrorBoundary>
         {activeTab === 'overview' && (
           <div className="space-y-6">
 
@@ -677,6 +682,21 @@ export default function CompanyDetail({
                           displayValue={company.next_tracking_date ? new Date(company.next_tracking_date).toLocaleDateString() : '-'}
                           type="date" />
                       </dl>
+                    </div>
+
+                    {/* Data Compliance */}
+                    <div className="pt-3 border-t border-slate-100 mt-3">
+                      <h4 className="text-xs font-semibold text-slate-600 mb-2 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> Compliance
+                      </h4>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded-full font-medium">Compliant</span>
+                        <span className="text-[10px] text-slate-400">Sintertechnik-approved</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1">
+                        Source: <span className="font-medium text-slate-600">{company.source || 'MANUAL'}</span>
+                        {company.ai_qualified_at && <span> · AI {new Date(company.ai_qualified_at).toLocaleDateString()}</span>}
+                      </div>
                     </div>
                   </div>
                 );
@@ -1125,11 +1145,110 @@ export default function CompanyDetail({
                         </div>
                       )}
                     </div>
-                    <div className="text-sm text-slate-500 mb-3">{contact.job_title || 'No title'}</div>
+                    <div className="text-sm text-slate-500 mb-3 flex items-center gap-2">
+                      {contact.job_title || 'No title'}
+                      {(() => {
+                        const t = (contact.job_title || '').toLowerCase();
+                        if (t.includes('maintenance') || t.includes('r&m') || t.includes('instandhaltung'))
+                          return <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-bold shrink-0">HIGHEST</span>;
+                        if (t.includes('production') || t.includes('r&d') || t.includes('research') || t.includes('fertigung'))
+                          return <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold shrink-0">HIGH</span>;
+                        if (t.includes('cto') || t.includes('technical director') || t.includes('owner') || t.includes('geschäftsführer') || t.includes('managing'))
+                          return <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-bold shrink-0">MEDIUM</span>;
+                        if (t.includes('ceo') || t.includes('director') || t.includes('leiter'))
+                          return <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold shrink-0">LOW</span>;
+                        if (t.includes('purchasing') || t.includes('einkauf') || t.includes('procurement'))
+                          return <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-bold shrink-0">AVOID</span>;
+                        return null;
+                      })()}
+                    </div>
                     <div className="space-y-2 mt-auto">
                       {contact.email && <div className="flex items-center gap-2 text-sm text-slate-600"><Mail className="w-4 h-4 text-slate-400" /> <a href={`mailto:${contact.email}`} className="hover:text-blue-600">{contact.email}</a></div>}
                       {contact.phone_direct && <div className="flex items-center gap-2 text-sm text-slate-600"><Phone className="w-4 h-4 text-slate-400" /> {contact.phone_direct}</div>}
                       {contact.linkedin_url && <div className="flex items-center gap-2 text-sm text-slate-600"><Linkedin className="w-4 h-4 text-slate-400" /> <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className="hover:text-blue-600">LinkedIn Profile</a></div>}
+                    </div>
+                    {/* Quick log actions */}
+                    <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-slate-100">
+                      {contact.phone_direct && (
+                        <button
+                          onClick={async () => {
+                            const subject = prompt('Call subject:', `Call with ${contact.full_name}`);
+                            if (!subject) return;
+                            const outcome = prompt('Outcome (Positive/Neutral/Negative):', 'Neutral');
+                            try {
+                              await fetch('/api/activities', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  company_id: companyId, contact_id: contact.id,
+                                  activity_type: 'CALL_MADE', activity_date: new Date().toISOString().split('T')[0],
+                                  performed_by: users.find(u => u.includes('Sageer')) || users[0] || 'System',
+                                  subject, details: `Called ${contact.full_name} (${contact.job_title || ''}) at ${contact.phone_direct}`,
+                                  outcome: (outcome || 'NEUTRAL').toUpperCase(),
+                                }),
+                              });
+                              showToast('success', 'Call logged', `${contact.full_name}`);
+                              await fetchData();
+                            } catch { showToast('error', 'Failed to log call'); }
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 text-xs bg-green-50 text-green-700 border border-green-200 rounded-md hover:bg-green-100 transition-colors font-medium"
+                        >
+                          <Phone className="w-3 h-3" /> Log Call
+                        </button>
+                      )}
+                      {contact.email && (
+                        <button
+                          onClick={async () => {
+                            const subject = prompt('Email subject:', `Email to ${contact.full_name}`);
+                            if (!subject) return;
+                            try {
+                              await fetch('/api/activities', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  company_id: companyId, contact_id: contact.id,
+                                  activity_type: 'EMAIL_SENT', activity_date: new Date().toISOString().split('T')[0],
+                                  performed_by: users.find(u => u.includes('Sageer')) || users[0] || 'System',
+                                  subject, details: `Emailed ${contact.full_name} (${contact.job_title || ''}) at ${contact.email}`,
+                                  outcome: 'NEUTRAL',
+                                }),
+                              });
+                              showToast('success', 'Email logged', `${contact.full_name}`);
+                              window.open(`mailto:${contact.email}?subject=${encodeURIComponent(subject)}`, '_blank');
+                              await fetchData();
+                            } catch { showToast('error', 'Failed to log email'); }
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors font-medium"
+                        >
+                          <Mail className="w-3 h-3" /> Log Email
+                        </button>
+                      )}
+                      {contact.linkedin_url && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await fetch('/api/activities', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  company_id: companyId, contact_id: contact.id,
+                                  activity_type: 'LINKEDIN_MESSAGE', activity_date: new Date().toISOString().split('T')[0],
+                                  performed_by: users.find(u => u.includes('Sageer')) || users[0] || 'System',
+                                  subject: `LinkedIn message to ${contact.full_name}`,
+                                  details: `Sent LinkedIn message to ${contact.full_name} (${contact.job_title || ''})`,
+                                  outcome: 'NEUTRAL',
+                                }),
+                              });
+                              showToast('success', 'LinkedIn message logged', `${contact.full_name}`);
+                              window.open(contact.linkedin_url, '_blank');
+                              await fetchData();
+                            } catch { showToast('error', 'Failed to log message'); }
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 text-xs bg-sky-50 text-sky-700 border border-sky-200 rounded-md hover:bg-sky-100 transition-colors font-medium"
+                        >
+                          <Linkedin className="w-3 h-3" /> Log LinkedIn
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))
@@ -1423,6 +1542,7 @@ export default function CompanyDetail({
             </div>
           </div>
         )}
+        </ErrorBoundary>
       </div>
 
       {/* Edit Company Modal */}

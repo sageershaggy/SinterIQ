@@ -20,10 +20,14 @@ import {
   Users,
   X,
   Download,
+  Trash2,
+  CalendarClock,
+  Target,
 } from 'lucide-react';
 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { AppUser, Company } from './appTypes';
+import { showToast } from './Toast';
 import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
 import CompanyDetail from './CompanyDetail';
 import FollowUpsTab from './FollowUpsTab';
@@ -31,6 +35,7 @@ import ImportTab from './ImportTab';
 import KanbanBoard from './KanbanBoard';
 import ResearchTab from './ResearchTab';
 import SettingsTab from './SettingsTab';
+import CommissionAdmin from './CommissionAdmin';
 import { companyTypeOptions, industryOptions, internalUsers as defaultInternalUsers, leadStatusOptions } from './companyData';
 import { formatCompactEur, getDateOnly, isPastDate } from './formatters';
 
@@ -77,6 +82,12 @@ export default function AppRoot() {
   const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
+
+  // RBAC: determine current user role from localStorage
+  const currentUserName = (() => {
+    try { const s = localStorage.getItem('sinteriq_user'); return s ? JSON.parse(s)?.name : ''; } catch { return ''; }
+  })();
+  const isAdmin = currentUserName?.toLowerCase().includes('sageer') || currentUserName?.toLowerCase().includes('admin');
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [initialTab, setInitialTab] = useState('overview');
   const [qualifyingId, setQualifyingId] = useState<number | null>(null);
@@ -94,6 +105,9 @@ export default function AppRoot() {
   const [companyTypeFilter, setCompanyTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [sortKey, setSortKey] = useState<string>('company_name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -197,8 +211,15 @@ export default function AppRoot() {
     return haystack.includes(searchQuery.trim().toLowerCase());
   });
 
-  const totalPages = Math.ceil(filteredCompanies.length / PAGE_SIZE);
-  const paginatedCompanies = filteredCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const sortedCompanies = [...filteredCompanies].sort((a, b) => {
+    const av = (a as any)[sortKey] ?? '';
+    const bv = (b as any)[sortKey] ?? '';
+    const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+
+  const totalPages = Math.ceil(sortedCompanies.length / PAGE_SIZE);
+  const paginatedCompanies = sortedCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   // Reset page when filters change
   useEffect(() => { setCurrentPage(1); }, [searchQuery, assignedFilter, industryFilter, companyTypeFilter, statusFilter, minScore, maxScore, dateFrom, dateTo]);
@@ -256,14 +277,17 @@ export default function AppRoot() {
 
   const handleAIQualify = async (id: number) => {
     setQualifyingId(id);
+    showToast('info', 'AI Qualification started', 'Searching the web and analyzing...');
     try {
       const response = await fetch(`/api/companies/${id}/ai-qualify`, { method: 'POST' });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || 'AI qualification failed');
       setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...payload } : c)));
+      showToast('success', 'AI Qualification complete', `${payload.company_name}: Score ${payload.lead_score || 0}`);
     } catch (error) {
       console.error(error);
-      alert(error instanceof Error ? error.message : 'AI qualification failed.');
+      const msg = error instanceof Error ? error.message : 'AI qualification failed.';
+      showToast('error', 'AI Qualification failed', msg + ' Check Settings for API key.');
     } finally {
       setQualifyingId(null);
     }
@@ -285,6 +309,27 @@ export default function AppRoot() {
   };
 
 
+
+  const handleDeleteCompany = async (id: number) => {
+    if (!confirm('Delete this company and all its contacts, activities, and notes? This cannot be undone.')) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/companies/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setCompanies((prev) => prev.filter((c) => c.id !== id));
+        showToast('success', 'Company deleted');
+      }
+    } catch (err) {
+      showToast('error', 'Failed to delete company');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const toggleSort = (key: string) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('asc'); }
+  };
 
   const handleCreateCompany = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -488,11 +533,46 @@ export default function AppRoot() {
           )}
         </div>
 
+        {/* Upcoming Follow-ups */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <CalendarClock className="w-5 h-5 text-orange-400" />
+              <h2 className="text-lg font-semibold text-slate-900">Upcoming Follow-ups</h2>
+            </div>
+            <button onClick={() => setActiveTab('followups')} className="text-xs text-blue-600 hover:underline">View all →</button>
+          </div>
+          {followUps.filter(f => !f.follow_up_done).length === 0 ? (
+            <div className="text-slate-400 text-sm text-center py-4">No pending follow-ups</div>
+          ) : (
+            <div className="space-y-2">
+              {followUps.filter(f => !f.follow_up_done).slice(0, 5).map((f: any, i: number) => {
+                const isOverdue = f.follow_up_date && f.follow_up_date.slice(0, 10) < new Date().toISOString().slice(0, 10);
+                return (
+                  <div key={i} className={`flex items-center justify-between p-2.5 rounded-lg border transition-colors cursor-pointer hover:bg-slate-50 ${isOverdue ? 'border-red-200 bg-red-50/50' : 'border-slate-100'}`}
+                    onClick={() => f.company_id && openCompany(f.company_id, 'activities')}>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-900 truncate">{f.company_name || 'Unknown'}</div>
+                      <div className="text-xs text-slate-500">{f.subject || f.activity_type}</div>
+                    </div>
+                    <div className="text-right shrink-0 ml-2">
+                      <div className={`text-xs font-medium ${isOverdue ? 'text-red-600' : 'text-slate-600'}`}>
+                        {f.follow_up_date ? new Date(f.follow_up_date).toLocaleDateString() : '-'}
+                      </div>
+                      {isOverdue && <div className="text-[10px] text-red-500 font-medium">OVERDUE</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* My Assigned Leads */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
           <div className="flex items-center gap-2 mb-4">
             <Users className="w-5 h-5 text-slate-400" />
-            <h2 className="text-lg font-semibold text-slate-900">Companies Overview</h2>
+            <h2 className="text-lg font-semibold text-slate-900">My Assigned Leads</h2>
           </div>
           {loading ? (
             <div className="space-y-2 animate-pulse">
@@ -629,14 +709,22 @@ export default function AppRoot() {
         <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
             <tr>
-              <th className="px-6 py-3 font-medium">Company Name</th>
-              <th className="px-6 py-3 font-medium">Location</th>
-              <th className="px-6 py-3 font-medium text-center">Contacts</th>
-              <th className="px-6 py-3 font-medium">Score</th>
-              <th className="px-4 py-3 font-medium">Tech Fit</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Assigned To</th>
-              <th className="px-4 py-3 font-medium">Updated</th>
+              {[
+                { key: 'company_name', label: 'Company Name', cls: 'px-6' },
+                { key: 'country', label: 'Location', cls: 'px-6' },
+                { key: 'contact_count', label: 'Contacts', cls: 'px-6 text-center' },
+                { key: 'lead_score', label: 'Score', cls: 'px-6' },
+                { key: 'technical_fit', label: 'Tech Fit', cls: 'px-4' },
+                { key: 'lead_status', label: 'Status', cls: 'px-4' },
+                { key: 'assigned_to', label: 'Assigned To', cls: 'px-4' },
+                { key: 'updated_at', label: 'Updated', cls: 'px-4' },
+              ].map(col => (
+                <th key={col.key} className={`${col.cls} py-3 font-medium cursor-pointer hover:text-blue-600 select-none transition-colors`}
+                  onClick={() => toggleSort(col.key)}>
+                  {col.label}
+                  {sortKey === col.key && <span className="ml-1 text-blue-500">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                </th>
+              ))}
               <th className="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
@@ -694,14 +782,24 @@ export default function AppRoot() {
                     {company.updated_at ? new Date(company.updated_at).toLocaleDateString() : '-'}
                   </td>
                   <td className="px-4 py-4 text-right">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); void handleAIQualify(company.id); }}
-                      disabled={qualifyingId === company.id}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md text-xs font-medium transition-colors disabled:opacity-50"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      {qualifyingId === company.id ? 'Working...' : 'AI Qualify'}
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void handleAIQualify(company.id); }}
+                        disabled={qualifyingId === company.id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md text-xs font-medium transition-colors disabled:opacity-50"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        {qualifyingId === company.id ? 'Working...' : 'AI Qualify'}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void handleDeleteCompany(company.id); }}
+                        disabled={deletingId === company.id}
+                        className="inline-flex items-center p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
+                        title="Delete company"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -777,6 +875,7 @@ export default function AppRoot() {
     { key: 'pipeline', label: 'Pipeline', icon: Kanban },
     { key: 'research', label: 'Lead Research', icon: Search },
     { key: 'import', label: 'Import Data', icon: Upload },
+    ...(isAdmin ? [{ key: 'commissions', label: 'Commissions', icon: Euro as LucideIcon }] : []),
     { key: 'settings', label: 'Settings', icon: Bot },
   ];
 
@@ -901,6 +1000,8 @@ export default function AppRoot() {
             <KanbanBoard companies={companies} onCompanyClick={openCompany} onStatusChange={handleStatusChange} />
           ) : activeTab === 'research' ? (
             <ResearchTab users={userOptions} onCompanyClick={openCompany} />
+          ) : activeTab === 'commissions' && isAdmin ? (
+            <CommissionAdmin />
           ) : activeTab === 'settings' ? (
             <SettingsTab />
           ) : activeTab === 'import' ? (

@@ -10,23 +10,57 @@ export interface AppUser {
 }
 
 export interface Company {
-  assigned_to: string | null;
-  city: string | null;
-  company_name: string;
-  company_type: string;
-  contact_count?: number;
-  country: string;
-  follow_up_date?: string | null;
   id: number;
+  company_name: string;
+  country: string;
+  city: string | null;
+  region?: string | null;
   industry: string;
+  company_type: string;
+  employee_count?: number | null;
+  revenue_eur: number | null;
+  website?: string | null;
+  corporate_parent?: string | null;
+  duns_number?: string | null;
+  source?: string | null;
+  is_subsidiary?: boolean | number | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // Lead qualification
   lead_score: number | null;
   lead_status: string;
-  next_tracking_date?: string | null;
-  revenue_eur: number | null;
   technical_fit: string | null;
+  qualification_notes?: string | null;
+  product_fit?: string | null;
+  mentions_technology?: boolean | number | null;
+
+  // AI qualification
+  ai_qualified_at?: string | null;
+  website_score?: number | null;
+  social_score?: number | null;
+  buying_probability?: number | null;
+  approach_strategy?: string | null;
+  sales_script?: string | null;
+  email_script?: string | null;
+  opportunity_notes?: string | null;
+
+  // Social media
+  social_media_urls?: string | null;
+  social_media_active?: boolean | number | null;
+  social_profiles_json?: string | null;
+
+  // Contacts / follow-ups
+  contact_count?: number;
+  follow_up_date?: string | null;
+  assigned_to: string | null;
+
+  // Tracking
   tracking_level?: string | null;
-  tracking_notes?: string | null;
   tracking_status?: string | null;
+  tracking_notes?: string | null;
+  next_tracking_date?: string | null;
 }
 
 export interface LlmSettings {

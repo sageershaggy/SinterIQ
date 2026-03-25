@@ -2,6 +2,7 @@ import { StrictMode, useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import AppRoot from './AppRoot.tsx';
 import LoginScreen from './LoginScreen.tsx';
+import ToastContainer from './Toast.tsx';
 import './index.css';
 
 function App() {
@@ -18,10 +19,20 @@ function App() {
   }, []);
 
   if (!currentUser) {
-    return <LoginScreen onLogin={(name) => setCurrentUser(name)} />;
+    return (
+      <>
+        <LoginScreen onLogin={(name) => setCurrentUser(name)} />
+        <ToastContainer />
+      </>
+    );
   }
 
-  return <AppRoot />;
+  return (
+    <>
+      <AppRoot />
+      <ToastContainer />
+    </>
+  );
 }
 
 createRoot(document.getElementById('root')!).render(
