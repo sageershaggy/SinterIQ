@@ -587,17 +587,24 @@ export default function CompanyDetail({
                 const startEdit = (field: string, value: any) => { setEditField(field); setEditValue(value ?? ''); };
                 const cancelEdit = () => { setEditField(null); setEditValue(''); };
                 const saveField = async (field: string) => {
-                  const updates: any = { ...company, [field]: editValue };
-                  if (field === 'revenue_eur') updates.revenue_eur = editValue ? Number(editValue) : null;
-                  if (field === 'employee_count') updates.employee_count = editValue ? Number(editValue) : null;
                   try {
-                    await fetch(`/api/companies/${companyId}`, {
-                      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(updates),
+                    const res = await fetch(`/api/companies/${companyId}`, {
+                      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ [field]: editValue }),
                     });
-                    await fetchData();
-                    await onDataChanged?.();
-                  } catch (err) { console.error(err); }
+                    if (res.ok) {
+                      const updated = await res.json();
+                      setCompany(updated);
+                      setCompanyForm(updated);
+                      showToast('success', 'Saved', `${field.replace(/_/g, ' ')} updated`);
+                      await onDataChanged?.();
+                    } else {
+                      showToast('error', 'Failed to save');
+                    }
+                  } catch (err) {
+                    console.error(err);
+                    showToast('error', 'Failed to save');
+                  }
                   cancelEdit();
                 };
                 const handleKeyDown = (e: React.KeyboardEvent, field: string) => {

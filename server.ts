@@ -867,8 +867,12 @@ app.put('/api/companies/:id', (req, res) => {
     }
 
     db.prepare(`
-      UPDATE companies 
-      SET company_name = ?, website = ?, country = ?, city = ?, region = ?, industry = ?, company_type = ?, employee_count = ?, revenue_eur = ?, lead_status = ?, technical_fit = ?, assigned_to = ?, qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?, next_tracking_date = ?, updated_at = CURRENT_TIMESTAMP
+      UPDATE companies
+      SET company_name = ?, website = ?, country = ?, city = ?, region = ?, industry = ?, company_type = ?,
+          employee_count = ?, revenue_eur = ?, lead_status = ?, technical_fit = ?, assigned_to = ?,
+          qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?,
+          next_tracking_date = ?, duns_number = ?, corporate_parent = ?, is_subsidiary = ?, source = ?,
+          created_by = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       companyName,
@@ -888,11 +892,63 @@ app.put('/api/companies/:id', (req, res) => {
       normalizeTrackingStatus(req.body.tracking_status),
       normalizeOptionalString(req.body.tracking_notes),
       normalizeOptionalString(req.body.next_tracking_date),
+      normalizeOptionalString(req.body.duns_number),
+      normalizeOptionalString(req.body.corporate_parent),
+      req.body.is_subsidiary ? 1 : 0,
+      normalizeOptionalString(req.body.source),
+      normalizeOptionalString(req.body.created_by),
       req.params.id,
     );
-    res.json({ success: true });
+
+    const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id);
+    res.json(updated);
   } catch (err) {
+    console.error('Update company error:', err);
     res.status(500).json({ error: 'Failed to update company' });
+  }
+});
+
+// PATCH: update a single field (for inline edits)
+app.patch('/api/companies/:id', (req, res) => {
+  try {
+    const companyId = req.params.id;
+    const existing = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
+    if (!existing) return res.status(404).json({ error: 'Company not found' });
+
+    // Build dynamic SET clause from request body fields
+    const allowedFields = [
+      'company_name', 'website', 'country', 'city', 'region', 'industry', 'company_type',
+      'employee_count', 'revenue_eur', 'lead_status', 'technical_fit', 'assigned_to',
+      'qualification_notes', 'tracking_level', 'tracking_status', 'tracking_notes',
+      'next_tracking_date', 'duns_number', 'corporate_parent', 'is_subsidiary', 'source', 'created_by',
+    ];
+
+    const setClauses: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+    const values: any[] = [];
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        setClauses.push(`${field} = ?`);
+        if (field === 'employee_count' || field === 'revenue_eur') {
+          values.push(req.body[field] === '' || req.body[field] === null ? null : Number(req.body[field]));
+        } else if (field === 'is_subsidiary') {
+          values.push(req.body[field] ? 1 : 0);
+        } else {
+          values.push(req.body[field] === '' ? null : req.body[field]);
+        }
+      }
+    }
+
+    if (setClauses.length <= 1) return res.status(400).json({ error: 'No fields to update' });
+
+    values.push(companyId);
+    db.prepare(`UPDATE companies SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
+
+    const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId);
+    res.json(updated);
+  } catch (err) {
+    console.error('Patch company error:', err);
+    res.status(500).json({ error: 'Failed to update field' });
   }
 });
 

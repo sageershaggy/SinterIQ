@@ -647,18 +647,35 @@ export default function AppRoot() {
           </button>
           <button
             onClick={() => {
-              const headers = ['Company Name','Type','Country','City','Industry','Region','Employees','Revenue','Website','Score','Tech Fit','Status','Assigned To','Updated At'];
-              const rows = filteredCompanies.map(c => [
-                c.company_name, c.company_type, c.country, c.city || '', c.industry, c.region || '',
-                c.employee_count || '', c.revenue_eur || '', c.website || '', c.lead_score ?? '',
-                c.technical_fit || '', c.lead_status, c.assigned_to || '', c.updated_at || ''
+              const headers = [
+                'Company Name','Type','Country','City','Region','Industry',
+                'Employees','Revenue (EUR)','Website','DUNS Number','Corporate Parent','Source',
+                'Lead Score','Technical Fit','Product Fit','Lead Status','Buying Probability',
+                'Website Score','Social Score','Social Media Active','Mentions Technology',
+                'Assigned To','Created By','Created At','Updated At','AI Qualified At',
+                'Approach Strategy','Opportunity Notes','Qualification Notes',
+                'Sales Script','Email Script',
+                'Tracking Level','Tracking Status','Next Tracking Date','Tracking Notes',
+                'Contacts'
+              ];
+              const rows = sortedCompanies.map((c: any) => [
+                c.company_name, c.company_type, c.country, c.city||'', c.region||'', c.industry,
+                c.employee_count||'', c.revenue_eur||'', c.website||'', c.duns_number||'', c.corporate_parent||'', c.source||'',
+                c.lead_score??'', c.technical_fit||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
+                c.website_score??'', c.social_score??'', c.social_media_active?'Yes':'No', c.mentions_technology?'Yes':'No',
+                c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'', c.ai_qualified_at||'',
+                (c.approach_strategy||'').replace(/\n/g,' '), (c.opportunity_notes||'').replace(/\n/g,' '), (c.qualification_notes||'').replace(/\n/g,' '),
+                (c.sales_script||'').replace(/\n/g,' '), (c.email_script||'').replace(/\n/g,' '),
+                c.tracking_level||'', c.tracking_status||'', c.next_tracking_date||'', (c.tracking_notes||'').replace(/\n/g,' '),
+                c.contact_count??''
               ]);
-              const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-              const blob = new Blob([csv], { type: 'text/csv' });
+              const bom = '\uFEFF';
+              const csv = bom + [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+              const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
-              a.download = `sinteriq_companies_${new Date().toISOString().split('T')[0]}.csv`;
+              a.download = `SinterIQ_Export_${new Date().toISOString().split('T')[0]}_${sortedCompanies.length}companies.csv`;
               a.click();
               URL.revokeObjectURL(url);
             }}

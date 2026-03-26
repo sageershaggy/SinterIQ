@@ -12,7 +12,8 @@
       "Bash(npm ls:*)",
       "Bash(curl -s http://localhost:3000/api/companies/4)",
       "Bash(node -e \":*)",
-      "Bash(curl -s http://localhost:3000/api/companies/4/notes)"
+      "Bash(curl -s http://localhost:3000/api/companies/4/notes)",
+      "Bash(curl -s -X PATCH http://localhost:3000/api/companies/4 -H 'Content-Type: application/json' -d '{\"\"\"\"duns_number\"\"\"\":\"\"\"\"123456789\"\"\"\"}')"
     ]
   }
 }
