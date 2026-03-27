@@ -13,6 +13,7 @@ export interface Company {
   id: number;
   company_name: string;
   country: string;
+  address?: string | null;
   city: string | null;
   region?: string | null;
   industry: string;
@@ -20,6 +21,11 @@ export interface Company {
   employee_count?: number | null;
   revenue_eur: number | null;
   website?: string | null;
+  company_email?: string | null;
+  legal_form?: string | null;
+  business_role?: string | null;
+  main_products?: string | null;
+  related_companies?: string | null;
   corporate_parent?: string | null;
   duns_number?: string | null;
   source?: string | null;

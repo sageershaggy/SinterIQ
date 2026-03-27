@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import * as XLSX from 'xlsx';
 import { AppUser, Company } from './appTypes';
 import { showToast } from './Toast';
 import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
@@ -74,6 +75,33 @@ const PIPELINE_STAGE_COLORS: Record<string, string> = {
   LOST: '#f87171',
   DISQUALIFIED: '#e2e8f0',
 };
+
+const CONTACT_GUIDE_ROWS = [
+  ['Topic', 'Guidance'],
+  ['Goal', 'Your aim is to fully understand the customer problem and their wishes.'],
+  ['Listening', 'Listen carefully and let the customer talk so new information can surface.'],
+  ['Respect', 'Do not interrupt because it feels disrespectful and closes the conversation.'],
+  ['Promises', 'Never promise or assure anything that Sintertechnik cannot reliably fulfill.'],
+  ['Technical claims', 'If you are unsure about a technical point, say you will double-check and come back.'],
+  ['Pacing', 'Talk slowly because calm pacing is often perceived as competence.'],
+  ['Questions', 'Use open questions so the customer gives information instead of yes or no answers.'],
+  ['Summary', 'End the call with a short summary so everyone is aligned.'],
+  ['Next step', 'Agree on the next concrete step and make sure both sides know it.'],
+  ['Open issues', 'Make sure the customer has no open questions left.'],
+  ['Data quality', 'Confirm the address, email, and other core contact details before closing.'],
+  ['FAQ', 'Be ready to answer why ceramic bearings help, cost expectations, why Sintertechnik is trustworthy, disadvantages versus steel, and delivery time.'],
+];
+
+function buildSheetColumns(rows: Array<Array<string | number>>) {
+  return rows[0].map((_, columnIndex) => {
+    const width = rows.reduce((maxWidth, row) => {
+      const cellValue = row[columnIndex] === undefined || row[columnIndex] === null ? '' : String(row[columnIndex]);
+      return Math.max(maxWidth, cellValue.length);
+    }, 12);
+
+    return { wch: Math.min(Math.max(width + 2, 12), 48) };
+  });
+}
 
 export default function AppRoot() {
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -137,6 +165,35 @@ export default function AppRoot() {
       const response = await fetch('/api/activities/recent');
       if (response.ok) setRecentActivities(await response.json());
     } catch (_) {}
+  };
+
+  const handleExportCustomerTracker = async () => {
+    try {
+      const response = await fetch('/api/export/customer-tracker');
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.headers || !payload?.rows) {
+        throw new Error(payload?.error || 'Failed to build export');
+      }
+
+      const trackerRows: Array<Array<string | number>> = [payload.headers, ...payload.rows];
+      const workbook = XLSX.utils.book_new();
+      const trackerSheet = XLSX.utils.aoa_to_sheet(trackerRows);
+      trackerSheet['!cols'] = buildSheetColumns(trackerRows);
+      trackerSheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_cell({ r: 0, c: payload.headers.length - 1 })}` };
+
+      const guideSheet = XLSX.utils.aoa_to_sheet(CONTACT_GUIDE_ROWS);
+      guideSheet['!cols'] = buildSheetColumns(CONTACT_GUIDE_ROWS);
+
+      XLSX.utils.book_append_sheet(workbook, trackerSheet, 'Customer Tracker');
+      XLSX.utils.book_append_sheet(workbook, guideSheet, 'Contacting Guide');
+
+      const fileDate = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(workbook, `SinterIQ_Customer_Tracker_${fileDate}_${payload.rows.length}rows.xlsx`);
+      showToast('success', 'Export ready', `${payload.rows.length} rows exported`);
+    } catch (error) {
+      console.error(error);
+      showToast('error', 'Export failed', error instanceof Error ? error.message : '');
+    }
   };
 
   // URL routing: read hash on load
@@ -345,14 +402,26 @@ export default function AppRoot() {
         }),
       });
       const payload = await response.json().catch(() => null);
+      if (response.status === 409 && payload?.duplicate_id) {
+        const goToExisting = confirm(
+          `${payload.error}\n\nClick OK to open the existing company, or Cancel to go back.`
+        );
+        if (goToExisting) {
+          setShowCompanyForm(false);
+          openCompany(payload.duplicate_id);
+        }
+        setSavingCompany(false);
+        return;
+      }
       if (!response.ok) throw new Error(payload?.error || 'Failed to create company');
       await loadCompanies();
       setShowCompanyForm(false);
       setCompanyForm(emptyCompanyForm);
+      showToast('success', 'Company created', payload.company_name);
       openCompany(payload.id);
     } catch (error) {
       console.error(error);
-      alert(error instanceof Error ? error.message : 'Failed to create company.');
+      showToast('error', 'Failed to create company', error instanceof Error ? error.message : '');
     } finally {
       setSavingCompany(false);
     }
@@ -646,39 +715,7 @@ export default function AppRoot() {
             <Filter className="w-4 h-4" /> Filters
           </button>
           <button
-            onClick={() => {
-              const headers = [
-                'Company Name','Type','Country','City','Region','Industry',
-                'Employees','Revenue (EUR)','Website','DUNS Number','Corporate Parent','Source',
-                'Lead Score','Technical Fit','Product Fit','Lead Status','Buying Probability',
-                'Website Score','Social Score','Social Media Active','Mentions Technology',
-                'Assigned To','Created By','Created At','Updated At','AI Qualified At',
-                'Approach Strategy','Opportunity Notes','Qualification Notes',
-                'Sales Script','Email Script',
-                'Tracking Level','Tracking Status','Next Tracking Date','Tracking Notes',
-                'Contacts'
-              ];
-              const rows = sortedCompanies.map((c: any) => [
-                c.company_name, c.company_type, c.country, c.city||'', c.region||'', c.industry,
-                c.employee_count||'', c.revenue_eur||'', c.website||'', c.duns_number||'', c.corporate_parent||'', c.source||'',
-                c.lead_score??'', c.technical_fit||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
-                c.website_score??'', c.social_score??'', c.social_media_active?'Yes':'No', c.mentions_technology?'Yes':'No',
-                c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'', c.ai_qualified_at||'',
-                (c.approach_strategy||'').replace(/\n/g,' '), (c.opportunity_notes||'').replace(/\n/g,' '), (c.qualification_notes||'').replace(/\n/g,' '),
-                (c.sales_script||'').replace(/\n/g,' '), (c.email_script||'').replace(/\n/g,' '),
-                c.tracking_level||'', c.tracking_status||'', c.next_tracking_date||'', (c.tracking_notes||'').replace(/\n/g,' '),
-                c.contact_count??''
-              ]);
-              const bom = '\uFEFF';
-              const csv = bom + [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-              const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `SinterIQ_Export_${new Date().toISOString().split('T')[0]}_${sortedCompanies.length}companies.csv`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
+            onClick={() => { void handleExportCustomerTracker(); }}
             className="flex items-center gap-2 border border-slate-300 bg-white hover:bg-slate-50 px-3 py-1.5 rounded-md text-sm font-medium text-slate-700 transition-colors"
           >
             <Download className="w-4 h-4" /> Export

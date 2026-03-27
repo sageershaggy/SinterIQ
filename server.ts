@@ -99,6 +99,42 @@ function normalizeTrackingStatus(value: unknown) {
   return normalizedValue || 'PENDING';
 }
 
+function formatExportDate(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '';
+  }
+
+  const trimmedValue = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  const parsedValue = new Date(trimmedValue);
+  if (Number.isNaN(parsedValue.getTime())) {
+    return trimmedValue;
+  }
+
+  return parsedValue.toISOString().slice(0, 10);
+}
+
+function formatExportDateTime(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '';
+  }
+
+  const trimmedValue = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  const parsedValue = new Date(trimmedValue);
+  if (Number.isNaN(parsedValue.getTime())) {
+    return trimmedValue;
+  }
+
+  return parsedValue.toISOString().slice(0, 16).replace('T', ' ');
+}
+
 function normalizeWebsiteHost(value: unknown) {
   const normalizedValue = normalizeOptionalString(value);
   if (!normalizedValue) {
@@ -451,6 +487,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_name TEXT NOT NULL,
     country TEXT NOT NULL,
+    address TEXT,
     city TEXT,
     region TEXT,
     industry TEXT NOT NULL,
@@ -458,6 +495,11 @@ db.exec(`
     employee_count INTEGER,
     revenue_eur REAL,
     website TEXT,
+    company_email TEXT,
+    legal_form TEXT,
+    business_role TEXT,
+    main_products TEXT,
+    related_companies TEXT,
     corporate_parent TEXT,
     is_subsidiary BOOLEAN DEFAULT 0,
     duns_number TEXT,
@@ -493,6 +535,13 @@ db.exec(`
     phone_direct TEXT,
     phone_mobile TEXT,
     linkedin_url TEXT,
+    contacted_via TEXT,
+    interest_reason TEXT,
+    ceramic_bearing_experience TEXT,
+    attempted_solution TEXT,
+    operating_media TEXT,
+    hybrid_bearing_alternative TEXT,
+    cooperation_interest TEXT,
     is_verified BOOLEAN DEFAULT 0,
     verified_date DATETIME,
     verification_source TEXT,
@@ -566,6 +615,19 @@ try { db.exec("ALTER TABLE companies ADD COLUMN tracking_level TEXT DEFAULT 'WAT
 try { db.exec("ALTER TABLE companies ADD COLUMN tracking_status TEXT DEFAULT 'PENDING';"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN tracking_notes TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN next_tracking_date DATETIME;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN address TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN company_email TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN legal_form TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN business_role TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN main_products TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN related_companies TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE contacts ADD COLUMN contacted_via TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE contacts ADD COLUMN interest_reason TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE contacts ADD COLUMN ceramic_bearing_experience TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE contacts ADD COLUMN attempted_solution TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE contacts ADD COLUMN operating_media TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE contacts ADD COLUMN hybrid_bearing_alternative TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE contacts ADD COLUMN cooperation_interest TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN website_score INTEGER;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN social_score INTEGER;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN buying_probability INTEGER;"); } catch (e) {}
@@ -785,25 +847,40 @@ app.post('/api/companies', (req, res) => {
       return res.status(400).json({ error: 'company_name and country are required' });
     }
 
-    const existingCompany = db
-      .prepare('SELECT id FROM companies WHERE lower(company_name) = lower(?)')
-      .get(companyName) as { id: number } | undefined;
+    const website = normalizeOptionalString(req.body.website);
+    const existingByName = db
+      .prepare('SELECT id, company_name FROM companies WHERE lower(company_name) = lower(?)')
+      .get(companyName) as { id: number; company_name: string } | undefined;
+    const existingByWebsite = website ? db
+      .prepare('SELECT id, company_name FROM companies WHERE lower(website) = lower(?) OR lower(website) = lower(?)')
+      .get(website, website.replace(/^https?:\/\//, '').replace(/\/$/, '')) as { id: number; company_name: string } | undefined : undefined;
 
-    if (existingCompany) {
-      return res.status(409).json({ error: 'A company with this name already exists' });
+    const duplicate = existingByName || existingByWebsite;
+    if (duplicate) {
+      return res.status(409).json({
+        error: `Duplicate found: "${duplicate.company_name}" (ID: ${duplicate.id}). Use merge if these are the same company.`,
+        duplicate_id: duplicate.id,
+        duplicate_name: duplicate.company_name,
+      });
     }
 
     const result = db.prepare(`
       INSERT INTO companies (
         company_name,
         website,
+        company_email,
         country,
+        address,
         city,
         region,
         industry,
         company_type,
         employee_count,
         revenue_eur,
+        legal_form,
+        business_role,
+        main_products,
+        related_companies,
         lead_status,
         technical_fit,
         assigned_to,
@@ -815,17 +892,23 @@ app.post('/api/companies', (req, res) => {
         source,
         created_by
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
     `).run(
       companyName,
       normalizeOptionalString(req.body.website),
+      normalizeOptionalString(req.body.company_email),
       country,
+      normalizeOptionalString(req.body.address),
       normalizeOptionalString(req.body.city),
       normalizeOptionalString(req.body.region),
       normalizeRequiredString(req.body.industry) || 'BEARING_TRADER',
       normalizeRequiredString(req.body.company_type) || 'BEARING_TRADER',
       normalizeNullableNumber(req.body.employee_count),
       normalizeNullableNumber(req.body.revenue_eur),
+      normalizeOptionalString(req.body.legal_form),
+      normalizeOptionalString(req.body.business_role),
+      normalizeOptionalString(req.body.main_products),
+      normalizeOptionalString(req.body.related_companies),
       normalizeRequiredString(req.body.lead_status) || 'RAW',
       normalizeTechnicalFit(req.body.technical_fit),
       normalizeOptionalString(req.body.assigned_to),
@@ -868,22 +951,28 @@ app.put('/api/companies/:id', (req, res) => {
 
     db.prepare(`
       UPDATE companies
-      SET company_name = ?, website = ?, country = ?, city = ?, region = ?, industry = ?, company_type = ?,
-          employee_count = ?, revenue_eur = ?, lead_status = ?, technical_fit = ?, assigned_to = ?,
-          qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?,
+      SET company_name = ?, website = ?, company_email = ?, country = ?, address = ?, city = ?, region = ?, industry = ?, company_type = ?,
+          employee_count = ?, revenue_eur = ?, legal_form = ?, business_role = ?, main_products = ?, related_companies = ?,
+          lead_status = ?, technical_fit = ?, assigned_to = ?, qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?,
           next_tracking_date = ?, duns_number = ?, corporate_parent = ?, is_subsidiary = ?, source = ?,
           created_by = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       companyName,
       normalizeOptionalString(req.body.website),
+      normalizeOptionalString(req.body.company_email),
       country,
+      normalizeOptionalString(req.body.address),
       normalizeOptionalString(req.body.city),
       normalizeOptionalString(req.body.region),
       normalizeRequiredString(req.body.industry) || 'BEARING_TRADER',
       normalizeRequiredString(req.body.company_type) || 'BEARING_TRADER',
       normalizeNullableNumber(req.body.employee_count),
       normalizeNullableNumber(req.body.revenue_eur),
+      normalizeOptionalString(req.body.legal_form),
+      normalizeOptionalString(req.body.business_role),
+      normalizeOptionalString(req.body.main_products),
+      normalizeOptionalString(req.body.related_companies),
       normalizeRequiredString(req.body.lead_status) || 'RAW',
       normalizeTechnicalFit(req.body.technical_fit),
       normalizeOptionalString(req.body.assigned_to),
@@ -917,8 +1006,9 @@ app.patch('/api/companies/:id', (req, res) => {
 
     // Build dynamic SET clause from request body fields
     const allowedFields = [
-      'company_name', 'website', 'country', 'city', 'region', 'industry', 'company_type',
-      'employee_count', 'revenue_eur', 'lead_status', 'technical_fit', 'assigned_to',
+      'company_name', 'website', 'company_email', 'country', 'address', 'city', 'region', 'industry', 'company_type',
+      'employee_count', 'revenue_eur', 'legal_form', 'business_role', 'main_products', 'related_companies',
+      'lead_status', 'technical_fit', 'assigned_to',
       'qualification_notes', 'tracking_level', 'tracking_status', 'tracking_notes',
       'next_tracking_date', 'duns_number', 'corporate_parent', 'is_subsidiary', 'source', 'created_by',
     ];
@@ -989,12 +1079,66 @@ app.post('/api/contacts/enrich', async (req, res) => {
 
 app.post('/api/contacts', (req, res) => {
   try {
-    const { company_id, full_name, job_title, email, phone_direct, linkedin_url, notes, is_verified, verification_source } = req.body;
+    const {
+      company_id,
+      full_name,
+      job_title,
+      email,
+      phone_direct,
+      linkedin_url,
+      contacted_via,
+      interest_reason,
+      ceramic_bearing_experience,
+      attempted_solution,
+      operating_media,
+      hybrid_bearing_alternative,
+      cooperation_interest,
+      notes,
+      is_verified,
+      verification_source,
+    } = req.body;
+
+    // Unique email check within the same company
+    if (email && email.trim()) {
+      const existingContact = db.prepare(
+        'SELECT id, full_name FROM contacts WHERE company_id = ? AND lower(email) = lower(?)'
+      ).get(company_id, email.trim()) as any;
+      if (existingContact) {
+        return res.status(409).json({
+          error: `A contact with email "${email}" already exists for this company: ${existingContact.full_name}`,
+          existing_id: existingContact.id,
+        });
+      }
+    }
+
     const verified_date = is_verified ? new Date().toISOString() : null;
     const info = db.prepare(`
-      INSERT INTO contacts (company_id, full_name, job_title, email, phone_direct, linkedin_url, notes, is_verified, verification_source, verified_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(company_id, full_name, job_title, email, phone_direct, linkedin_url, notes, is_verified ? 1 : 0, verification_source, verified_date);
+      INSERT INTO contacts (
+        company_id, full_name, job_title, email, phone_direct, linkedin_url,
+        contacted_via, interest_reason, ceramic_bearing_experience, attempted_solution,
+        operating_media, hybrid_bearing_alternative, cooperation_interest,
+        notes, is_verified, verification_source, verified_date
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      company_id,
+      full_name,
+      job_title,
+      email,
+      phone_direct,
+      linkedin_url,
+      normalizeOptionalString(contacted_via),
+      normalizeOptionalString(interest_reason),
+      normalizeOptionalString(ceramic_bearing_experience),
+      normalizeOptionalString(attempted_solution),
+      normalizeOptionalString(operating_media),
+      normalizeOptionalString(hybrid_bearing_alternative),
+      normalizeOptionalString(cooperation_interest),
+      notes,
+      is_verified ? 1 : 0,
+      verification_source,
+      verified_date,
+    );
     res.json({ id: info.lastInsertRowid });
   } catch (err) {
     res.status(500).json({ error: 'Failed to add contact' });
@@ -1003,7 +1147,23 @@ app.post('/api/contacts', (req, res) => {
 
 app.put('/api/contacts/:id', (req, res) => {
   try {
-    const { full_name, job_title, email, phone_direct, linkedin_url, notes, is_verified, verification_source } = req.body;
+    const {
+      full_name,
+      job_title,
+      email,
+      phone_direct,
+      linkedin_url,
+      contacted_via,
+      interest_reason,
+      ceramic_bearing_experience,
+      attempted_solution,
+      operating_media,
+      hybrid_bearing_alternative,
+      cooperation_interest,
+      notes,
+      is_verified,
+      verification_source,
+    } = req.body;
     
     const currentContact = db.prepare('SELECT is_verified, verified_date FROM contacts WHERE id = ?').get(req.params.id) as any;
     let verified_date = currentContact?.verified_date;
@@ -1015,9 +1175,30 @@ app.put('/api/contacts/:id', (req, res) => {
 
     db.prepare(`
       UPDATE contacts 
-      SET full_name = ?, job_title = ?, email = ?, phone_direct = ?, linkedin_url = ?, notes = ?, is_verified = ?, verification_source = ?, verified_date = ?
+      SET full_name = ?, job_title = ?, email = ?, phone_direct = ?, linkedin_url = ?,
+          contacted_via = ?, interest_reason = ?, ceramic_bearing_experience = ?, attempted_solution = ?,
+          operating_media = ?, hybrid_bearing_alternative = ?, cooperation_interest = ?,
+          notes = ?, is_verified = ?, verification_source = ?, verified_date = ?
       WHERE id = ?
-    `).run(full_name, job_title, email, phone_direct, linkedin_url, notes, is_verified ? 1 : 0, verification_source, verified_date, req.params.id);
+    `).run(
+      full_name,
+      job_title,
+      email,
+      phone_direct,
+      linkedin_url,
+      normalizeOptionalString(contacted_via),
+      normalizeOptionalString(interest_reason),
+      normalizeOptionalString(ceramic_bearing_experience),
+      normalizeOptionalString(attempted_solution),
+      normalizeOptionalString(operating_media),
+      normalizeOptionalString(hybrid_bearing_alternative),
+      normalizeOptionalString(cooperation_interest),
+      notes,
+      is_verified ? 1 : 0,
+      verification_source,
+      verified_date,
+      req.params.id,
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update contact' });
@@ -1101,6 +1282,63 @@ app.get('/api/activities/recent', (req, res) => {
   }
 });
 
+// Merge two companies: move all data from source into target, delete source
+app.post('/api/companies/merge', (req, res) => {
+  try {
+    const { target_id, source_id } = req.body;
+    if (!target_id || !source_id || target_id === source_id) {
+      return res.status(400).json({ error: 'target_id and source_id are required and must differ' });
+    }
+
+    const target = db.prepare('SELECT * FROM companies WHERE id = ?').get(target_id) as any;
+    const source = db.prepare('SELECT * FROM companies WHERE id = ?').get(source_id) as any;
+    if (!target || !source) return res.status(404).json({ error: 'Company not found' });
+
+    db.transaction(() => {
+      // Move contacts (skip duplicates by email)
+      const sourceContacts = db.prepare('SELECT * FROM contacts WHERE company_id = ?').all(source_id) as any[];
+      for (const contact of sourceContacts) {
+        if (contact.email) {
+          const existing = db.prepare('SELECT id FROM contacts WHERE company_id = ? AND lower(email) = lower(?)').get(target_id, contact.email);
+          if (existing) continue; // skip duplicate email
+        }
+        db.prepare('UPDATE contacts SET company_id = ? WHERE id = ?').run(target_id, contact.id);
+      }
+
+      // Move activities, orders, notes
+      db.prepare('UPDATE activities SET company_id = ? WHERE company_id = ?').run(target_id, source_id);
+      db.prepare('UPDATE orders SET company_id = ? WHERE company_id = ?').run(target_id, source_id);
+      db.prepare('UPDATE notes SET company_id = ? WHERE company_id = ?').run(target_id, source_id);
+
+      // Merge fields: fill blanks in target from source
+      const fillFields = ['website', 'company_email', 'address', 'legal_form', 'business_role', 'main_products', 'related_companies', 'region', 'duns_number', 'corporate_parent', 'employee_count', 'revenue_eur', 'assigned_to'];
+      for (const field of fillFields) {
+        if (!target[field] && source[field]) {
+          db.prepare(`UPDATE companies SET ${field} = ? WHERE id = ?`).run(source[field], target_id);
+        }
+      }
+
+      // Add merge note
+      db.prepare('INSERT INTO notes (company_id, author, message, type) VALUES (?, ?, ?, ?)').run(
+        target_id, 'System', `Merged with "${source.company_name}" (ID: ${source_id}). All contacts, activities, and notes transferred.`, 'system'
+      );
+
+      // Delete source company
+      db.prepare('DELETE FROM contacts WHERE company_id = ?').run(source_id);
+      db.prepare('DELETE FROM companies WHERE id = ?').run(source_id);
+
+      // Update timestamp
+      db.prepare('UPDATE companies SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(target_id);
+    })();
+
+    const merged = db.prepare('SELECT * FROM companies WHERE id = ?').get(target_id);
+    res.json({ success: true, company: merged });
+  } catch (err) {
+    console.error('Merge error:', err);
+    res.status(500).json({ error: 'Failed to merge companies' });
+  }
+});
+
 app.get('/api/companies/:id/notes', (req, res) => {
   try {
     const notes = db.prepare('SELECT * FROM notes WHERE company_id = ? ORDER BY created_at ASC').all(req.params.id);
@@ -1179,6 +1417,233 @@ app.get('/api/orders', (req, res) => {
     res.json(orders);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+app.get('/api/export/customer-tracker', (req, res) => {
+  try {
+    const requestedCompanyId = Number(req.query.companyId);
+    const companyIdFilter = Number.isFinite(requestedCompanyId) && requestedCompanyId > 0 ? requestedCompanyId : null;
+
+    const companies = (companyIdFilter
+      ? db.prepare('SELECT * FROM companies WHERE id = ? ORDER BY company_name ASC').all(companyIdFilter)
+      : db.prepare('SELECT * FROM companies ORDER BY company_name ASC').all()) as any[];
+    const contacts = (companyIdFilter
+      ? db.prepare('SELECT * FROM contacts WHERE company_id = ? ORDER BY created_at ASC').all(companyIdFilter)
+      : db.prepare('SELECT * FROM contacts ORDER BY created_at ASC').all()) as any[];
+    const activities = (companyIdFilter
+      ? db.prepare('SELECT * FROM activities WHERE company_id = ? ORDER BY activity_date ASC, created_at ASC').all(companyIdFilter)
+      : db.prepare('SELECT * FROM activities ORDER BY activity_date ASC, created_at ASC').all()) as any[];
+    const orders = (companyIdFilter
+      ? db.prepare('SELECT * FROM orders WHERE company_id = ? ORDER BY order_date ASC').all(companyIdFilter)
+      : db.prepare('SELECT * FROM orders ORDER BY order_date ASC').all()) as any[];
+
+    const headers = [
+      'Contacts in chronological order',
+      'Company name',
+      'Country',
+      'Address',
+      'website',
+      'e-mail address',
+      'D-U-N-S Number (if available)',
+      'Legal form',
+      'Manufacturer / dealer, wholesaler, distributor',
+      'Main products manufactured',
+      '(Main) industry',
+      'Related/affiliated companies',
+      'Company size (# employees)',
+      'Revenues prior year',
+      'Lead classification by Ahmad',
+      'Name',
+      'Job role',
+      'How was person contacted',
+      'E-Mail address',
+      'LinkedIn address?',
+      'Telephone number',
+      'Main interest in ceramical bearings, reason',
+      'Any experiences with ceramic bearings?',
+      'Which attempts have been made to solve the existing problem',
+      'In which media the bearings are working',
+      'Will hybid bearings be an alternative?',
+      'First contact (date, time)',
+      'Interest in cooperation with us? If not, please give a short explanation, why not.',
+      'second contact',
+      'Contact from their side',
+      'Technical support provided, date',
+      'Who provided the tech.support',
+      'Quote requested',
+      'Quote provided',
+      'Samples ordered',
+      'Samples delivered',
+      'Contacted for clarifying further actions',
+      'Order placed, date',
+      'Comments',
+    ];
+
+    const timelineActivityTypes = new Set([
+      'CALL_MADE',
+      'EMAIL_SENT',
+      'MEETING_HELD',
+      'LINKEDIN_MESSAGE',
+      'INBOUND_CONTACT',
+      'TECH_SUPPORT',
+      'QUOTE_REQUESTED',
+      'QUOTE_PROVIDED',
+      'SAMPLES_ORDERED',
+      'SAMPLES_DELIVERED',
+      'CLARIFYING_ACTIONS',
+    ]);
+
+    const contactsByCompany = new Map<number, any[]>();
+    for (const contact of contacts) {
+      const companyContacts = contactsByCompany.get(contact.company_id) || [];
+      companyContacts.push(contact);
+      contactsByCompany.set(contact.company_id, companyContacts);
+    }
+
+    const activitiesByCompany = new Map<number, any[]>();
+    const activitiesByContact = new Map<number, any[]>();
+    for (const activity of activities) {
+      const companyActivities = activitiesByCompany.get(activity.company_id) || [];
+      companyActivities.push(activity);
+      activitiesByCompany.set(activity.company_id, companyActivities);
+
+      if (activity.contact_id) {
+        const contactActivities = activitiesByContact.get(activity.contact_id) || [];
+        contactActivities.push(activity);
+        activitiesByContact.set(activity.contact_id, contactActivities);
+      }
+    }
+
+    const ordersByCompany = new Map<number, any[]>();
+    const ordersByContact = new Map<number, any[]>();
+    for (const order of orders) {
+      const companyOrders = ordersByCompany.get(order.company_id) || [];
+      companyOrders.push(order);
+      ordersByCompany.set(order.company_id, companyOrders);
+
+      if (order.contact_id) {
+        const contactOrders = ordersByContact.get(order.contact_id) || [];
+        contactOrders.push(order);
+        ordersByContact.set(order.contact_id, contactOrders);
+      }
+    }
+
+    const sortByTimeline = (records: any[], dateField: string, fallbackField: string) =>
+      [...records].sort((left, right) => {
+        const leftValue = String(left[dateField] || left[fallbackField] || '');
+        const rightValue = String(right[dateField] || right[fallbackField] || '');
+        return leftValue.localeCompare(rightValue);
+      });
+
+    const getActivityDateTime = (activity?: any) =>
+      formatExportDateTime(activity?.activity_date || activity?.created_at || '');
+
+    const getFirstMatchingActivity = (activitiesList: any[], activityTypes: string[]) =>
+      activitiesList.find((activity) => activityTypes.includes(activity.activity_type));
+
+    const rowEntries = companies.flatMap((company) => {
+      const companyContacts = contactsByCompany.get(company.id) || [];
+      const companyActivities = sortByTimeline(activitiesByCompany.get(company.id) || [], 'activity_date', 'created_at');
+      const companyTimeline = companyActivities.filter((activity) => timelineActivityTypes.has(activity.activity_type));
+      const companyOrders = sortByTimeline(ordersByCompany.get(company.id) || [], 'order_date', 'created_at');
+      const rowContacts = companyContacts.length > 0 ? companyContacts : [null];
+
+      return rowContacts.map((contact) => {
+        const contactActivities = contact
+          ? sortByTimeline(activitiesByContact.get(contact.id) || [], 'activity_date', 'created_at')
+          : [];
+        const scopedTimeline = contactActivities.length > 0
+          ? contactActivities.filter((activity) => timelineActivityTypes.has(activity.activity_type))
+          : companyContacts.length <= 1
+            ? companyTimeline
+            : [];
+        const firstContact = scopedTimeline[0];
+        const secondContact = scopedTimeline[1];
+        const inboundContact = getFirstMatchingActivity(scopedTimeline, ['INBOUND_CONTACT']);
+        const techSupport = getFirstMatchingActivity(scopedTimeline, ['TECH_SUPPORT']);
+        const quoteRequested = getFirstMatchingActivity(scopedTimeline, ['QUOTE_REQUESTED']);
+        const quoteProvided = getFirstMatchingActivity(scopedTimeline, ['QUOTE_PROVIDED']);
+        const samplesOrdered = getFirstMatchingActivity(scopedTimeline, ['SAMPLES_ORDERED']);
+        const samplesDelivered = getFirstMatchingActivity(scopedTimeline, ['SAMPLES_DELIVERED']);
+        const clarifyingActions = getFirstMatchingActivity(scopedTimeline, ['CLARIFYING_ACTIONS']);
+        const contactOrders = contact ? sortByTimeline(ordersByContact.get(contact.id) || [], 'order_date', 'created_at') : [];
+        const selectedOrder = contactOrders[0] || companyOrders[0];
+
+        const address = company.address || [company.city, company.country].filter(Boolean).join(', ');
+        const companyEmail = company.company_email || '';
+        const businessRole = company.business_role || company.company_type || '';
+        const relatedCompanies = company.related_companies || company.corporate_parent || '';
+        const employeeCount = company.employee_count ?? '';
+        const revenue = company.revenue_eur ?? '';
+        const phoneNumber = contact?.phone_direct || contact?.phone_mobile || '';
+        const comments = contact?.notes || company.qualification_notes || '';
+        const sortValue = String(
+          firstContact?.activity_date
+          || firstContact?.created_at
+          || contact?.created_at
+          || company.created_at
+          || company.updated_at
+          || '',
+        );
+
+        return {
+          row: [
+            '',
+            company.company_name || '',
+            company.country || '',
+            address,
+            company.website || '',
+            companyEmail,
+            company.duns_number || '',
+            company.legal_form || '',
+            businessRole,
+            company.main_products || '',
+            company.industry || '',
+            relatedCompanies,
+            employeeCount,
+            revenue,
+            company.technical_fit || '',
+            contact?.full_name || '',
+            contact?.job_title || '',
+            contact?.contacted_via || '',
+            contact?.email || '',
+            contact?.linkedin_url || '',
+            phoneNumber,
+            contact?.interest_reason || '',
+            contact?.ceramic_bearing_experience || '',
+            contact?.attempted_solution || '',
+            contact?.operating_media || '',
+            contact?.hybrid_bearing_alternative || '',
+            getActivityDateTime(firstContact),
+            contact?.cooperation_interest || '',
+            getActivityDateTime(secondContact),
+            getActivityDateTime(inboundContact),
+            getActivityDateTime(techSupport),
+            techSupport?.performed_by || '',
+            getActivityDateTime(quoteRequested),
+            getActivityDateTime(quoteProvided),
+            getActivityDateTime(samplesOrdered),
+            getActivityDateTime(samplesDelivered),
+            getActivityDateTime(clarifyingActions),
+            formatExportDateTime(selectedOrder?.order_date || ''),
+            comments,
+          ],
+          sortValue,
+        };
+      });
+    });
+
+    rowEntries.sort((left, right) => left.sortValue.localeCompare(right.sortValue));
+    const rows = rowEntries.map((entry, index) => {
+      entry.row[0] = String(index + 1);
+      return entry.row;
+    });
+
+    res.json({ headers, rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to build customer tracker export' });
   }
 });
 
@@ -1711,23 +2176,44 @@ app.post('/api/companies/import', (req, res) => {
           }
         }
 
-        const info = insertCompany.run(
-          data['Company Name'],
-          data['Country'] || 'Unknown',
-          city,
-          data['Country'] === 'UAE' ? 'GCC' : 'Unknown',
-          data['Industry'] || 'Unknown',
-          data['Type of Activity'] || 'Unknown',
-          parseInt(data['Employee Count']) || null,
-          revenue,
-          data['Website'] || '',
-          data['Corporate Family'] || '',
-          'DNB_HOOVERS',
-          'RAW',
-          data['Notes'] || ''
-        );
+        // Duplicate check by name or website
+        const compName = data['Company Name'].trim();
+        const compWebsite = (data['Website'] || '').trim();
+        const existingByName = db.prepare('SELECT id FROM companies WHERE lower(company_name) = lower(?)').get(compName) as any;
+        const existingByWeb = compWebsite
+          ? db.prepare('SELECT id FROM companies WHERE lower(website) = lower(?) OR lower(website) = lower(?)').get(compWebsite, compWebsite.replace(/^https?:\/\//, '').replace(/\/$/, '')) as any
+          : null;
+        const existing = existingByName || existingByWeb;
 
-        const companyId = info.lastInsertRowid;
+        let companyId: number;
+        if (existing) {
+          // Update existing instead of creating duplicate
+          companyId = existing.id;
+          db.prepare(`
+            UPDATE companies SET employee_count = COALESCE(?, employee_count), revenue_eur = COALESCE(?, revenue_eur),
+            website = COALESCE(NULLIF(?, ''), website), corporate_parent = COALESCE(NULLIF(?, ''), corporate_parent),
+            city = COALESCE(NULLIF(?, ''), city), updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          `).run(parseInt(data['Employee Count']) || null, revenue, compWebsite, data['Corporate Family'] || '', city, companyId);
+          results.push({ id: companyId, name: compName, action: 'merged' });
+        } else {
+          const info = insertCompany.run(
+            compName,
+            data['Country'] || 'Unknown',
+            city,
+            data['Country'] === 'UAE' ? 'GCC' : 'Unknown',
+            data['Industry'] || 'Unknown',
+            data['Type of Activity'] || 'Unknown',
+            parseInt(data['Employee Count']) || null,
+            revenue,
+            compWebsite,
+            data['Corporate Family'] || '',
+            'DNB_HOOVERS',
+            'RAW',
+            data['Notes'] || ''
+          );
+          companyId = info.lastInsertRowid as number;
+          results.push({ id: companyId, name: compName, action: 'created' });
+        }
 
         if (data['Contact Name'] && data['Contact Name'] !== 'N/A') {
           insertContact.run(

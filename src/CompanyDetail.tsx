@@ -20,14 +20,23 @@ interface Contact {
   email: string;
   phone_direct: string;
   linkedin_url: string;
+  contacted_via?: string;
+  interest_reason?: string;
+  ceramic_bearing_experience?: string;
+  attempted_solution?: string;
+  operating_media?: string;
+  hybrid_bearing_alternative?: string;
+  cooperation_interest?: string;
   notes: string;
   is_verified?: boolean;
   verification_source?: string;
   verified_date?: string;
+  created_at?: string;
 }
 
 interface ActivityLog {
   id: number;
+  contact_id?: number | null;
   activity_type: string;
   activity_date: string;
   performed_by: string;
@@ -62,6 +71,56 @@ interface CompanyDetailProps {
   users: string[];
 }
 
+const activityTypeOptions = [
+  { value: 'CALL_MADE', label: 'Call Made' },
+  { value: 'EMAIL_SENT', label: 'Email Sent' },
+  { value: 'MEETING_HELD', label: 'Meeting Held' },
+  { value: 'LINKEDIN_MESSAGE', label: 'LinkedIn Message' },
+  { value: 'INBOUND_CONTACT', label: 'Contact From Their Side' },
+  { value: 'TECH_SUPPORT', label: 'Technical Support' },
+  { value: 'QUOTE_REQUESTED', label: 'Quote Requested' },
+  { value: 'QUOTE_PROVIDED', label: 'Quote Provided' },
+  { value: 'SAMPLES_ORDERED', label: 'Samples Ordered' },
+  { value: 'SAMPLES_DELIVERED', label: 'Samples Delivered' },
+  { value: 'CLARIFYING_ACTIONS', label: 'Clarifying Further Actions' },
+  { value: 'NOTE', label: 'General Note' },
+];
+
+const emptyContactForm = {
+  full_name: '',
+  job_title: '',
+  email: '',
+  phone_direct: '',
+  linkedin_url: '',
+  contacted_via: '',
+  interest_reason: '',
+  ceramic_bearing_experience: '',
+  attempted_solution: '',
+  operating_media: '',
+  hybrid_bearing_alternative: '',
+  cooperation_interest: '',
+  notes: '',
+  is_verified: false,
+  verification_source: '',
+};
+
+function createEmptyActivityForm(users: string[]) {
+  return {
+    contact_id: '',
+    activity_type: 'CALL_MADE',
+    activity_date: new Date().toISOString().split('T')[0],
+    performed_by: users.find((user) => user.includes('Sageer')) || users[0] || 'System',
+    subject: '',
+    details: '',
+    outcome: 'NEUTRAL',
+    follow_up_date: '',
+  };
+}
+
+function formatActivityTypeLabel(activityType: string) {
+  return activityType.replace(/_/g, ' ');
+}
+
 export default function CompanyDetail({
   companyId,
   onBack,
@@ -79,19 +138,11 @@ export default function CompanyDetail({
   // Contact Form State
   const [showContactForm, setShowContactForm] = useState(false);
   const [editingContactId, setEditingContactId] = useState<number | null>(null);
-  const [contactForm, setContactForm] = useState({ full_name: '', job_title: '', email: '', phone_direct: '', linkedin_url: '', notes: '', is_verified: false, verification_source: '' });
+  const [contactForm, setContactForm] = useState(() => ({ ...emptyContactForm }));
 
   // Activity Form State
   const [showActivityForm, setShowActivityForm] = useState(false);
-  const [activityForm, setActivityForm] = useState({
-    activity_type: 'CALL_MADE',
-    activity_date: new Date().toISOString().split('T')[0],
-    performed_by: users.find(u => u.includes('Sageer')) || users[0] || 'System',
-    subject: '',
-    details: '',
-    outcome: 'NEUTRAL',
-    follow_up_date: '',
-  });
+  const [activityForm, setActivityForm] = useState(createEmptyActivityForm(users));
 
   const [showEditCompany, setShowEditCompany] = useState(false);
   const [companyForm, setCompanyForm] = useState<any>({});
@@ -182,6 +233,11 @@ export default function CompanyDetail({
     }
   }, [activityForm.performed_by, users]);
 
+  const getActivityContactName = (contactId?: number | null) => {
+    if (!contactId) return '';
+    return contacts.find((contact) => contact.id === contactId)?.full_name || '';
+  };
+
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -200,7 +256,7 @@ export default function CompanyDetail({
       }
       setShowContactForm(false);
       setEditingContactId(null);
-      setContactForm({ full_name: '', job_title: '', email: '', phone_direct: '', linkedin_url: '', notes: '', is_verified: false, verification_source: '' });
+      setContactForm({ ...emptyContactForm });
       await fetchData();
       await onDataChanged?.();
     } catch (err) {
@@ -216,6 +272,13 @@ export default function CompanyDetail({
       email: contact.email || '',
       phone_direct: contact.phone_direct || '',
       linkedin_url: contact.linkedin_url || '',
+      contacted_via: contact.contacted_via || '',
+      interest_reason: contact.interest_reason || '',
+      ceramic_bearing_experience: contact.ceramic_bearing_experience || '',
+      attempted_solution: contact.attempted_solution || '',
+      operating_media: contact.operating_media || '',
+      hybrid_bearing_alternative: contact.hybrid_bearing_alternative || '',
+      cooperation_interest: contact.cooperation_interest || '',
       notes: contact.notes || '',
       is_verified: contact.is_verified || false,
       verification_source: contact.verification_source || ''
@@ -241,10 +304,14 @@ export default function CompanyDetail({
       await fetch('/api/activities', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...activityForm, company_id: companyId })
+        body: JSON.stringify({
+          ...activityForm,
+          company_id: companyId,
+          contact_id: activityForm.contact_id ? Number(activityForm.contact_id) : null,
+        })
       });
       setShowActivityForm(false);
-      setActivityForm({ activity_type: 'CALL_MADE', activity_date: new Date().toISOString().split('T')[0], performed_by: users[0] || 'System', subject: '', details: '', outcome: 'NEUTRAL', follow_up_date: '' });
+      setActivityForm(createEmptyActivityForm(users));
       await fetchData();
       await onDataChanged?.();
     } catch (err) {
@@ -659,10 +726,18 @@ export default function CompanyDetail({
                         displayValue={company.revenue_eur ? `€${(company.revenue_eur/1000000).toFixed(1)}M` : '-'} type="number" />
                       <EditableField label="Employees" field="employee_count" value={company.employee_count || ''} type="number" />
                       <EditableField label="Website" field="website" value={company.website || ''} />
+                      <EditableField label="Company Email" field="company_email" value={company.company_email || ''} />
+                      <EditableField label="Address" field="address" value={company.address || ''} />
+                      <EditableField label="Legal Form" field="legal_form" value={company.legal_form || ''} />
+                      <EditableField label="Business Role" field="business_role" value={company.business_role || ''} />
+                      <EditableField label="Main Products" field="main_products" value={company.main_products || ''} />
+                      <EditableField label="Related Cos." field="related_companies" value={company.related_companies || ''} />
                       <EditableField label="Region" field="region" value={company.region}
                         options={regionOptions.map(o => ({ value: o.value, label: o.label }))} />
                       <EditableField label="Industry" field="industry" value={company.industry}
                         options={industryOptions.map(o => ({ value: o.value, label: o.label }))} />
+                      <EditableField label="Ahmad Class." field="technical_fit" value={company.technical_fit || ''}
+                        options={technicalFitOptions.map(o => ({ value: o.value, label: o.label }))} />
                       <EditableField label="Assigned To" field="assigned_to" value={company.assigned_to}
                         options={[{ value: '', label: 'Unassigned' }, ...internalUsers.map(u => ({ value: u, label: u }))]} />
                       <EditableField label="DUNS" field="duns_number" value={company.duns_number || ''} />
@@ -1054,8 +1129,8 @@ export default function CompanyDetail({
                 <button 
                   onClick={() => {
                     const csvContent = "data:text/csv;charset=utf-8," 
-                      + "Name,Title,Email,Phone,LinkedIn,Verified\n"
-                      + contacts.map(c => `"${c.full_name}","${c.job_title || ''}","${c.email || ''}","${c.phone_direct || ''}","${c.linkedin_url || ''}","${c.is_verified ? 'Yes' : 'No'}"`).join("\n");
+                      + "Name,Title,Email,Phone,LinkedIn,How Contacted,Interest Reason,Ceramic Experience,Attempts,Operating Media,Hybrid Alternative,Cooperation Interest,Comments,Verified\n"
+                      + contacts.map(c => `"${c.full_name}","${c.job_title || ''}","${c.email || ''}","${c.phone_direct || ''}","${c.linkedin_url || ''}","${c.contacted_via || ''}","${(c.interest_reason || '').replace(/"/g, '""')}","${(c.ceramic_bearing_experience || '').replace(/"/g, '""')}","${(c.attempted_solution || '').replace(/"/g, '""')}","${(c.operating_media || '').replace(/"/g, '""')}","${(c.hybrid_bearing_alternative || '').replace(/"/g, '""')}","${(c.cooperation_interest || '').replace(/"/g, '""')}","${(c.notes || '').replace(/"/g, '""')}","${c.is_verified ? 'Yes' : 'No'}"`).join("\n");
                     const encodedUri = encodeURI(csvContent);
                     const link = document.createElement("a");
                     link.setAttribute("href", encodedUri);
@@ -1070,7 +1145,7 @@ export default function CompanyDetail({
                 </button>
                 <button 
                   onClick={() => {
-                    setContactForm({ full_name: '', job_title: '', email: '', phone_direct: '', linkedin_url: '', notes: '', is_verified: false, verification_source: '' });
+                    setContactForm({ ...emptyContactForm });
                     setEditingContactId(null);
                     setShowContactForm(!showContactForm);
                   }}
@@ -1102,6 +1177,38 @@ export default function CompanyDetail({
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-slate-700 mb-1">LinkedIn URL</label>
                   <input type="url" value={contactForm.linkedin_url} onChange={e => setContactForm({...contactForm, linkedin_url: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">How was person contacted</label>
+                  <input type="text" value={contactForm.contacted_via} onChange={e => setContactForm({...contactForm, contacted_via: e.target.value})} placeholder="Phone, email, LinkedIn, referral..." className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Main interest in ceramic bearings, reason</label>
+                  <textarea rows={2} value={contactForm.interest_reason} onChange={e => setContactForm({...contactForm, interest_reason: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Any experiences with ceramic bearings?</label>
+                  <textarea rows={2} value={contactForm.ceramic_bearing_experience} onChange={e => setContactForm({...contactForm, ceramic_bearing_experience: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Attempts made to solve the existing problem</label>
+                  <textarea rows={2} value={contactForm.attempted_solution} onChange={e => setContactForm({...contactForm, attempted_solution: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Media the bearings work in</label>
+                  <input type="text" value={contactForm.operating_media} onChange={e => setContactForm({...contactForm, operating_media: e.target.value})} placeholder="Water, chemicals, cleanroom..." className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Will hybrid bearings be an alternative?</label>
+                  <input type="text" value={contactForm.hybrid_bearing_alternative} onChange={e => setContactForm({...contactForm, hybrid_bearing_alternative: e.target.value})} placeholder="Yes / No / Maybe, with reason" className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Interest in cooperation with us</label>
+                  <textarea rows={2} value={contactForm.cooperation_interest} onChange={e => setContactForm({...contactForm, cooperation_interest: e.target.value})} placeholder="Positive interest or short explanation if not interested" className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Comments</label>
+                  <textarea rows={3} value={contactForm.notes} onChange={e => setContactForm({...contactForm, notes: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
                 </div>
                 <div className="col-span-2 flex items-center gap-4 mt-2">
                   <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -1174,6 +1281,17 @@ export default function CompanyDetail({
                       {contact.phone_direct && <div className="flex items-center gap-2 text-sm text-slate-600"><Phone className="w-4 h-4 text-slate-400" /> {contact.phone_direct}</div>}
                       {contact.linkedin_url && <div className="flex items-center gap-2 text-sm text-slate-600"><Linkedin className="w-4 h-4 text-slate-400" /> <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className="hover:text-blue-600">LinkedIn Profile</a></div>}
                     </div>
+                    {(contact.contacted_via || contact.interest_reason || contact.ceramic_bearing_experience || contact.operating_media || contact.hybrid_bearing_alternative || contact.cooperation_interest || contact.notes) && (
+                      <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 space-y-1">
+                        {contact.contacted_via && <div><span className="font-semibold text-slate-700">Contacted via:</span> {contact.contacted_via}</div>}
+                        {contact.interest_reason && <div><span className="font-semibold text-slate-700">Interest:</span> {contact.interest_reason}</div>}
+                        {contact.ceramic_bearing_experience && <div><span className="font-semibold text-slate-700">Ceramic experience:</span> {contact.ceramic_bearing_experience}</div>}
+                        {contact.operating_media && <div><span className="font-semibold text-slate-700">Media:</span> {contact.operating_media}</div>}
+                        {contact.hybrid_bearing_alternative && <div><span className="font-semibold text-slate-700">Hybrid option:</span> {contact.hybrid_bearing_alternative}</div>}
+                        {contact.cooperation_interest && <div><span className="font-semibold text-slate-700">Cooperation:</span> {contact.cooperation_interest}</div>}
+                        {contact.notes && <div><span className="font-semibold text-slate-700">Comments:</span> {contact.notes}</div>}
+                      </div>
+                    )}
                     {/* Quick log actions */}
                     <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-slate-100">
                       {contact.phone_direct && (
@@ -1281,16 +1399,23 @@ export default function CompanyDetail({
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">Type</label>
                   <select value={activityForm.activity_type} onChange={e => setActivityForm({...activityForm, activity_type: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">
-                    <option value="CALL_MADE">Call Made</option>
-                    <option value="EMAIL_SENT">Email Sent</option>
-                    <option value="MEETING_HELD">Meeting Held</option>
-                    <option value="LINKEDIN_MESSAGE">LinkedIn Message</option>
-                    <option value="NOTE">General Note</option>
+                    {activityTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">Date</label>
                   <input type="date" required value={activityForm.activity_date} onChange={e => setActivityForm({...activityForm, activity_date: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Contact Person</label>
+                  <select value={activityForm.contact_id} onChange={e => setActivityForm({...activityForm, contact_id: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">
+                    <option value="">Company-level activity</option>
+                    {contacts.map((contact) => (
+                      <option key={contact.id} value={contact.id}>{contact.full_name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-slate-700 mb-1">Performed By</label>
@@ -1340,7 +1465,10 @@ export default function CompanyDetail({
                         <div className="flex justify-between items-start mb-2">
                           <div>
                             <span className="font-semibold text-slate-900">{activity.subject}</span>
-                            <span className="text-xs text-slate-500 ml-2 px-2 py-0.5 bg-slate-200 rounded-full">{activity.activity_type.replace('_', ' ')}</span>
+                            <span className="text-xs text-slate-500 ml-2 px-2 py-0.5 bg-slate-200 rounded-full">{formatActivityTypeLabel(activity.activity_type)}</span>
+                            {activity.contact_id ? (
+                              <span className="text-xs text-blue-700 ml-2 px-2 py-0.5 bg-blue-50 rounded-full border border-blue-100">{getActivityContactName(activity.contact_id) || 'Linked contact'}</span>
+                            ) : null}
                           </div>
                           <span className="text-xs text-slate-500 flex items-center gap-1"><Calendar className="w-3 h-3" /> {new Date(activity.activity_date).toLocaleDateString()}</span>
                         </div>
@@ -1351,7 +1479,7 @@ export default function CompanyDetail({
                             activity.outcome === 'POSITIVE' ? 'text-green-600' :
                             activity.outcome === 'NEGATIVE' ? 'text-red-600' :
                             activity.outcome === 'FOLLOW_UP_NEEDED' ? 'text-orange-600' : 'text-slate-600'
-                          }`}>Outcome: {activity.outcome.replace('_', ' ')}</span>
+                          }`}>Outcome: {formatActivityTypeLabel(activity.outcome)}</span>
                           {activity.follow_up_date && (
                             <span className="text-orange-600 font-medium flex items-center gap-1">
                               <AlertCircle className="w-3 h-3" /> Follow-up: {new Date(activity.follow_up_date).toLocaleDateString()}
