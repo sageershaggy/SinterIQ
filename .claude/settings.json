@@ -14,7 +14,10 @@
       "Bash(node -e \":*)",
       "Bash(curl -s http://localhost:3000/api/companies/4/notes)",
       "Bash(curl -s -X PATCH http://localhost:3000/api/companies/4 -H 'Content-Type: application/json' -d '{\"\"\"\"duns_number\"\"\"\":\"\"\"\"123456789\"\"\"\"}')",
-      "Bash(node -e \"const d=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(0,''''utf8''''\\)\\); console.log\\(''''Total:'''', d.length\\); d.slice\\(-3\\).forEach\\(c => console.log\\(''''  id=''''+c.id, c.company_name\\)\\)\")"
+      "Bash(node -e \"const d=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(0,''''utf8''''\\)\\); console.log\\(''''Total:'''', d.length\\); d.slice\\(-3\\).forEach\\(c => console.log\\(''''  id=''''+c.id, c.company_name\\)\\)\")",
+      "Bash(pip3 install:*)",
+      "Bash(py -m pip install python-docx)",
+      "Bash(python -m pip install python-docx)"
     ]
   }
 }
