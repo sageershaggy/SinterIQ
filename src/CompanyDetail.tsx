@@ -743,6 +743,9 @@ export default function CompanyDetail({
                       <EditableField label="DUNS" field="duns_number" value={company.duns_number || ''} />
                       <EditableField label="Corp. Parent" field="corporate_parent" value={company.corporate_parent || ''} />
                       <EditableField label="Source" field="source" value={company.source || ''} />
+                      <EditableField label="Address" field="address" value={company.address || ''} />
+                      <EditableField label="Legal Form" field="legal_form" value={company.legal_form || ''} />
+                      <EditableField label="Main Products" field="main_products" value={company.main_products || ''} />
                       <div className="flex justify-between">
                         <dt className="text-slate-500">Created</dt>
                         <dd className="text-slate-600 text-xs">{company.created_at ? new Date(company.created_at).toLocaleDateString() : '-'}</dd>

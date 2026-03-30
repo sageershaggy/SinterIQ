@@ -23,6 +23,7 @@ import {
   Trash2,
   CalendarClock,
   Target,
+  ChevronDown,
 } from 'lucide-react';
 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
@@ -165,6 +166,39 @@ export default function AppRoot() {
       const response = await fetch('/api/activities/recent');
       if (response.ok) setRecentActivities(await response.json());
     } catch (_) {}
+  };
+
+  const exportFilteredCSV = (data: Company[], filename: string) => {
+    const headers = [
+      'Company Name','Type','Country','City','Address','Region','Industry',
+      'Employees','Revenue (EUR)','Website','DUNS Number','Legal Form','Main Products','Corporate Parent','Source',
+      'Lead Score','Technical Fit','Product Fit','Lead Status','Buying Probability',
+      'Website Score','Social Score','Social Media Active','Mentions Technology',
+      'Assigned To','Created By','Created At','Updated At','AI Qualified At',
+      'Approach Strategy','Opportunity Notes','Qualification Notes',
+      'Sales Script','Email Script',
+      'Tracking Level','Tracking Status','Next Tracking Date','Contacts'
+    ];
+    const rows = data.map((c: any) => [
+      c.company_name, c.company_type, c.country, c.city||'', c.address||'', c.region||'', c.industry,
+      c.employee_count||'', c.revenue_eur||'', c.website||'', c.duns_number||'', c.legal_form||'', c.main_products||'', c.corporate_parent||'', c.source||'',
+      c.lead_score??'', c.technical_fit||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
+      c.website_score??'', c.social_score??'', c.social_media_active?'Yes':'No', c.mentions_technology?'Yes':'No',
+      c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'', c.ai_qualified_at||'',
+      (c.approach_strategy||'').replace(/\n/g,' '), (c.opportunity_notes||'').replace(/\n/g,' '), (c.qualification_notes||'').replace(/\n/g,' '),
+      (c.sales_script||'').replace(/\n/g,' '), (c.email_script||'').replace(/\n/g,' '),
+      c.tracking_level||'', c.tracking_status||'', c.next_tracking_date||'', c.contact_count??''
+    ]);
+    const bom = '\uFEFF';
+    const csv = bom + [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}_${data.length}companies.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('success', 'Export ready', `${data.length} companies exported`);
   };
 
   const handleExportCustomerTracker = async () => {
@@ -714,12 +748,61 @@ export default function AppRoot() {
           >
             <Filter className="w-4 h-4" /> Filters
           </button>
-          <button
-            onClick={() => { void handleExportCustomerTracker(); }}
-            className="flex items-center gap-2 border border-slate-300 bg-white hover:bg-slate-50 px-3 py-1.5 rounded-md text-sm font-medium text-slate-700 transition-colors"
-          >
-            <Download className="w-4 h-4" /> Export
-          </button>
+          <div className="relative group">
+            <button
+              className="flex items-center gap-2 border border-slate-300 bg-white hover:bg-slate-50 px-3 py-1.5 rounded-md text-sm font-medium text-slate-700 transition-colors"
+            >
+              <Download className="w-4 h-4" /> Export <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
+            <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 w-56 z-50 hidden group-hover:block">
+              <button
+                onClick={() => { void handleExportCustomerTracker(); }}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
+              >
+                Export All ({sortedCompanies.length} companies)
+              </button>
+              <button
+                onClick={() => {
+                  const qualified = sortedCompanies.filter(c => ['QUALIFIED','APPROVED','IN_OUTREACH','CONTACTED','OPPORTUNITY','WON'].includes(c.lead_status));
+                  if (qualified.length === 0) { showToast('info', 'No qualified leads to export'); return; }
+                  exportFilteredCSV(qualified, `SinterIQ_Qualified_${new Date().toISOString().split('T')[0]}`);
+                }}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
+              >
+                Export Qualified Only ({sortedCompanies.filter(c => ['QUALIFIED','APPROVED','IN_OUTREACH','CONTACTED','OPPORTUNITY','WON'].includes(c.lead_status)).length})
+              </button>
+              <button
+                onClick={() => {
+                  const filtered = sortedCompanies.filter(c => filteredCompanies.includes(c));
+                  exportFilteredCSV(filtered, `SinterIQ_Filtered_${new Date().toISOString().split('T')[0]}`);
+                }}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
+              >
+                Export Current Filter ({filteredCompanies.length})
+              </button>
+              <div className="border-t border-slate-100 my-1" />
+              <button
+                onClick={() => {
+                  const approved = sortedCompanies.filter(c => c.lead_status === 'APPROVED');
+                  if (approved.length === 0) { showToast('info', 'No approved leads'); return; }
+                  exportFilteredCSV(approved, `SinterIQ_Approved_${new Date().toISOString().split('T')[0]}`);
+                }}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-green-700"
+              >
+                Export Approved ({sortedCompanies.filter(c => c.lead_status === 'APPROVED').length})
+              </button>
+              <button
+                onClick={() => {
+                  const disqualified = sortedCompanies.filter(c => c.lead_status === 'DISQUALIFIED');
+                  if (disqualified.length === 0) { showToast('info', 'No disqualified leads'); return; }
+                  exportFilteredCSV(disqualified, `SinterIQ_Disqualified_${new Date().toISOString().split('T')[0]}`);
+                }}
+                className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-red-600"
+              >
+                Export Disqualified ({sortedCompanies.filter(c => c.lead_status === 'DISQUALIFIED').length})
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
