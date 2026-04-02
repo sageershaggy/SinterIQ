@@ -139,6 +139,7 @@ export default function AppRoot() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [aiQualFilter, setAiQualFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 50;
   const searchRef = useRef<HTMLDivElement>(null);
@@ -172,7 +173,7 @@ export default function AppRoot() {
     const headers = [
       'Company Name','Type','Country','City','Address','Region','Industry',
       'Employees','Revenue (EUR)','Website','DUNS Number','Legal Form','Main Products','Corporate Parent','Source',
-      'Lead Score','Technical Fit','Product Fit','Lead Status','Buying Probability',
+      'Lead Score','Technical Fit','Lead Priority','Product Fit','Lead Status','Buying Probability',
       'Website Score','Social Score','Social Media Active','Mentions Technology',
       'Assigned To','Created By','Created At','Updated At','AI Qualified At',
       'Approach Strategy','Opportunity Notes','Qualification Notes',
@@ -294,6 +295,9 @@ export default function AppRoot() {
     if (industryFilter && company.industry !== industryFilter) return false;
     if (companyTypeFilter && company.company_type !== companyTypeFilter) return false;
     if (statusFilter && company.lead_status !== statusFilter) return false;
+    if (aiQualFilter === 'AI_QUALIFIED' && !company.ai_qualified_at) return false;
+    if (aiQualFilter === 'NOT_QUALIFIED' && company.ai_qualified_at) return false;
+    if (aiQualFilter === 'ENRICHED' && company.lead_status !== 'ENRICHED') return false;
     if (dateFrom && company.updated_at && company.updated_at < dateFrom) return false;
     if (dateTo && company.updated_at && company.updated_at > dateTo + 'T23:59:59') return false;
     if (!searchQuery.trim()) return true;
@@ -313,7 +317,7 @@ export default function AppRoot() {
   const paginatedCompanies = sortedCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   // Reset page when filters change
-  useEffect(() => { setCurrentPage(1); }, [searchQuery, assignedFilter, industryFilter, companyTypeFilter, statusFilter, minScore, maxScore, dateFrom, dateTo]);
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, assignedFilter, industryFilter, companyTypeFilter, statusFilter, aiQualFilter, minScore, maxScore, dateFrom, dateTo]);
 
   const handleSearchChange = (query: string) => {
     setSearchQuery(query);
@@ -744,9 +748,18 @@ export default function AppRoot() {
           </div>
           <button
             onClick={() => setShowFilters((v) => !v)}
-            className={`flex items-center gap-2 border px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${showFilters ? 'bg-slate-100 border-slate-300 text-slate-800' : 'bg-white border-slate-300 hover:bg-slate-50 text-slate-700'}`}
+            className={`flex items-center gap-2 border px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              (industryFilter || companyTypeFilter || statusFilter || aiQualFilter || dateFrom || dateTo)
+                ? 'bg-blue-50 border-blue-300 text-blue-700'
+                : showFilters ? 'bg-slate-100 border-slate-300 text-slate-800'
+                : 'bg-white border-slate-300 hover:bg-slate-50 text-slate-700'
+            }`}
           >
             <Filter className="w-4 h-4" /> Filters
+            {(() => {
+              const count = [industryFilter, companyTypeFilter, statusFilter, aiQualFilter, dateFrom, dateTo].filter(Boolean).length;
+              return count > 0 ? <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">{count}</span> : null;
+            })()}
           </button>
           <div className="relative group">
             <button
@@ -807,37 +820,71 @@ export default function AppRoot() {
       </div>
 
       {showFilters && (
-        <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4 grid grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Industry</label>
-            <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
-              <option value="">All Industries</option>
-              {industryOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4 space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Industry</label>
+              <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
+                <option value="">All Industries</option>
+                {industryOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Company Type</label>
+              <select value={companyTypeFilter} onChange={(e) => setCompanyTypeFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
+                <option value="">All Types</option>
+                {companyTypeOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Lead Status</label>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
+                <option value="">All Statuses</option>
+                {leadStatusOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">AI Qualification</label>
+              <select value={aiQualFilter} onChange={(e) => setAiQualFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
+                <option value="">All</option>
+                <option value="AI_QUALIFIED">AI Qualified</option>
+                <option value="NOT_QUALIFIED">Not Qualified</option>
+                <option value="ENRICHED">Enriched</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Updated From</label>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Updated To</label>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none" />
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Company Type</label>
-            <select value={companyTypeFilter} onChange={(e) => setCompanyTypeFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
-              <option value="">All Types</option>
-              {companyTypeOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Lead Status</label>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
-              <option value="">All Statuses</option>
-              {leadStatusOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Updated From</label>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Updated To</label>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none" />
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+            {(industryFilter || companyTypeFilter || statusFilter || aiQualFilter || dateFrom || dateTo || minScore || maxScore) && (
+              <span className="text-xs text-slate-500 mr-auto">
+                {filteredCompanies.length} of {companies.length} companies shown
+              </span>
+            )}
+            <button
+              onClick={() => {
+                setIndustryFilter(''); setCompanyTypeFilter(''); setStatusFilter('');
+                setAiQualFilter(''); setDateFrom(''); setDateTo('');
+                setMinScore(''); setMaxScore(''); setAssignedFilter('');
+              }}
+              className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
+            >
+              Clear All
+            </button>
+            <button
+              onClick={() => setShowFilters(false)}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+            >
+              Apply Filters
+            </button>
           </div>
         </div>
       )}

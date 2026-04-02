@@ -416,6 +416,41 @@ export default function CompanyDetail({
     }
   };
 
+  const exportCompanyCSV = () => {
+    if (!company) return;
+    const headers = [
+      'Company Name','Type','Country','City','Address','Region','Industry',
+      'Employees','Revenue (EUR)','Website','DUNS Number','Legal Form','Main Products','Corporate Parent','Source',
+      'Lead Score','Technical Fit','Product Fit','Lead Status','Buying Probability',
+      'Website Score','Social Score','Social Media Active','Mentions Technology',
+      'Assigned To','Created By','Created At','Updated At','AI Qualified At',
+      'Approach Strategy','Opportunity Notes','Qualification Notes',
+      'Sales Script','Email Script',
+      'Tracking Level','Tracking Status','Next Tracking Date','Contacts'
+    ];
+    const c = company as any;
+    const row = [
+      c.company_name, c.company_type, c.country, c.city||'', c.address||'', c.region||'', c.industry,
+      c.employee_count||'', c.revenue_eur||'', c.website||'', c.duns_number||'', c.legal_form||'', c.main_products||'', c.corporate_parent||'', c.source||'',
+      c.lead_score??'', c.technical_fit||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
+      c.website_score??'', c.social_score??'', c.social_media_active?'Yes':'No', c.mentions_technology?'Yes':'No',
+      c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'', c.ai_qualified_at||'',
+      (c.approach_strategy||'').replace(/\n/g,' '), (c.opportunity_notes||'').replace(/\n/g,' '), (c.qualification_notes||'').replace(/\n/g,' '),
+      (c.sales_script||'').replace(/\n/g,' '), (c.email_script||'').replace(/\n/g,' '),
+      c.tracking_level||'', c.tracking_status||'', c.next_tracking_date||'', contacts.length
+    ];
+    const bom = '\uFEFF';
+    const csv = bom + [headers, row].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${c.company_name.replace(/[^a-zA-Z0-9]/g, '_')}_export.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('success', 'Export ready', `${c.company_name} exported`);
+  };
+
   if (loading) return <div className="p-8 text-center text-slate-500">Loading company details...</div>;
   if (!company) return <div className="p-8 text-center text-red-500">Company not found.</div>;
 
@@ -487,6 +522,12 @@ export default function CompanyDetail({
             className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700"
           >
             <Edit className="w-4 h-4" /> Edit
+          </button>
+          <button
+            onClick={exportCompanyCSV}
+            className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700"
+          >
+            <Download className="w-4 h-4" /> Export
           </button>
           {company.lead_score !== null && company.lead_score > 0 && (
             <div className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex flex-col items-center shadow-sm min-w-[56px]">

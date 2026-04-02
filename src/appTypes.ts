@@ -42,6 +42,8 @@ export interface Company {
   product_fit?: string | null;
   mentions_technology?: boolean | number | null;
 
+  lead_priority?: string | null;
+
   // AI qualification
   ai_qualified_at?: string | null;
   website_score?: number | null;

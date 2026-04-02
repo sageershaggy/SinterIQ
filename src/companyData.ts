@@ -82,6 +82,14 @@ export const technicalFitOptions: SelectOption[] = [
   { value: 'NOT_FIT', label: 'Not a Fit' },
 ];
 
+export const leadPriorityOptions: SelectOption[] = [
+  { value: '', label: 'Unclassified' },
+  { value: 'HIGH_PRIORITY', label: 'High Priority Lead' },
+  { value: 'STRONG', label: 'Strong Lead' },
+  { value: 'LOW_PRIORITY', label: 'Low Priority Lead' },
+  { value: 'NOT_A_TARGET', label: 'Not a Target' },
+];
+
 export const trackingLevelOptions: SelectOption[] = [
   { value: 'WATCHLIST', label: 'Watchlist' },
   { value: 'ACTIVE', label: 'Active' },

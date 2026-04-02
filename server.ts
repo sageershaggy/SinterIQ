@@ -637,6 +637,7 @@ try { db.exec("ALTER TABLE companies ADD COLUMN email_script TEXT;"); } catch (e
 try { db.exec("ALTER TABLE companies ADD COLUMN ai_qualified_at DATETIME;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN opportunity_notes TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN social_profiles_json TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN lead_priority TEXT;"); } catch (e) {}
 
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS notes (
@@ -883,6 +884,7 @@ app.post('/api/companies', (req, res) => {
         related_companies,
         lead_status,
         technical_fit,
+        lead_priority,
         assigned_to,
         qualification_notes,
         tracking_level,
@@ -892,7 +894,7 @@ app.post('/api/companies', (req, res) => {
         source,
         created_by
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
     `).run(
       companyName,
       normalizeOptionalString(req.body.website),
@@ -911,6 +913,7 @@ app.post('/api/companies', (req, res) => {
       normalizeOptionalString(req.body.related_companies),
       normalizeRequiredString(req.body.lead_status) || 'RAW',
       normalizeTechnicalFit(req.body.technical_fit),
+      normalizeOptionalString(req.body.lead_priority),
       normalizeOptionalString(req.body.assigned_to),
       normalizeOptionalString(req.body.qualification_notes),
       normalizeTrackingLevel(req.body.tracking_level),
@@ -953,7 +956,7 @@ app.put('/api/companies/:id', (req, res) => {
       UPDATE companies
       SET company_name = ?, website = ?, company_email = ?, country = ?, address = ?, city = ?, region = ?, industry = ?, company_type = ?,
           employee_count = ?, revenue_eur = ?, legal_form = ?, business_role = ?, main_products = ?, related_companies = ?,
-          lead_status = ?, technical_fit = ?, assigned_to = ?, qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?,
+          lead_status = ?, technical_fit = ?, lead_priority = ?, assigned_to = ?, qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?,
           next_tracking_date = ?, duns_number = ?, corporate_parent = ?, is_subsidiary = ?, source = ?,
           created_by = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -975,6 +978,7 @@ app.put('/api/companies/:id', (req, res) => {
       normalizeOptionalString(req.body.related_companies),
       normalizeRequiredString(req.body.lead_status) || 'RAW',
       normalizeTechnicalFit(req.body.technical_fit),
+      normalizeOptionalString(req.body.lead_priority),
       normalizeOptionalString(req.body.assigned_to),
       normalizeOptionalString(req.body.qualification_notes),
       normalizeTrackingLevel(req.body.tracking_level),
@@ -1008,7 +1012,7 @@ app.patch('/api/companies/:id', (req, res) => {
     const allowedFields = [
       'company_name', 'website', 'company_email', 'country', 'address', 'city', 'region', 'industry', 'company_type',
       'employee_count', 'revenue_eur', 'legal_form', 'business_role', 'main_products', 'related_companies',
-      'lead_status', 'technical_fit', 'assigned_to',
+      'lead_status', 'technical_fit', 'lead_priority', 'assigned_to',
       'qualification_notes', 'tracking_level', 'tracking_status', 'tracking_notes',
       'next_tracking_date', 'duns_number', 'corporate_parent', 'is_subsidiary', 'source', 'created_by',
     ];
@@ -1453,7 +1457,7 @@ app.get('/api/export/customer-tracker', (req, res) => {
       'Related/affiliated companies',
       'Company size (# employees)',
       'Revenues prior year',
-      'Lead classification by Ahmad',
+      'Lead Priority (Ahmad)',
       'Name',
       'Job role',
       'How was person contacted',
@@ -1603,7 +1607,7 @@ app.get('/api/export/customer-tracker', (req, res) => {
             relatedCompanies,
             employeeCount,
             revenue,
-            company.technical_fit || '',
+            company.lead_priority || company.technical_fit || '',
             contact?.full_name || '',
             contact?.job_title || '',
             contact?.contacted_via || '',
@@ -1975,6 +1979,21 @@ RESEARCH TASKS:
 4. Check if they have active social media and recent posts
 5. Look for signals: expansion, new facilities, sustainability goals, engineering team presence, bearing mentions
 
+LEAD PRIORITY CLASSIFICATION (by Ahmad Khan):
+Classify the company into one of these four categories based on the criteria below:
+- HIGH_PRIORITY: Company size 20–2000 employees, is an OEM/Manufacturer, operates in extreme environments, has technical/R&D capability, and has industry multiplier potential (one win = large-scale or repeat custom project). These are companies actively manufacturing something using complex machinery where bearings are required repeatedly and in large quantities.
+- STRONG: Company size 20–2000, may be manufacturer OR technical distributor/bearing trader, involved in industrial supply. May have some but not all features: extreme operating environment, technical/R&D capability, industry multiplier. Still valuable prospects.
+- LOW_PRIORITY: May have some relevance but at a lower level. Manufacturing outside most relevant industries, requiring bearings only occasionally or in smaller quantities. May include small-scale traders with limited relevance.
+- NOT_A_TARGET: Mostly irrelevant — service providers, no visible production/manufacturing activity, no relevant department or industrial requirement to approach.
+
+Key features to evaluate:
+1. Company Size (20–2000 employees ideal)
+2. OEM / Manufacturer status
+3. Bearing Trader / Distributor status
+4. Extreme Operating Environment (corrosive, high-temp, hygienic, vacuum, cryogenic)
+5. Technical / R&D Capability
+6. Industry Multiplier (potential for one win to turn into large-scale or repeat custom project)
+
 Return a JSON object with EXACTLY these fields:
 {
   "score": <integer 0-100, overall lead quality>,
@@ -1982,6 +2001,8 @@ Return a JSON object with EXACTLY these fields:
   "technical_fit": <"HIGH" | "MEDIUM" | "LOW" | "NOT_FIT">,
   "product_fit": <"Ceramic Bearings" | "Hybrid Bearings" | "Ceramic Components" | "Multiple Products" | "None">,
   "category": <"STRATEGIC_PARTNER" | "BEARING_CUSTOMER" | "LOW_FIT" | "NO_FIT">,
+  "lead_priority": <"HIGH_PRIORITY" | "STRONG" | "LOW_PRIORITY" | "NOT_A_TARGET">,
+  "city": <string or null, the city/town where the company headquarters is located — search the web if unknown>,
   "website": <string, the company's main website URL if found — IMPORTANT if company has no website set>,
   "employee_count": <integer or null, estimated employee count if found>,
   "website_score": <integer 0-100, website quality and activity level>,
@@ -2006,6 +2027,8 @@ Return a JSON object with EXACTLY these fields:
       technical_fit?: string;
       product_fit?: string;
       category?: string;
+      lead_priority?: string;
+      city?: string;
       website?: string;
       employee_count?: number;
       website_score?: number;
@@ -2034,9 +2057,10 @@ Return a JSON object with EXACTLY these fields:
     if (result.category === 'STRATEGIC_PARTNER') newStatus = 'APPROVED';
     const technicalFit = result.technical_fit === 'NO_FIT' ? 'NOT_FIT' : (result.technical_fit || null);
 
-    // Build dynamic SET clause — update website & employee_count only if currently empty
+    // Build dynamic SET clause — update website, employee_count & city only if currently empty
     const websiteUpdate = !company.website && result.website ? result.website : null;
     const employeeUpdate = !company.employee_count && result.employee_count ? result.employee_count : null;
+    const cityUpdate = !company.city && result.city ? result.city : null;
 
     db.prepare(`
       UPDATE companies
@@ -2044,9 +2068,10 @@ Return a JSON object with EXACTLY these fields:
           product_fit = ?, social_media_urls = ?, social_media_active = ?, mentions_technology = ?,
           website_score = ?, social_score = ?, buying_probability = ?,
           approach_strategy = ?, sales_script = ?, email_script = ?, opportunity_notes = ?,
-          social_profiles_json = ?,
+          social_profiles_json = ?, lead_priority = ?,
           ${websiteUpdate ? 'website = ?,' : ''}
           ${employeeUpdate ? 'employee_count = ?,' : ''}
+          ${cityUpdate ? 'city = ?,' : ''}
           ai_qualified_at = CURRENT_TIMESTAMP,
           tracking_status = CASE
             WHEN ? IN ('APPROVED', 'QUALIFIED') THEN 'QUALIFIED'
@@ -2072,8 +2097,10 @@ Return a JSON object with EXACTLY these fields:
         normalizeOptionalString(result.email_script),
         normalizeOptionalString(result.opportunity_notes),
         JSON.stringify(Array.isArray(result.social_profiles) ? result.social_profiles : []),
+        normalizeOptionalString(result.lead_priority),
         ...(websiteUpdate ? [websiteUpdate] : []),
         ...(employeeUpdate ? [employeeUpdate] : []),
+        ...(cityUpdate ? [cityUpdate] : []),
         newStatus,
         companyId,
       ]
