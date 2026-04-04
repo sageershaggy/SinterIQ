@@ -13,7 +13,11 @@
       "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(f''''{c[\"\"id\"\"]}: {c[\"\"company_name\"\"]} - score:{c.get\\(\"\"lead_score\"\"\\)} web:{c.get\\(\"\"website_score\"\"\\)} social:{c.get\\(\"\"social_score\"\"\\)} buy:{c.get\\(\"\"buying_probability\"\"\\)} qualified:{c.get\\(\"\"ai_qualified_at\"\"\\)}''''\\) for c in data]\")",
       "Bash(curl -s -X POST http://localhost:3000/api/companies/4/ai-qualify)",
       "Bash(node -e \"const d=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(0,''''utf8''''\\)\\); console.log\\(''''score=''''+d.lead_score+'''' web=''''+d.website_score+'''' social=''''+d.social_score+'''' buy=''''+d.buying_probability+'''' fit=''''+d.technical_fit+'''' status=''''+d.lead_status+'''' profiles=''''+d.social_profiles_json?.substring\\(0,200\\)\\)\")",
-      "Bash(node -e \"const d=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(0,''''utf8''''\\)\\); console.log\\(''''score=''''+d.lead_score+'''' web=''''+d.website_score+'''' social=''''+d.social_score+'''' buy=''''+d.buying_probability+'''' fit=''''+d.technical_fit\\)\")"
+      "Bash(node -e \"const d=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(0,''''utf8''''\\)\\); console.log\\(''''score=''''+d.lead_score+'''' web=''''+d.website_score+'''' social=''''+d.social_score+'''' buy=''''+d.buying_probability+'''' fit=''''+d.technical_fit\\)\")",
+      "Bash(ls -la /d/Github/SinterIQ/*.py)",
+      "Bash(ls -lh /d/Github/SinterIQ/src/*.tsx)",
+      "Read(//d/Github/SinterIQ/**)",
+      "Bash(ls d:/Github/SinterIQ/*.md)"
     ]
   }
 }

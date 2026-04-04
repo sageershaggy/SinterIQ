@@ -137,6 +137,8 @@ export default function AppRoot() {
   const [sortKey, setSortKey] = useState<string>('company_name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [aiQualFilter, setAiQualFilter] = useState('');
@@ -279,7 +281,7 @@ export default function AppRoot() {
   const totalRevenue = companies.reduce((sum, company) => sum + (company.revenue_eur || 0), 0);
   const activeUsers = users.filter((user) => user.is_active).map((user) => user.full_name);
   const userOptions = activeUsers.length > 0 ? activeUsers : [...defaultInternalUsers];
-  const qualifiedCount = companies.filter((company) => ['QUALIFIED', 'APPROVED'].includes(company.lead_status)).length;
+  const qualifiedCount = companies.filter((company) => company.lead_status === 'QUALIFIED').length;
   const today = getDateOnly(new Date().toISOString());
   const overdueFollowUpsCount = followUps.filter(
     (followUp) => !followUp.follow_up_done && getDateOnly(followUp.follow_up_date) < today,
@@ -317,7 +319,7 @@ export default function AppRoot() {
   const paginatedCompanies = sortedCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   // Reset page when filters change
-  useEffect(() => { setCurrentPage(1); }, [searchQuery, assignedFilter, industryFilter, companyTypeFilter, statusFilter, aiQualFilter, minScore, maxScore, dateFrom, dateTo]);
+  useEffect(() => { setCurrentPage(1); setSelectedIds(new Set()); }, [searchQuery, assignedFilter, industryFilter, companyTypeFilter, statusFilter, aiQualFilter, minScore, maxScore, dateFrom, dateTo]);
 
   const handleSearchChange = (query: string) => {
     setSearchQuery(query);
@@ -418,6 +420,40 @@ export default function AppRoot() {
       showToast('error', 'Failed to delete company');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} selected companies and all their contacts, activities, and notes? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      const ids = Array.from(selectedIds);
+      await Promise.all(ids.map(id => fetch(`/api/companies/${id}`, { method: 'DELETE' })));
+      setCompanies((prev) => prev.filter((c) => !selectedIds.has(c.id)));
+      showToast('success', `${ids.length} companies deleted`);
+      setSelectedIds(new Set());
+    } catch (err) {
+      showToast('error', 'Failed to delete some companies');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const toggleSelectCompany = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === paginatedCompanies.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(paginatedCompanies.map(c => c.id)));
     }
   };
 
@@ -725,9 +761,21 @@ export default function AppRoot() {
   const renderCompanies = () => (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Companies</h1>
-          <p className="text-sm text-slate-500 mt-1">{filteredCompanies.length} companies match the current view</p>
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Companies</h1>
+            <p className="text-sm text-slate-500 mt-1">{filteredCompanies.length} companies match the current view</p>
+          </div>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              disabled={bulkDeleting}
+              className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" />
+              {bulkDeleting ? 'Deleting...' : `Delete ${selectedIds.size} selected`}
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <select
@@ -889,10 +937,18 @@ export default function AppRoot() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-x-auto max-h-[calc(100vh-320px)] overflow-y-auto">
         <table className="w-full text-left text-sm whitespace-nowrap">
-          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
+          <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 sticky top-0 z-10">
             <tr>
+              <th className="px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  checked={paginatedCompanies.length > 0 && selectedIds.size === paginatedCompanies.length}
+                  onChange={toggleSelectAll}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+              </th>
               {[
                 { key: 'company_name', label: 'Company Name', cls: 'px-6' },
                 { key: 'country', label: 'Location', cls: 'px-6' },
@@ -915,15 +971,23 @@ export default function AppRoot() {
           <tbody className="divide-y divide-slate-200">
             {loading ? (
               <tr>
-                <td colSpan={9} className="px-6 py-8 text-center text-slate-500">Loading companies...</td>
+                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">Loading companies...</td>
               </tr>
             ) : filteredCompanies.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-6 py-8 text-center text-slate-500">No companies matched the current filters.</td>
+                <td colSpan={10} className="px-6 py-8 text-center text-slate-500">No companies matched the current filters.</td>
               </tr>
             ) : (
               paginatedCompanies.map((company) => (
-                <tr key={company.id} onClick={() => openCompany(company.id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                <tr key={company.id} onClick={() => openCompany(company.id)} className={`hover:bg-slate-50 cursor-pointer transition-colors ${selectedIds.has(company.id) ? 'bg-blue-50' : ''}`}>
+                  <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(company.id)}
+                      onChange={() => toggleSelectCompany(company.id)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </td>
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900">{company.company_name}</div>
                     <div className="text-slate-500 text-xs mt-0.5">{company.company_type}</div>

@@ -1975,24 +1975,33 @@ SINTERTECHNIK PRODUCTS:
 RESEARCH TASKS:
 1. Search the web for this company — find their website, LinkedIn, social media, recent news
 2. Assess their industry fit for ceramic bearings (pump manufacturers, bearing distributors, food/pharma/chemical end-users are top fits)
-3. Estimate employee fit (5-500 employees = addressable SME; 500+ = larger procurement process)
+3. Estimate employee fit (20-2000 employees = ideal addressable range; larger = longer procurement process)
 4. Check if they have active social media and recent posts
 5. Look for signals: expansion, new facilities, sustainability goals, engineering team presence, bearing mentions
 
+CRITICAL EXCLUSION RULES (apply FIRST, before any scoring):
+1. COMPETITORS: If the company manufactures or sells bearings (ball bearings, roller bearings, ceramic bearings, hybrid bearings, precision bearings, spindle bearings) as their PRIMARY product, they are a DIRECT COMPETITOR to Sintertechnik. Mark as NOT_A_TARGET with score 0. Examples: bearing manufacturers, bearing producers with in-house ceramic/hybrid bearing lines.
+2. WHOLESALERS / RETAILERS / MAIL-ORDER: If the company is primarily a wholesaler, retailer, or mail-order supplier that does NOT manufacture or engineer products (e.g., dental supply firms, general consumable distributors), they are NOT_A_TARGET with score 0. They lack the proprietary engineering and manufacturing requirements for Sintertechnik's solutions.
+3. SUBSIDIARIES OF COMPETITORS: If the company is a subsidiary or brand of a known bearing manufacturer competitor, mark as NOT_A_TARGET.
+
+Note: Bearing TRADERS / DISTRIBUTORS who RESELL bearings (but do not manufacture them) are VALID prospects — they can become sales channel partners. Only exclude companies that MANUFACTURE bearings as competitors.
+
 LEAD PRIORITY CLASSIFICATION (by Ahmad Khan):
 Classify the company into one of these four categories based on the criteria below:
-- HIGH_PRIORITY: Company size 20–2000 employees, is an OEM/Manufacturer, operates in extreme environments, has technical/R&D capability, and has industry multiplier potential (one win = large-scale or repeat custom project). These are companies actively manufacturing something using complex machinery where bearings are required repeatedly and in large quantities.
-- STRONG: Company size 20–2000, may be manufacturer OR technical distributor/bearing trader, involved in industrial supply. May have some but not all features: extreme operating environment, technical/R&D capability, industry multiplier. Still valuable prospects.
+- HIGH_PRIORITY: Company size 20–2000 employees, is an OEM/Manufacturer (NOT a bearing manufacturer — they must manufacture OTHER products that USE bearings), operates in extreme environments, has technical/R&D capability, and has industry multiplier potential (one win = large-scale or repeat custom project). These are companies actively manufacturing something using complex machinery where bearings are required repeatedly and in large quantities.
+- STRONG: Company size 20–2000, may be manufacturer (of non-bearing products) OR technical distributor/bearing trader, involved in industrial supply. May have some but not all features: extreme operating environment, technical/R&D capability, industry multiplier. Still valuable prospects.
 - LOW_PRIORITY: May have some relevance but at a lower level. Manufacturing outside most relevant industries, requiring bearings only occasionally or in smaller quantities. May include small-scale traders with limited relevance.
-- NOT_A_TARGET: Mostly irrelevant — service providers, no visible production/manufacturing activity, no relevant department or industrial requirement to approach.
+- NOT_A_TARGET: Competitors (bearing manufacturers), pure service providers, wholesalers/retailers with no manufacturing, no visible production activity, or no relevant industrial requirement. Also includes companies whose core business is producing the same products Sintertechnik sells.
 
 Key features to evaluate:
-1. Company Size (20–2000 employees ideal)
-2. OEM / Manufacturer status
-3. Bearing Trader / Distributor status
-4. Extreme Operating Environment (corrosive, high-temp, hygienic, vacuum, cryogenic)
-5. Technical / R&D Capability
-6. Industry Multiplier (potential for one win to turn into large-scale or repeat custom project)
+1. Is this a COMPETITOR? (bearing manufacturer = automatic NOT_A_TARGET)
+2. Is this a non-manufacturing wholesaler/retailer? (automatic NOT_A_TARGET)
+3. Company Size (20–2000 employees ideal)
+4. OEM / Manufacturer status (of products that USE bearings, not MAKE bearings)
+5. Bearing Trader / Distributor status (resellers are valid prospects)
+6. Extreme Operating Environment (corrosive, high-temp, hygienic, vacuum, cryogenic)
+7. Technical / R&D Capability
+8. Industry Multiplier (potential for one win to turn into large-scale or repeat custom project)
 
 Return a JSON object with EXACTLY these fields:
 {
