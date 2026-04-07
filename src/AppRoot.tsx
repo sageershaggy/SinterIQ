@@ -185,7 +185,7 @@ export default function AppRoot() {
     const rows = data.map((c: any) => [
       c.company_name, c.company_type, c.country, c.city||'', c.address||'', c.region||'', c.industry,
       c.employee_count||'', c.revenue_eur||'', c.website||'', c.duns_number||'', c.legal_form||'', c.main_products||'', c.corporate_parent||'', c.source||'',
-      c.lead_score??'', c.technical_fit||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
+      c.lead_score??'', c.technical_fit||'', c.lead_priority||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
       c.website_score??'', c.social_score??'', c.social_media_active?'Yes':'No', c.mentions_technology?'Yes':'No',
       c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'', c.ai_qualified_at||'',
       (c.approach_strategy||'').replace(/\n/g,' '), (c.opportunity_notes||'').replace(/\n/g,' '), (c.qualification_notes||'').replace(/\n/g,' '),
@@ -314,6 +314,9 @@ export default function AppRoot() {
     const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
     return sortDir === 'asc' ? cmp : -cmp;
   });
+  const qualifiedExportCompanies = sortedCompanies.filter((company) => company.lead_status === 'QUALIFIED');
+  const approvedExportCompanies = sortedCompanies.filter((company) => company.lead_status === 'APPROVED');
+  const disqualifiedExportCompanies = sortedCompanies.filter((company) => company.lead_status === 'DISQUALIFIED');
 
   const totalPages = Math.ceil(sortedCompanies.length / PAGE_SIZE);
   const paginatedCompanies = sortedCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -820,22 +823,20 @@ export default function AppRoot() {
                 onClick={() => { void handleExportCustomerTracker(); }}
                 className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
               >
-                Export All ({sortedCompanies.length} companies)
+                Export All ({companies.length} companies)
               </button>
               <button
                 onClick={() => {
-                  const qualified = sortedCompanies.filter(c => ['QUALIFIED','APPROVED','IN_OUTREACH','CONTACTED','OPPORTUNITY','WON'].includes(c.lead_status));
-                  if (qualified.length === 0) { showToast('info', 'No qualified leads to export'); return; }
-                  exportFilteredCSV(qualified, `SinterIQ_Qualified_${new Date().toISOString().split('T')[0]}`);
+                  if (qualifiedExportCompanies.length === 0) { showToast('info', 'No qualified leads to export'); return; }
+                  exportFilteredCSV(qualifiedExportCompanies, `SinterIQ_Qualified_${new Date().toISOString().split('T')[0]}`);
                 }}
                 className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
               >
-                Export Qualified Only ({sortedCompanies.filter(c => ['QUALIFIED','APPROVED','IN_OUTREACH','CONTACTED','OPPORTUNITY','WON'].includes(c.lead_status)).length})
+                Export Qualified Only ({qualifiedExportCompanies.length})
               </button>
               <button
                 onClick={() => {
-                  const filtered = sortedCompanies.filter(c => filteredCompanies.includes(c));
-                  exportFilteredCSV(filtered, `SinterIQ_Filtered_${new Date().toISOString().split('T')[0]}`);
+                  exportFilteredCSV(sortedCompanies, `SinterIQ_Filtered_${new Date().toISOString().split('T')[0]}`);
                 }}
                 className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
               >
@@ -844,23 +845,21 @@ export default function AppRoot() {
               <div className="border-t border-slate-100 my-1" />
               <button
                 onClick={() => {
-                  const approved = sortedCompanies.filter(c => c.lead_status === 'APPROVED');
-                  if (approved.length === 0) { showToast('info', 'No approved leads'); return; }
-                  exportFilteredCSV(approved, `SinterIQ_Approved_${new Date().toISOString().split('T')[0]}`);
+                  if (approvedExportCompanies.length === 0) { showToast('info', 'No approved leads'); return; }
+                  exportFilteredCSV(approvedExportCompanies, `SinterIQ_Approved_${new Date().toISOString().split('T')[0]}`);
                 }}
                 className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-green-700"
               >
-                Export Approved ({sortedCompanies.filter(c => c.lead_status === 'APPROVED').length})
+                Export Approved ({approvedExportCompanies.length})
               </button>
               <button
                 onClick={() => {
-                  const disqualified = sortedCompanies.filter(c => c.lead_status === 'DISQUALIFIED');
-                  if (disqualified.length === 0) { showToast('info', 'No disqualified leads'); return; }
-                  exportFilteredCSV(disqualified, `SinterIQ_Disqualified_${new Date().toISOString().split('T')[0]}`);
+                  if (disqualifiedExportCompanies.length === 0) { showToast('info', 'No disqualified leads'); return; }
+                  exportFilteredCSV(disqualifiedExportCompanies, `SinterIQ_Disqualified_${new Date().toISOString().split('T')[0]}`);
                 }}
                 className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-red-600"
               >
-                Export Disqualified ({sortedCompanies.filter(c => c.lead_status === 'DISQUALIFIED').length})
+                Export Disqualified ({disqualifiedExportCompanies.length})
               </button>
             </div>
           </div>
