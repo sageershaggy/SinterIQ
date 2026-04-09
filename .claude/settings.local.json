@@ -17,7 +17,8 @@
       "Bash(ls -la /d/Github/SinterIQ/*.py)",
       "Bash(ls -lh /d/Github/SinterIQ/src/*.tsx)",
       "Read(//d/Github/SinterIQ/**)",
-      "Bash(ls d:/Github/SinterIQ/*.md)"
+      "Bash(ls d:/Github/SinterIQ/*.md)",
+      "Bash(npm run:*)"
     ]
   }
 }

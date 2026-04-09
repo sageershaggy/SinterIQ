@@ -1979,29 +1979,67 @@ RESEARCH TASKS:
 4. Check if they have active social media and recent posts
 5. Look for signals: expansion, new facilities, sustainability goals, engineering team presence, bearing mentions
 
-CRITICAL EXCLUSION RULES (apply FIRST, before any scoring):
-1. COMPETITORS: If the company manufactures or sells bearings (ball bearings, roller bearings, ceramic bearings, hybrid bearings, precision bearings, spindle bearings) as their PRIMARY product, they are a DIRECT COMPETITOR to Sintertechnik. Mark as NOT_A_TARGET with score 0. Examples: bearing manufacturers, bearing producers with in-house ceramic/hybrid bearing lines.
-2. WHOLESALERS / RETAILERS / MAIL-ORDER: If the company is primarily a wholesaler, retailer, or mail-order supplier that does NOT manufacture or engineer products (e.g., dental supply firms, general consumable distributors), they are NOT_A_TARGET with score 0. They lack the proprietary engineering and manufacturing requirements for Sintertechnik's solutions.
-3. SUBSIDIARIES OF COMPETITORS: If the company is a subsidiary or brand of a known bearing manufacturer competitor, mark as NOT_A_TARGET.
+CRITICAL EXCLUSION RULES — apply FIRST, before any scoring. If ANY rule below matches, set lead_priority=NOT_A_TARGET, category=NO_FIT, score=0, technical_fit=NOT_FIT. State the matched rule explicitly in 'reasoning'.
 
-Note: Bearing TRADERS / DISTRIBUTORS who RESELL bearings (but do not manufacture them) are VALID prospects — they can become sales channel partners. Only exclude companies that MANUFACTURE bearings as competitors.
+RULE 1 — DIRECT BEARING COMPETITORS (NOT_A_TARGET, score 0):
+The company manufactures rolling bearings (ball, roller, spherical, tapered, angular contact, spindle, thin-section, deep-groove, ceramic, hybrid) as a primary product. This includes precision bearing manufacturers, aerospace bearing makers, and "Kugellagerfabrik" / "Wälzlager" companies with in-house production.
+Known examples: HQW Precision GmbH, HWG Horst Weidner GmbH, RWG Germany GmbH (Kaman), Artur Küpper GmbH & Co. KG, TKF Thüringer Kugellagerfabrik GmbH, Wälzlagertechnik GmbH, WSW Wälzlager Wolfgang Streich, ASK-Kugellagerfabrik Artur Seyfert.
+Note: PLAIN bearing (Gleitlager) makers like Gleitlagertechnik Essen are also too close to core business — exclude as NOT_A_TARGET or at most LOW_PRIORITY if they have no rolling bearing line.
+
+RULE 2 — SUBSIDIARIES OF BEARING COMPETITORS:
+Any subsidiary, brand, or holding affiliate of a known bearing manufacturer = NOT_A_TARGET.
+
+RULE 3 — NON-MANUFACTURING WHOLESALERS / MAIL-ORDER / RETAILERS (NOT_A_TARGET, score 0):
+The company's core business is buying finished goods and reselling them. They have no in-house manufacturing, no R&D, no engineering team specifying mechanical components. Watch for: "Handel", "Großhandel", "Versandhandel", "Mail-order", "Vertrieb" without "Produktion".
+Subcategories to exclude:
+  3a. Dental / medical consumable mail-order (e.g. M+W Dental Müller & Weygandt)
+  3b. Plumbing / heating / sanitary / HVAC trade wholesalers (e.g. Elmer GmbH Bönen, Cl. Bergmann, Georg C. Hansen)
+  3c. Building-materials / hardware wholesalers
+  3d. Construction-machinery dealers, rental-and-service businesses, forklift/material-handling dealers (e.g. Kurt König Baumaschinen — they buy/rent/service excavators, they don't build them; Diez Fördertechnik; Atlas-Kern as primarily a Yanmar/Mecalac dealer)
+  3e. Specialty chemicals distributors (e.g. Azelis Deutschland, Carlofon, Chemische Fabrik Wocklum as a chemical trading KG)
+  3f. Petroleum / fuel / heating-oil distributors (e.g. Erik Walther W.J. Mineralölhandelsgesellschaft)
+  3g. Industrial packaging consultants / material wholesalers without their own machine R&D (e.g. Knüppel Verpackung)
+
+RULE 4 — UTILITY OPERATORS, NOT MANUFACTURERS (NOT_A_TARGET):
+Companies that OPERATE energy, water, or infrastructure systems but do not DESIGN or BUILD mechanical equipment. They buy turnkey systems and run them. Example: ENTEGA Plus (green-energy utility — they sell electricity and gas, they don't make turbines).
+
+RULE 5 — PURE SERVICE PROVIDERS USING (NOT MAKING) MACHINES (NOT_A_TARGET):
+Diagnostic-lab service providers, medical-services groups, transport-packaging cleaning/rental services. They USE automated equipment but do not MANUFACTURE it and have no engineering authority over mechanical specs. Examples: amedes Medizinische Dienstleistungen (lab services), Cartonplast Group (packaging pooling/washing service).
+
+RULE 6 — GLOBAL ENTERPRISES OUTSIDE THE SME PROFILE (NOT_A_TARGET):
+Companies with >5,000 global employees where mechanical-component procurement is centralized at HQ outside Germany and the German entity has no spec authority. Even if they technically use bearings, the German office is unreachable for SME-style outreach. Examples: Fresenius Medical Care (>110k employees, rigid medical regulatory cycles), Dow Produktions und Vertriebs GmbH & Co. OHG (centralized global procurement).
+Note: A LARGE German subsidiary that is a known sales/support hub of a global tech conglomerate (e.g. KEYENCE Deutschland GmbH — Frankfurt support office of Japanese parent) should be LOW_PRIORITY, not NOT_A_TARGET, because there is no spec-change authority locally — but this is a "low priority" rather than a hard exclusion.
 
 LEAD PRIORITY CLASSIFICATION (by Ahmad Khan):
-Classify the company into one of these four categories based on the criteria below:
-- HIGH_PRIORITY: Company size 20–2000 employees, is an OEM/Manufacturer (NOT a bearing manufacturer — they must manufacture OTHER products that USE bearings), operates in extreme environments, has technical/R&D capability, and has industry multiplier potential (one win = large-scale or repeat custom project). These are companies actively manufacturing something using complex machinery where bearings are required repeatedly and in large quantities.
-- STRONG: Company size 20–2000, may be manufacturer (of non-bearing products) OR technical distributor/bearing trader, involved in industrial supply. May have some but not all features: extreme operating environment, technical/R&D capability, industry multiplier. Still valuable prospects.
-- LOW_PRIORITY: May have some relevance but at a lower level. Manufacturing outside most relevant industries, requiring bearings only occasionally or in smaller quantities. May include small-scale traders with limited relevance.
-- NOT_A_TARGET: Competitors (bearing manufacturers), pure service providers, wholesalers/retailers with no manufacturing, no visible production activity, or no relevant industrial requirement. Also includes companies whose core business is producing the same products Sintertechnik sells.
+Classify the company into one of these four categories:
 
-Key features to evaluate:
-1. Is this a COMPETITOR? (bearing manufacturer = automatic NOT_A_TARGET)
-2. Is this a non-manufacturing wholesaler/retailer? (automatic NOT_A_TARGET)
-3. Company Size (20–2000 employees ideal)
-4. OEM / Manufacturer status (of products that USE bearings, not MAKE bearings)
-5. Bearing Trader / Distributor status (resellers are valid prospects)
-6. Extreme Operating Environment (corrosive, high-temp, hygienic, vacuum, cryogenic)
-7. Technical / R&D Capability
-8. Industry Multiplier (potential for one win to turn into large-scale or repeat custom project)
+- HIGH_PRIORITY: 20–2000 employees, is an OEM/Manufacturer (of products that USE bearings, NOT a bearing maker), operates in extreme environments (corrosive, high-temp, hygienic, vacuum, cryogenic, chemical, food/pharma, oil & gas, desalination), has visible technical/R&D capability, and has industry-multiplier potential (one win = large-scale or repeat custom project).
+
+- STRONG: 20–2000 employees, manufacturer of non-bearing products OR a technical distributor/bearing trader/reseller. Has some but not all of the HIGH_PRIORITY features. Still valuable prospects worth contacting.
+
+- LOW_PRIORITY: Some relevance but limited fit. Use this for:
+  • Manufacturers whose products are mostly STATIC and contain few rotating parts (cable trays, packaging trays, lighting fixtures, simple polyethylene films) — e.g. PE-PACKAGING, Artemide Deutschland, OBO Bettermann (whose external products are static but whose internal stamping/galvanizing plants are a possible indirect angle).
+  • Solid-state electronics manufacturers (UPS systems, sensors, electronics) where the only moving parts are cooling fans — e.g. Riello UPS.
+  • Solar / renewable EPC integrators and project developers who do NOT manufacture panels or tracking hardware themselves — e.g. SUNfarming.
+  • Medical/textile manufacturers whose process machines use only standard industrial rollers and have no extreme-environment requirement — e.g. Raguse.
+  • German sales/support subsidiaries of global tech conglomerates with no local spec authority — e.g. KEYENCE Deutschland.
+  • Plain-bearing (Gleitlager) specialists too close to our core business but technically adjacent — e.g. Gleitlagertechnik Essen.
+  • Small regional dealers and traders with weak technical depth.
+
+- NOT_A_TARGET: Anything matching RULES 1–6 above, plus pure service providers, wholesalers/retailers/mail-order with no manufacturing, no visible production activity, or no relevant industrial requirement.
+
+DECISION CHECKLIST (run in order):
+1. Bearing manufacturer or subsidiary of one? -> NOT_A_TARGET (Rule 1/2)
+2. Pure wholesaler / retailer / mail-order / trader-dealer with no manufacturing? -> NOT_A_TARGET (Rule 3)
+3. Utility operator that doesn't build mechanical equipment? -> NOT_A_TARGET (Rule 4)
+4. Service provider that uses but doesn't make machines? -> NOT_A_TARGET (Rule 5)
+5. >5000 employees with centralized global procurement? -> NOT_A_TARGET (Rule 6) — UNLESS it's a sales/support hub of a global tech firm where LOW_PRIORITY is more accurate
+6. Company size 20–2000 employees? (smaller and very small = LOW_PRIORITY usually; larger SME caps at STRONG)
+7. OEM / Manufacturer of products that USE bearings (not MAKE bearings)? -> potential HIGH_PRIORITY/STRONG
+8. Static products with few rotating parts, or solid-state electronics, or EPC integrator? -> LOW_PRIORITY
+9. Extreme operating environment (corrosive/high-temp/hygienic/vacuum/cryogenic)? Strong signal for HIGH_PRIORITY
+10. Technical / R&D capability visible on website? Strong signal for HIGH_PRIORITY
+11. Industry multiplier potential (one win = large-scale or repeat custom project)? Strong signal for HIGH_PRIORITY
 
 Return a JSON object with EXACTLY these fields:
 {
