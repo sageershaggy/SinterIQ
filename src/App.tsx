@@ -131,7 +131,7 @@ export default function App() {
   const handleAIQualify = async (id: number) => {
     setQualifyingId(id);
     try {
-      const res = await fetch(`/api/companies/${id}/ai-qualify`, { method: 'POST' });
+      const res = await fetch(`/api/companies/${id}/ai-qualify?force=true`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to qualify');
       const updatedCompany = await res.json();
       setCompanies(prev => prev.map(c => c.id === id ? updatedCompany : c));

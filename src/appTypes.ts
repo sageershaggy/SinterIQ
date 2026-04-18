@@ -46,6 +46,7 @@ export interface Company {
 
   // AI qualification
   ai_qualified_at?: string | null;
+  ai_confidence?: number | null;
   website_score?: number | null;
   social_score?: number | null;
   buying_probability?: number | null;

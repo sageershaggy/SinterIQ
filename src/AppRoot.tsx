@@ -139,6 +139,9 @@ export default function AppRoot() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkQualifying, setBulkQualifying] = useState(false);
+  const [bulkQualifyProgress, setBulkQualifyProgress] = useState({ done: 0, total: 0 });
+  const bulkQualifyCancelRef = useRef(false);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [aiQualFilter, setAiQualFilter] = useState('');
@@ -379,7 +382,7 @@ export default function AppRoot() {
     setQualifyingId(id);
     showToast('info', 'AI Qualification started', 'Searching the web and analyzing...');
     try {
-      const response = await fetch(`/api/companies/${id}/ai-qualify`, { method: 'POST' });
+      const response = await fetch(`/api/companies/${id}/ai-qualify?force=true`, { method: 'POST' });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || 'AI qualification failed');
       setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...payload } : c)));
@@ -424,6 +427,58 @@ export default function AppRoot() {
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const handleBulkAIQualify = async () => {
+    const rawLeads = filteredCompanies.filter((c: any) => c.lead_status === 'RAW');
+    if (rawLeads.length === 0) {
+      showToast('info', 'No RAW leads', 'No unqualified RAW leads found in the current view.');
+      return;
+    }
+    if (!confirm(`Run AI qualification on ${rawLeads.length} RAW leads in parallel (3 at a time)?`)) return;
+    setBulkQualifying(true);
+    bulkQualifyCancelRef.current = false;
+    setBulkQualifyProgress({ done: 0, total: rawLeads.length });
+
+    const CONCURRENCY = 3;
+    const queue = [...rawLeads];
+    let done = 0;
+    let successCount = 0;
+    let failCount = 0;
+    let skippedCount = 0;
+
+    const worker = async () => {
+      while (queue.length > 0 && !bulkQualifyCancelRef.current) {
+        const lead = queue.shift();
+        if (!lead) break;
+        setQualifyingId(lead.id);
+        try {
+          const response = await fetch(`/api/companies/${lead.id}/ai-qualify`, { method: 'POST' });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) throw new Error(payload?.error || 'Failed');
+          if (payload?.skipped) {
+            skippedCount++;
+          } else {
+            setCompanies((prev: any[]) => prev.map((c: any) => (c.id === lead.id ? { ...c, ...payload } : c)));
+            successCount++;
+          }
+        } catch {
+          failCount++;
+        }
+        done++;
+        setBulkQualifyProgress({ done, total: rawLeads.length });
+      }
+    };
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+
+    setQualifyingId(null);
+    setBulkQualifying(false);
+    setBulkQualifyProgress({ done: 0, total: 0 });
+    const parts = [`${successCount} qualified`];
+    if (skippedCount > 0) parts.push(`${skippedCount} skipped (recently qualified)`);
+    if (failCount > 0) parts.push(`${failCount} failed`);
+    showToast(failCount > 0 ? 'info' : 'success', 'Bulk AI Qualification complete', parts.join(', '));
   };
 
   const handleBulkDelete = async () => {
@@ -781,6 +836,27 @@ export default function AppRoot() {
           )}
         </div>
         <div className="flex items-center gap-4">
+          {bulkQualifying ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 border border-purple-200 rounded-md text-sm font-medium text-purple-700">
+              <Sparkles className="w-4 h-4 animate-pulse" />
+              <span>Qualifying {bulkQualifyProgress.done}/{bulkQualifyProgress.total}...</span>
+              <button
+                onClick={() => { bulkQualifyCancelRef.current = true; }}
+                className="ml-1 text-purple-400 hover:text-purple-700"
+                title="Cancel"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleBulkAIQualify}
+              className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-sm font-medium transition-colors"
+            >
+              <Sparkles className="w-4 h-4" />
+              Run AI
+            </button>
+          )}
           <select
             value={assignedFilter}
             onChange={(event) => setAssignedFilter(event.target.value)}

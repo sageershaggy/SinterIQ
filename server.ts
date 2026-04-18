@@ -336,54 +336,82 @@ function normalizeWebsiteUrl(value: unknown) {
   }
 }
 
+async function fetchPageText(url: string, timeoutMs = 5000) {
+  try {
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'SinterIQ/1.0' },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return null;
+    const html = await response.text();
+    const text = stripHtmlToText(html);
+    return text && text.length > 80 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchWebsiteContext(value: unknown) {
   const websiteUrl = normalizeWebsiteUrl(value);
   if (!websiteUrl) {
     return null;
   }
 
-  try {
-    const response = await fetch(websiteUrl, {
-      headers: { 'User-Agent': 'SinterIQ/1.0' },
-      signal: AbortSignal.timeout(6000),
-    });
+  const base = websiteUrl.replace(/\/+$/, '');
+  const paths = ['', '/about', '/about-us', '/products', '/company', '/ueber-uns', '/unternehmen', '/en/about', '/en/products'];
 
-    if (!response.ok) {
-      return null;
-    }
+  const pages = await Promise.all(paths.map((p) => fetchPageText(`${base}${p}`)));
 
-    const html = await response.text();
-    const text = stripHtmlToText(html).slice(0, 4000);
-    return text || null;
-  } catch {
-    return null;
+  const seenFingerprints = new Set<string>();
+  const uniqueTexts: string[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    const text = pages[i];
+    if (!text) continue;
+    const fingerprint = text.slice(0, 200).toLowerCase().replace(/\s+/g, ' ');
+    if (seenFingerprints.has(fingerprint)) continue;
+    seenFingerprints.add(fingerprint);
+    const label = i === 0 ? 'HOMEPAGE' : `PAGE ${paths[i]}`;
+    uniqueTexts.push(`[${label}]\n${text.slice(0, 2500)}`);
   }
+
+  const combined = uniqueTexts.join('\n\n---\n\n').slice(0, 6000);
+  return combined || null;
 }
 
-async function generateJsonWithLlm({
-  systemPrompt,
-  userPrompt,
-  useWebSearch,
-}: {
-  systemPrompt: string;
-  userPrompt: string;
-  useWebSearch: boolean;
-}) {
-  const settings = getLlmSettings();
-  ensureLlmConfigured(settings);
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
 
+async function runLlmCallOnce(
+  settings: LlmSettings,
+  systemPrompt: string,
+  userPrompt: string,
+  useWebSearch: boolean,
+  timeoutMs: number,
+): Promise<string> {
   if (settings.providerType === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: settings.apiKey! });
     const usingWebSearch = useWebSearch && settings.supportsWebSearch;
-    const response = await ai.models.generateContent({
-      model: settings.model,
-      contents: `${systemPrompt}\n\n${userPrompt}${usingWebSearch ? '\n\nIMPORTANT: Your entire response must be valid JSON only — no markdown, no code fences, no explanation.' : ''}`,
-      config: {
-        // responseMimeType is incompatible with tool use (googleSearch) — only set it when not using tools
-        ...(!usingWebSearch ? { responseMimeType: 'application/json' } : {}),
-        ...(usingWebSearch ? { tools: [{ googleSearch: {} }] } : {}),
-      },
-    });
+    const response = await withTimeout(
+      ai.models.generateContent({
+        model: settings.model,
+        contents: `${systemPrompt}\n\n${userPrompt}${usingWebSearch ? '\n\nIMPORTANT: Your entire response must be valid JSON only — no markdown, no code fences, no explanation.' : ''}`,
+        config: {
+          temperature: 0.2,
+          // responseMimeType is incompatible with tool use (googleSearch) — only set it when not using tools
+          ...(!usingWebSearch ? { responseMimeType: 'application/json' } : {}),
+          ...(usingWebSearch ? { tools: [{ googleSearch: {} }] } : {}),
+        },
+      }),
+      timeoutMs,
+      `Gemini (${settings.model})`,
+    );
 
     return response.text || '';
   }
@@ -402,6 +430,7 @@ async function generateJsonWithLlm({
         { role: 'user', content: `${userPrompt}\n\nReturn only valid JSON.` },
       ],
     }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
@@ -422,6 +451,36 @@ async function generateJsonWithLlm({
   }
 
   return '';
+}
+
+async function generateJsonWithLlm({
+  systemPrompt,
+  userPrompt,
+  useWebSearch,
+  timeoutMs = 120000,
+  retries = 1,
+}: {
+  systemPrompt: string;
+  userPrompt: string;
+  useWebSearch: boolean;
+  timeoutMs?: number;
+  retries?: number;
+}) {
+  const settings = getLlmSettings();
+  ensureLlmConfigured(settings);
+
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await runLlmCallOnce(settings, systemPrompt, userPrompt, useWebSearch, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('LLM call failed');
 }
 
 function parseJsonResponse<T>(rawText: string, fallbackValue: T) {
@@ -638,6 +697,7 @@ try { db.exec("ALTER TABLE companies ADD COLUMN ai_qualified_at DATETIME;"); } c
 try { db.exec("ALTER TABLE companies ADD COLUMN opportunity_notes TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN social_profiles_json TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN lead_priority TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN ai_confidence INTEGER;"); } catch (e) {}
 
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS notes (
@@ -1946,7 +2006,32 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
     const companyId = req.params.id;
     const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
     if (!company) return res.status(404).json({ error: 'Company not found' });
+
+    const force = req.query.force === 'true' || req.body?.force === true;
+    if (!force && company.ai_qualified_at) {
+      const daysSince = (Date.now() - new Date(company.ai_qualified_at).getTime()) / 86400000;
+      if (daysSince < 7) {
+        return res.json({ ...company, skipped: true, skipReason: `Qualified ${Math.round(daysSince)}d ago — pass force=true to re-run.` });
+      }
+    }
+
     const websiteContext = await fetchWebsiteContext(company.website);
+
+    const existingContacts = db.prepare(
+      'SELECT full_name, job_title, email, linkedin_url FROM contacts WHERE company_id = ? ORDER BY is_primary DESC, created_at DESC LIMIT 10'
+    ).all(companyId) as Array<{ full_name: string; job_title?: string; email?: string; linkedin_url?: string }>;
+
+    const recentActivities = db.prepare(
+      'SELECT activity_type, activity_date, subject, outcome FROM activities WHERE company_id = ? ORDER BY activity_date DESC LIMIT 5'
+    ).all(companyId) as Array<{ activity_type: string; activity_date: string; subject?: string; outcome?: string }>;
+
+    const contactsBlock = existingContacts.length > 0
+      ? `\nEXISTING CONTACTS ON FILE (do NOT duplicate these — find ADDITIONAL decision makers only):\n${existingContacts.map((contact) => `- ${contact.full_name}${contact.job_title ? ` — ${contact.job_title}` : ''}${contact.email ? ` <${contact.email}>` : ''}`).join('\n')}\n`
+      : '';
+
+    const activitiesBlock = recentActivities.length > 0
+      ? `\nRECENT ACTIVITY TIMELINE (use to tune approach_strategy — don't repeat completed outreach):\n${recentActivities.map((activity) => `- ${String(activity.activity_date).slice(0, 10)}: ${activity.activity_type}${activity.subject ? ` — ${activity.subject}` : ''}${activity.outcome ? ` [${activity.outcome}]` : ''}`).join('\n')}\n`
+      : '';
 
     const rawResponse = await generateJsonWithLlm({
       systemPrompt: `You are an expert B2B sales intelligence agent for Sintertechnik GmbH (Germany), a manufacturer of precision ceramic bearings, hybrid bearings, and ceramic components. Your job is to deeply qualify leads and generate actionable sales intelligence. Return only strict JSON with no markdown or code fences.`,
@@ -1963,8 +2048,8 @@ COMPANY DATA:
 - Employees: ${company.employee_count || 'Unknown'}
 - Website: ${company.website || 'Unknown — search the web to find it'}
 - Existing Notes: ${company.qualification_notes || 'None'}
-
-${websiteContext ? `WEBSITE CONTENT SNAPSHOT:\n${websiteContext.substring(0, 2000)}\n` : 'Website could not be fetched — use web search to gather information.\n'}
+${contactsBlock}${activitiesBlock}
+${websiteContext ? `WEBSITE CONTENT SNAPSHOT (multiple pages merged):\n${websiteContext}\n` : 'Website could not be fetched — use web search to gather information.\n'}
 
 SINTERTECHNIK PRODUCTS:
 - Full ceramic bearings (ZrO2, Si3N4, Al2O3) — ideal for corrosive/hygienic/high-temp environments
@@ -2092,6 +2177,7 @@ When writing 'reasoning': always state WHICH rule was matched by number, and —
 Return a JSON object with EXACTLY these fields:
 {
   "score": <integer 0-100, overall lead quality>,
+  "confidence": <integer 0-100, how confident you are in this classification based on evidence found — HIGH if you found website + clear industry signals; LOW if you had to infer heavily from the company name only. Used for human-review routing.>,
   "buying_probability": <integer 0-100, likelihood they need ceramic bearings in next 12 months>,
   "technical_fit": <"HIGH" | "MEDIUM" | "LOW" | "NOT_FIT">,
   "product_fit": <"Ceramic Bearings" | "Hybrid Bearings" | "Ceramic Components" | "Multiple Products" | "None">,
@@ -2118,6 +2204,7 @@ Return a JSON object with EXACTLY these fields:
 
     const result = parseJsonResponse<{
       score?: number;
+      confidence?: number;
       buying_probability?: number;
       technical_fit?: string;
       product_fit?: string;
@@ -2163,7 +2250,7 @@ Return a JSON object with EXACTLY these fields:
           product_fit = ?, social_media_urls = ?, social_media_active = ?, mentions_technology = ?,
           website_score = ?, social_score = ?, buying_probability = ?,
           approach_strategy = ?, sales_script = ?, email_script = ?, opportunity_notes = ?,
-          social_profiles_json = ?, lead_priority = ?,
+          social_profiles_json = ?, lead_priority = ?, ai_confidence = ?,
           ${websiteUpdate ? 'website = ?,' : ''}
           ${employeeUpdate ? 'employee_count = ?,' : ''}
           ${cityUpdate ? 'city = ?,' : ''}
@@ -2193,6 +2280,7 @@ Return a JSON object with EXACTLY these fields:
         normalizeOptionalString(result.opportunity_notes),
         JSON.stringify(Array.isArray(result.social_profiles) ? result.social_profiles : []),
         normalizeOptionalString(result.lead_priority),
+        normalizeNullableNumber(result.confidence),
         ...(websiteUpdate ? [websiteUpdate] : []),
         ...(employeeUpdate ? [employeeUpdate] : []),
         ...(cityUpdate ? [cityUpdate] : []),

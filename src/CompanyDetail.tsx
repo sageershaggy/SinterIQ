@@ -366,7 +366,7 @@ export default function CompanyDetail({
   const handleAIQualify = async () => {
     setQualifying(true);
     try {
-      const res = await fetch(`/api/companies/${companyId}/ai-qualify`, { method: 'POST' });
+      const res = await fetch(`/api/companies/${companyId}/ai-qualify?force=true`, { method: 'POST' });
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || 'AI qualification failed');
       setCompany(payload);
@@ -608,6 +608,18 @@ export default function CompanyDetail({
                     <Sparkles className="w-5 h-5 text-indigo-400" />
                     <span className="font-semibold text-sm">AI Qualification Results</span>
                     <span className="text-xs text-slate-400">· {new Date(company.ai_qualified_at).toLocaleDateString()}</span>
+                    {company.ai_confidence != null && (
+                      <span
+                        title="How confident the AI is in this classification based on evidence found. Low confidence = review manually."
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          company.ai_confidence >= 75 ? 'bg-green-500/20 text-green-300' :
+                          company.ai_confidence >= 50 ? 'bg-yellow-500/20 text-yellow-300' :
+                          'bg-red-500/20 text-red-300'
+                        }`}
+                      >
+                        Confidence {company.ai_confidence}%
+                      </span>
+                    )}
                   </div>
                   {company.product_fit && (
                     <span className="text-xs bg-indigo-600 px-2.5 py-1 rounded-full font-medium">{company.product_fit}</span>
