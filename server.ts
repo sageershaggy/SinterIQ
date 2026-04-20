@@ -2319,7 +2319,7 @@ Return a JSON object with EXACTLY these fields:
     const updatedCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId);
     res.json(updatedCompany);
   } catch (error) {
-    console.error('AI Qualification error:', error);
+    console.error(`AI Qualification error for company ${req.params.id}:`, error instanceof Error ? error.stack : error);
     sendApiError(res, error, 'AI qualification failed');
   }
 });
