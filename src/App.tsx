@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Building2, Users, MapPin, Activity, Euro, Search, Filter, Plus, CheckCircle2, AlertCircle, Clock, Sparkles, Upload, Flame, CalendarClock } from 'lucide-react';
+import { Building2, Users, MapPin, Activity, Euro, Search, Filter, Plus, CheckCircle2, AlertCircle, Clock, Sparkles, Upload, CalendarClock } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import CompanyDetail from './CompanyDetail';
 import ContactsTab from './ContactsTab';
@@ -219,12 +219,12 @@ export default function App() {
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col border-r border-slate-800 shrink-0">
         <div className="p-4 border-b border-slate-800">
           <div className="flex items-center gap-3 mb-1">
-            <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white">
-              <Flame className="w-5 h-5" />
+            <div className="sinter-brand-mark w-8 h-8 rounded flex items-center justify-center">
+              <img src="/branding/sintertechnik-mark-192.jpg" alt="" className="sinter-mark-image" />
             </div>
             <div className="font-bold text-white tracking-tight text-xl">SinterIQ</div>
           </div>
-          <div className="text-xs text-slate-400 font-medium ml-11">Precision Lead Intelligence</div>
+          <div className="text-xs text-slate-400 font-medium ml-11">Lead Intelligence</div>
         </div>
         <nav className="flex-1 p-4 space-y-1">
           <button 
