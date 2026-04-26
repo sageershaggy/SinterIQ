@@ -113,4 +113,4 @@ npm run build    # production build
 npm run lint     # tsc --noEmit
 ```
 
-Required for AI features: add a key in the Settings tab UI or configure `.env.local`. Gemini uses `GEMINI_API_KEY`/`GEMINI_MODEL`; OpenRouter, DeepSeek, Kimi/Moonshot, GLM/Z.AI, and other OpenAI-compatible providers use `LLM_API_KEY`/`LLM_MODEL`/`LLM_BASE_URL`/`LLM_PROVIDER_NAME`. Settings saved in the UI take priority over env.
+Required for AI features: add a key in the Settings tab UI or configure `.env.local`. Gemini uses `GEMINI_API_KEY`/`GEMINI_MODEL`; OpenRouter, Qwen, DeepSeek, Kimi/Moonshot, GLM/Z.AI, and other OpenAI-compatible providers use `LLM_API_KEY`/`LLM_MODEL`/`LLM_BASE_URL`/`LLM_PROVIDER_NAME`. Settings saved in the UI take priority over env.

@@ -15,6 +15,6 @@ View your app in AI Studio: https://ai.studio/apps/605dfa38-23c4-4f4a-9b2e-536f3
 
 1. Install dependencies:
    `npm install`
-2. Add an AI key in the Settings tab, or set one in [.env.local](.env.local). Gemini is supported, but you can also use OpenRouter, DeepSeek, Kimi/Moonshot, GLM/Z.AI, or any OpenAI-compatible endpoint via `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`.
+2. Add an AI key in the Settings tab, or set one in [.env.local](.env.local). Gemini is supported, but you can also use OpenRouter, Qwen, DeepSeek, Kimi/Moonshot, GLM/Z.AI, or any OpenAI-compatible endpoint via `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`.
 3. Run the app:
    `npm run dev`

@@ -595,22 +595,22 @@ export default function AppRoot() {
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">Pipeline Dashboard</h1>
 
       {loading ? renderSkeletonCards() : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="sinter-card sinter-kpi p-5 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium text-slate-500">Total Companies</h3>
               <Building2 className="w-4 h-4 text-slate-400" />
             </div>
             <div className="text-3xl font-bold text-slate-900">{companies.length}</div>
           </div>
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div className="sinter-card sinter-kpi p-5 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium text-slate-500">Qualified Leads</h3>
               <CheckCircle2 className="w-4 h-4 text-green-500" />
             </div>
             <div className="text-3xl font-bold text-slate-900">{qualifiedCount}</div>
           </div>
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div className="sinter-card sinter-kpi p-5 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium text-slate-500">Pipeline Value</h3>
               <Euro className="w-4 h-4 text-blue-500" />
@@ -618,7 +618,7 @@ export default function AppRoot() {
             <div className="text-3xl font-bold text-slate-900">{formatCompactEur(totalRevenue)}</div>
           </div>
           <div
-            className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-red-300 transition-colors"
+            className="sinter-card sinter-kpi p-5 rounded-lg cursor-pointer hover:border-red-300 transition-colors"
             onClick={() => setActiveTab('followups')}
           >
             <div className="flex items-center justify-between mb-2">
@@ -634,7 +634,7 @@ export default function AppRoot() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Pipeline by stage bar chart */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div className="lg:col-span-2 sinter-card rounded-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <TrendingUp className="w-5 h-5 text-blue-500" />
             <h2 className="text-base font-semibold text-slate-900">Pipeline by Stage</h2>
@@ -662,7 +662,7 @@ export default function AppRoot() {
         </div>
 
         {/* Leads by country donut */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div className="sinter-card rounded-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <MapPin className="w-5 h-5 text-indigo-500" />
             <h2 className="text-base font-semibold text-slate-900">Leads by Country</h2>
@@ -688,7 +688,7 @@ export default function AppRoot() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Activity */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div className="sinter-card rounded-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-5 h-5 text-slate-400" />
             <h2 className="text-lg font-semibold text-slate-900">Recent Activity</h2>
@@ -735,7 +735,7 @@ export default function AppRoot() {
         </div>
 
         {/* Upcoming Follow-ups */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div className="sinter-card rounded-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <CalendarClock className="w-5 h-5 text-orange-400" />
@@ -770,7 +770,7 @@ export default function AppRoot() {
         </div>
 
         {/* My Assigned Leads */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div className="sinter-card rounded-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <Users className="w-5 h-5 text-slate-400" />
             <h2 className="text-lg font-semibold text-slate-900">My Assigned Leads</h2>
@@ -1027,7 +1027,7 @@ export default function AppRoot() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-x-auto max-h-[calc(100vh-320px)] overflow-y-auto">
+      <div className="sinter-card rounded-lg overflow-x-auto max-h-[calc(100vh-320px)] overflow-y-auto">
         <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 sticky top-0 z-10">
             <tr>
@@ -1218,36 +1218,36 @@ export default function AppRoot() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex">
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col border-r border-slate-800 shrink-0">
-        <div className="p-4 border-b border-slate-800">
+    <div className="sinter-shell min-h-screen text-slate-900 font-sans flex">
+      <aside className="sinter-sidebar w-64 text-slate-300 flex flex-col shrink-0">
+        <div className="p-4 border-b border-white/10">
           <div className="flex items-center gap-3 mb-1">
-            <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white">
+            <div className="sinter-brand-mark w-8 h-8 rounded flex items-center justify-center text-white">
               <Flame className="w-5 h-5" />
             </div>
-            <div className="font-bold text-white tracking-tight text-xl">SinterIQ</div>
+            <div className="sinter-brand-title font-bold text-white tracking-tight text-xl">SinterIQ</div>
           </div>
-          <div className="text-xs text-slate-400 font-medium ml-11">Precision Lead Intelligence</div>
+          <div className="text-xs text-slate-400 font-medium ml-11">Hi-Tech Lead Intelligence</div>
         </div>
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navigationItems.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => { setActiveTab(key); setSelectedCompanyId(null); }}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium transition-colors text-sm ${
-                activeTab === key && !selectedCompanyId ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'
+              className={`sinter-nav-button w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium transition-colors text-sm ${
+                activeTab === key && !selectedCompanyId ? 'sinter-nav-button-active' : ''
               }`}
             >
-              <Icon className={`w-4 h-4 shrink-0 ${activeTab === key && !selectedCompanyId ? 'text-blue-400' : ''}`} />
+              <Icon className={`w-4 h-4 shrink-0 ${activeTab === key && !selectedCompanyId ? 'text-sky-300' : ''}`} />
               {label}
             </button>
           ))}
         </nav>
         {/* User footer */}
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-white/10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-xs text-white font-medium shrink-0">
+              <div className="sinter-brand-mark w-7 h-7 rounded-full flex items-center justify-center text-xs text-white font-medium shrink-0">
                 {(() => { try { const u = JSON.parse(localStorage.getItem('sinteriq_user') || '{}'); return u.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2) || '?'; } catch { return '?'; } })()}
               </div>
               <div className="min-w-0">
@@ -1271,7 +1271,7 @@ export default function AppRoot() {
       </aside>
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
+        <header className="sinter-topbar h-16 flex items-center justify-between px-6 shrink-0">
           <div className="relative w-96" ref={searchRef}>
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -1281,7 +1281,7 @@ export default function AppRoot() {
               onKeyDown={handleSearchKeyDown}
               onFocus={() => searchResults.length > 0 && setShowSearchDropdown(true)}
               placeholder="Search companies, countries, assignees..."
-              className="w-full pl-9 pr-8 py-2 bg-slate-100 border-transparent rounded-md text-sm focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+              className="sinter-search w-full pl-9 pr-8 py-2 rounded-md text-sm outline-none transition-all"
             />
             {searchQuery && (
               <button
@@ -1311,13 +1311,13 @@ export default function AppRoot() {
           </div>
           <button
             onClick={() => setShowCompanyForm(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+            className="sinter-button-primary flex items-center gap-2 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
           >
             <Plus className="w-4 h-4" /> New Company
           </button>
         </header>
 
-        <div className="flex-1 overflow-auto p-6">
+        <div className="sinter-content flex-1 overflow-auto p-6">
           {selectedCompanyId ? (
             <CompanyDetail
               companyId={selectedCompanyId}

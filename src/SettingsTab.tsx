@@ -169,6 +169,114 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     badge: 'Open Source',
     description: 'Fast open model option through OpenRouter. Useful for low-cost testing.',
   },
+  {
+    name: 'OpenRouter Qwen3.6 Plus',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'qwen/qwen3.6-plus',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Latest',
+    description: 'Qwen3.6 Plus through OpenRouter. Large-context reasoning and agentic analysis.',
+  },
+  {
+    name: 'OpenRouter Qwen3 Coder Next',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'qwen/qwen3-coder-next',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Open Source',
+    description: 'Open-weight Qwen coding model through OpenRouter. Strong for structured and technical tasks.',
+  },
+  {
+    name: 'OpenRouter Qwen3 Next 80B Free',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'qwen/qwen3-next-80b-a3b-instruct:free',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Open Source',
+    description: 'Free Qwen3 Next 80B instruct route through OpenRouter when capacity is available.',
+  },
+  {
+    name: 'OpenRouter Qwen3 235B Instruct',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'qwen/qwen3-235b-a22b-instruct-2507',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Open Source',
+    description: 'Large open-weight Qwen MoE model through OpenRouter for high-quality reasoning.',
+  },
+  // --- Qwen / Alibaba Model Studio ---
+  {
+    name: 'Qwen Plus Latest',
+    type: 'openai_compatible',
+    provider_name: 'Qwen',
+    model: 'qwen-plus-latest',
+    base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    api_key_label: 'Alibaba Model Studio API Key',
+    api_key_url: 'https://www.alibabacloud.com/help/en/model-studio/get-api-key',
+    supports_web_search: false,
+    badge: 'Balanced',
+    description: 'Direct Qwen Plus via Alibaba Model Studio. Good default for analysis and writing.',
+  },
+  {
+    name: 'Qwen Flash',
+    type: 'openai_compatible',
+    provider_name: 'Qwen',
+    model: 'qwen-flash',
+    base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    api_key_label: 'Alibaba Model Studio API Key',
+    api_key_url: 'https://www.alibabacloud.com/help/en/model-studio/get-api-key',
+    supports_web_search: false,
+    badge: 'Fast',
+    description: 'Direct Qwen Flash. Lower-cost option for high-volume qualification.',
+  },
+  {
+    name: 'Qwen3 Max',
+    type: 'openai_compatible',
+    provider_name: 'Qwen',
+    model: 'qwen3-max',
+    base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    api_key_label: 'Alibaba Model Studio API Key',
+    api_key_url: 'https://www.alibabacloud.com/help/en/model-studio/get-api-key',
+    supports_web_search: false,
+    badge: 'Latest',
+    description: 'Direct Qwen flagship model for harder reasoning and strategic lead analysis.',
+  },
+  {
+    name: 'Qwen3 Coder Plus',
+    type: 'openai_compatible',
+    provider_name: 'Qwen',
+    model: 'qwen3-coder-plus',
+    base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    api_key_label: 'Alibaba Model Studio API Key',
+    api_key_url: 'https://www.alibabacloud.com/help/en/model-studio/get-api-key',
+    supports_web_search: false,
+    description: 'Direct Qwen coder model. Useful for technical decomposition and structured outputs.',
+  },
+  {
+    name: 'Qwen3 Next 80B Instruct',
+    type: 'openai_compatible',
+    provider_name: 'Qwen',
+    model: 'qwen3-next-80b-a3b-instruct',
+    base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    api_key_label: 'Alibaba Model Studio API Key',
+    api_key_url: 'https://www.alibabacloud.com/help/en/model-studio/get-api-key',
+    supports_web_search: false,
+    badge: 'Open Source',
+    description: 'Direct open Qwen model through Alibaba Model Studio. Stable long-context instruction following.',
+  },
   // --- OpenAI ---
   {
     name: 'GPT-5.4 (OpenAI)',
@@ -517,7 +625,12 @@ const PROVIDER_GROUP_META: Record<string, { badge?: string; description: string;
   openrouter: {
     badge: 'Many models',
     title: 'OpenRouter',
-    description: 'One API key for DeepSeek, Kimi, GLM, Gemma, Claude, and other routed models.',
+    description: 'One API key for DeepSeek, Kimi, GLM, Qwen, Gemma, Claude, and other routed models.',
+  },
+  qwen: {
+    badge: 'Open model',
+    title: 'Qwen / Alibaba',
+    description: 'Direct Qwen models through Alibaba Cloud Model Studio using an OpenAI-compatible API.',
   },
   deepseek: {
     badge: 'Open model',
@@ -570,6 +683,7 @@ const PROVIDER_GROUP_META: Record<string, { badge?: string; description: string;
 const PROVIDER_GROUP_ORDER = [
   'gemini',
   'openrouter',
+  'qwen',
   'deepseek',
   'kimi',
   'zai',
@@ -586,6 +700,7 @@ function getProviderKey(preset: ProviderPreset) {
   const providerName = preset.provider_name.toLowerCase();
   if (preset.type === 'gemini' || providerName.includes('gemini')) return 'gemini';
   if (providerName.includes('openrouter')) return 'openrouter';
+  if (providerName.includes('qwen') || providerName.includes('alibaba')) return 'qwen';
   if (providerName.includes('deepseek')) return 'deepseek';
   if (providerName.includes('kimi') || providerName.includes('moonshot')) return 'kimi';
   if (providerName.includes('z.ai') || providerName.includes('zhipu')) return 'zai';
@@ -718,16 +833,16 @@ export default function SettingsTab() {
   if (loading) return <div className="p-8 text-center text-slate-500">Loading settings...</div>;
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-5xl">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Settings</h1>
-        <p className="text-sm text-slate-500 mt-1">Configure which AI model powers research, qualification, and sales scripts.</p>
+        <p className="text-sm text-slate-500 mt-1">Configure the intelligence layer for research, qualification, and sales scripts.</p>
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">
 
         {/* Provider Picker */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+        <div className="sinter-card rounded-lg p-6 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Settings2 className="w-5 h-5 text-blue-500" />
@@ -755,8 +870,8 @@ export default function SettingsTab() {
                       applyProviderGroup(provider);
                     }
                   }}
-                  className={`relative text-left p-4 rounded-xl border-2 transition-all min-h-[186px] cursor-pointer ${
-                    isSelected ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'
+                  className={`relative text-left p-4 rounded-lg transition-all min-h-[186px] cursor-pointer ${
+                    isSelected ? 'sinter-provider-card-selected' : 'sinter-provider-card'
                   }`}
                 >
                   {providerBadge && (
@@ -783,7 +898,7 @@ export default function SettingsTab() {
                         const nextPreset = provider.presets.find((preset) => preset.name === event.target.value);
                         if (nextPreset) applyPreset(nextPreset);
                       }}
-                      className="w-full bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-md text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                      className="sinter-select w-full text-slate-700 px-3 py-2 rounded-md text-sm outline-none"
                     >
                       {provider.presets.map((preset) => (
                         <option key={preset.name} value={preset.name}>{preset.name}</option>
@@ -808,7 +923,7 @@ export default function SettingsTab() {
         </div>
 
         {/* Configuration */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+        <div className="sinter-card rounded-lg p-6 space-y-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Configuration</h2>
             <p className="text-xs text-slate-500 mt-1">
@@ -824,7 +939,7 @@ export default function SettingsTab() {
                 value={settings.provider_name}
                 onChange={(e) => setSettings({ ...settings, provider_name: e.target.value })}
                 placeholder="e.g. Groq, Together AI, My Ollama"
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                className="sinter-input w-full rounded-md px-3 py-2 text-sm outline-none"
               />
             </div>
 
@@ -835,7 +950,7 @@ export default function SettingsTab() {
                 value={settings.model}
                 onChange={(e) => setSettings({ ...settings, model: e.target.value })}
                 placeholder="e.g. gemini-2.5-flash, gpt-4o, llama3.2"
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                className="sinter-input w-full rounded-md px-3 py-2 text-sm outline-none"
               />
             </div>
 
@@ -847,7 +962,7 @@ export default function SettingsTab() {
                   value={settings.base_url}
                   onChange={(e) => setSettings({ ...settings, base_url: e.target.value })}
                   placeholder="https://api.openai.com/v1"
-                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono text-xs"
+                  className="sinter-input w-full rounded-md px-3 py-2 text-xs font-mono outline-none"
                 />
               </div>
             )}
@@ -873,7 +988,7 @@ export default function SettingsTab() {
                 value={settings.api_key}
                 onChange={(e) => setSettings({ ...settings, api_key: e.target.value })}
                 placeholder={settings.has_api_key ? 'Key stored. Enter new key to replace.' : 'Paste API key here'}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                className="sinter-input w-full rounded-md px-3 py-2 text-sm outline-none"
               />
             </div>
           </div>
@@ -899,7 +1014,7 @@ export default function SettingsTab() {
           </div>
 
           {/* System-level API key info */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm space-y-2">
+          <div className="rounded-lg border border-slate-200 bg-[#f8f9f7] p-4 text-sm space-y-2">
             <div className="font-medium text-slate-800 flex items-center gap-2">
               <svg className="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
               System-Level API Key (Server Admin)
@@ -915,7 +1030,7 @@ export default function SettingsTab() {
               <div>LLM_API_KEY=<span className="text-blue-600">your-provider-key-here</span></div>
               <div>LLM_BASE_URL=<span className="text-blue-600">https://openrouter.ai/api/v1</span></div>
               <div>LLM_MODEL=<span className="text-blue-600">deepseek/deepseek-v4-flash</span></div>
-              <div className="text-slate-400 mt-2"># Examples: DeepSeek https://api.deepseek.com, Kimi https://api.moonshot.ai/v1, GLM https://api.z.ai/api/paas/v4</div>
+              <div className="text-slate-400 mt-2"># Examples: Qwen https://dashscope-intl.aliyuncs.com/compatible-mode/v1, DeepSeek https://api.deepseek.com, Kimi https://api.moonshot.ai/v1, GLM https://api.z.ai/api/paas/v4</div>
             </div>
             <p className="text-slate-400 text-xs">Restart the server after changing .env.local. System keys take precedence when no key is saved in the UI.</p>
           </div>
@@ -928,7 +1043,7 @@ export default function SettingsTab() {
           <button
             type="submit"
             disabled={saving}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
+            className="sinter-button-primary flex items-center gap-2 text-white px-5 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
           >
             <Save className="w-4 h-4" />
             {saving ? 'Saving...' : 'Save Settings'}
