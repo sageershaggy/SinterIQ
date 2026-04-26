@@ -7,7 +7,6 @@ import {
   Clock,
   Euro,
   Filter,
-  Flame,
   Kanban,
   LucideIcon,
   MapPin,
@@ -1221,13 +1220,22 @@ export default function AppRoot() {
     <div className="sinter-shell min-h-screen text-slate-900 font-sans flex">
       <aside className="sinter-sidebar w-64 text-slate-300 flex flex-col shrink-0">
         <div className="p-4 border-b border-white/10">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="sinter-brand-mark w-8 h-8 rounded flex items-center justify-center text-white">
-              <Flame className="w-5 h-5" />
-            </div>
-            <div className="sinter-brand-title font-bold text-white tracking-tight text-xl">SinterIQ</div>
+          <div className="sinter-official-logo-panel rounded-lg p-2 mb-3">
+            <img
+              src="/branding/sintertechnik-logo.png"
+              alt="Sintertechnik GmbH HiTech Solutions"
+              className="sinter-official-logo"
+            />
           </div>
-          <div className="text-xs text-slate-400 font-medium ml-11">Hi-Tech Lead Intelligence</div>
+          <div className="flex items-center gap-3">
+            <div className="sinter-brand-mark w-8 h-8 rounded flex items-center justify-center">
+              <img src="/branding/sintertechnik-mark-192.jpg" alt="" className="sinter-mark-image" />
+            </div>
+            <div>
+              <div className="sinter-brand-title font-bold text-white tracking-tight text-lg leading-tight">SinterIQ</div>
+              <div className="text-[11px] text-slate-400 font-medium">Lead Intelligence</div>
+            </div>
+          </div>
         </div>
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navigationItems.map(({ key, label, icon: Icon }) => (
@@ -1248,7 +1256,10 @@ export default function AppRoot() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 min-w-0">
               <div className="sinter-brand-mark w-7 h-7 rounded-full flex items-center justify-center text-xs text-white font-medium shrink-0">
+                <img src="/branding/sintertechnik-mark-192.jpg" alt="" className="sinter-mark-image" />
+                <span className="sr-only">
                 {(() => { try { const u = JSON.parse(localStorage.getItem('sinteriq_user') || '{}'); return u.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2) || '?'; } catch { return '?'; } })()}
+                </span>
               </div>
               <div className="min-w-0">
                 <div className="text-xs text-white font-medium truncate">

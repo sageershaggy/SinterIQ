@@ -7,9 +7,9 @@
   --sinter-ceramic: #f7f8f6;
   --sinter-line: #dfe5ea;
   --sinter-muted: #6b7a90;
-  --sinter-cobalt: #256fbc;
-  --sinter-cobalt-dark: #175489;
-  --sinter-heat: #c7672f;
+  --sinter-cobalt: #0c71c3;
+  --sinter-cobalt-dark: #075287;
+  --sinter-heat: #e56021;
   --sinter-green: #16845b;
 }
 
@@ -50,13 +50,32 @@ body {
 }
 
 .sinter-brand-mark {
-  background:
-    linear-gradient(135deg, var(--sinter-cobalt), #4e9bd7);
-  box-shadow: 0 8px 22px rgba(37, 111, 188, 0.28);
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 8px 22px rgba(12, 113, 195, 0.22);
+  overflow: hidden;
 }
 
 .sinter-brand-title {
   letter-spacing: 0.01em;
+}
+
+.sinter-official-logo-panel {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  box-shadow: 0 12px 28px rgba(5, 10, 16, 0.18);
+}
+
+.sinter-official-logo {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.sinter-mark-image {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
 }
 
 .sinter-nav-button {

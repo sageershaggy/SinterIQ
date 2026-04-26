@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Flame, LogIn, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { LogIn, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 interface LoginScreenProps {
   onLogin: (userName: string) => void;
@@ -57,11 +57,22 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="sinter-brand-mark inline-flex items-center justify-center w-16 h-16 rounded-lg mb-4">
-            <Flame className="w-8 h-8 text-white" />
+          <div className="sinter-official-logo-panel rounded-lg p-3 mb-5">
+            <img
+              src="/branding/sintertechnik-logo.png"
+              alt="Sintertechnik GmbH HiTech Solutions"
+              className="sinter-official-logo"
+            />
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">SinterIQ</h1>
-          <p className="text-slate-400 text-sm mt-1">Hi-Tech Lead Intelligence</p>
+          <div className="inline-flex items-center justify-center gap-3">
+            <div className="sinter-brand-mark w-10 h-10 rounded flex items-center justify-center">
+              <img src="/branding/sintertechnik-mark-192.jpg" alt="" className="sinter-mark-image" />
+            </div>
+            <div className="text-left">
+              <h1 className="text-3xl font-bold text-white tracking-tight leading-none">SinterIQ</h1>
+              <p className="text-slate-400 text-sm mt-1">Lead Intelligence</p>
+            </div>
+          </div>
         </div>
 
         {/* Login form */}
