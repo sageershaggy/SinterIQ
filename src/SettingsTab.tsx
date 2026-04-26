@@ -74,6 +74,101 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     supports_web_search: true,
     description: 'Latest Gemini 3.1 Flash. Ultra-fast + web search at lowest cost.',
   },
+  // --- OpenRouter ---
+  {
+    name: 'OpenRouter Auto',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'openrouter/auto',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Flexible',
+    description: 'One OpenRouter key for many models. Router picks a suitable model automatically.',
+  },
+  {
+    name: 'OpenRouter DeepSeek V4 Flash',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'deepseek/deepseek-v4-flash',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Cost-efficient',
+    description: 'DeepSeek V4 Flash through OpenRouter. Fast long-context reasoning for bulk qualification.',
+  },
+  {
+    name: 'OpenRouter DeepSeek V4 Pro',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'deepseek/deepseek-v4-pro',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    description: 'DeepSeek V4 Pro through OpenRouter for higher-quality complex lead analysis.',
+  },
+  {
+    name: 'OpenRouter Kimi K2.6',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'moonshotai/kimi-k2.6',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Latest',
+    description: 'Kimi K2.6 through OpenRouter. Strong agentic writing and long-horizon analysis.',
+  },
+  {
+    name: 'OpenRouter GLM 4.7',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'z-ai/glm-4.7',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    description: 'Z.AI GLM 4.7 through OpenRouter. Strong reasoning, coding, and structured writing.',
+  },
+  {
+    name: 'OpenRouter GLM 5.1',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'z-ai/glm-5.1',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Latest',
+    description: 'Z.AI GLM 5.1 through OpenRouter. Current GLM option for deeper analysis.',
+  },
+  {
+    name: 'OpenRouter Gemma 4 Free',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'google/gemma-4-26b-a4b-it:free',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Open Source',
+    description: 'Google Gemma open model through OpenRouter. Free endpoint when available.',
+  },
+  {
+    name: 'OpenRouter Ling 2.6 Flash Free',
+    type: 'openai_compatible',
+    provider_name: 'OpenRouter',
+    model: 'inclusionai/ling-2.6-flash:free',
+    base_url: 'https://openrouter.ai/api/v1',
+    api_key_label: 'OpenRouter API Key',
+    api_key_url: 'https://openrouter.ai/keys',
+    supports_web_search: false,
+    badge: 'Open Source',
+    description: 'Fast open model option through OpenRouter. Useful for low-cost testing.',
+  },
   // --- OpenAI ---
   {
     name: 'GPT-5.4 (OpenAI)',
@@ -236,27 +331,97 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   },
   // --- DeepSeek ---
   {
-    name: 'DeepSeek V3 (0324)',
+    name: 'DeepSeek V4 Flash',
     type: 'openai_compatible',
     provider_name: 'DeepSeek',
-    model: 'deepseek-chat',
-    base_url: 'https://api.deepseek.com/v1',
+    model: 'deepseek-v4-flash',
+    base_url: 'https://api.deepseek.com',
     api_key_label: 'DeepSeek API Key',
     api_key_url: 'https://platform.deepseek.com/api_keys',
     supports_web_search: false,
     badge: 'Cost-efficient',
-    description: 'Latest DeepSeek V3. Very cheap, strong reasoning for bulk tasks.',
+    description: 'Current DeepSeek V4 Flash. Very low cost, long context, strong bulk qualification.',
   },
   {
-    name: 'DeepSeek R1',
+    name: 'DeepSeek V4 Pro',
     type: 'openai_compatible',
     provider_name: 'DeepSeek',
-    model: 'deepseek-reasoner',
-    base_url: 'https://api.deepseek.com/v1',
+    model: 'deepseek-v4-pro',
+    base_url: 'https://api.deepseek.com',
     api_key_label: 'DeepSeek API Key',
     api_key_url: 'https://platform.deepseek.com/api_keys',
     supports_web_search: false,
-    description: 'DeepSeek reasoning model. Chain-of-thought for complex qualification.',
+    description: 'Current DeepSeek V4 Pro. Better quality for complex strategic lead scoring.',
+  },
+  {
+    name: 'DeepSeek Chat (Legacy)',
+    type: 'openai_compatible',
+    provider_name: 'DeepSeek',
+    model: 'deepseek-chat',
+    base_url: 'https://api.deepseek.com',
+    api_key_label: 'DeepSeek API Key',
+    api_key_url: 'https://platform.deepseek.com/api_keys',
+    supports_web_search: false,
+    description: 'Legacy DeepSeek chat alias. Kept for accounts still using old model names.',
+  },
+  {
+    name: 'DeepSeek Reasoner (Legacy)',
+    type: 'openai_compatible',
+    provider_name: 'DeepSeek',
+    model: 'deepseek-reasoner',
+    base_url: 'https://api.deepseek.com',
+    api_key_label: 'DeepSeek API Key',
+    api_key_url: 'https://platform.deepseek.com/api_keys',
+    supports_web_search: false,
+    description: 'Legacy DeepSeek reasoning alias. Use V4 Flash/Pro for new setups.',
+  },
+  // --- Kimi / Moonshot ---
+  {
+    name: 'Kimi K2.6',
+    type: 'openai_compatible',
+    provider_name: 'Kimi',
+    model: 'kimi-k2.6',
+    base_url: 'https://api.moonshot.ai/v1',
+    api_key_label: 'Kimi API Key',
+    api_key_url: 'https://platform.kimi.ai',
+    supports_web_search: false,
+    badge: 'Latest',
+    description: 'Latest Kimi direct API. Strong agentic writing, coding, and long-horizon analysis.',
+  },
+  {
+    name: 'Kimi K2.5',
+    type: 'openai_compatible',
+    provider_name: 'Kimi',
+    model: 'kimi-k2.5',
+    base_url: 'https://api.moonshot.ai/v1',
+    api_key_label: 'Kimi API Key',
+    api_key_url: 'https://platform.kimi.ai',
+    supports_web_search: false,
+    description: 'Kimi K2.5 direct API. Good for multilingual sales writing and structured analysis.',
+  },
+  // --- Z.AI / GLM ---
+  {
+    name: 'GLM 5.1 (Z.AI)',
+    type: 'openai_compatible',
+    provider_name: 'Z.AI',
+    model: 'glm-5.1',
+    base_url: 'https://api.z.ai/api/paas/v4',
+    api_key_label: 'Z.AI API Key',
+    api_key_url: 'https://docs.z.ai',
+    supports_web_search: false,
+    badge: 'Latest',
+    description: 'Latest GLM direct API. Strong general reasoning and multilingual analysis.',
+  },
+  {
+    name: 'GLM 4.7 (Z.AI)',
+    type: 'openai_compatible',
+    provider_name: 'Z.AI',
+    model: 'glm-4.7',
+    base_url: 'https://api.z.ai/api/paas/v4',
+    api_key_label: 'Z.AI API Key',
+    api_key_url: 'https://docs.z.ai',
+    supports_web_search: false,
+    description: 'GLM 4.7 direct API. Good for reasoning, coding-style decomposition, and polished writing.',
   },
   // --- Mistral ---
   {
@@ -329,13 +494,150 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   },
 ];
 
+interface ProviderGroup {
+  api_key_label: string;
+  api_key_url: string;
+  badge?: string;
+  base_url: string;
+  description: string;
+  key: string;
+  presets: ProviderPreset[];
+  provider_name: string;
+  supports_web_search: boolean;
+  title: string;
+  type: 'gemini' | 'openai_compatible';
+}
+
+const PROVIDER_GROUP_META: Record<string, { badge?: string; description: string; title: string }> = {
+  gemini: {
+    badge: 'Web search',
+    title: 'Gemini',
+    description: 'Google Gemini models with built-in search grounding for research-heavy qualification.',
+  },
+  openrouter: {
+    badge: 'Many models',
+    title: 'OpenRouter',
+    description: 'One API key for DeepSeek, Kimi, GLM, Gemma, Claude, and other routed models.',
+  },
+  deepseek: {
+    badge: 'Open model',
+    title: 'DeepSeek',
+    description: 'Direct DeepSeek API for cost-efficient long-context analysis.',
+  },
+  kimi: {
+    badge: 'Open model',
+    title: 'Kimi / Moonshot',
+    description: 'Direct Kimi API for multilingual writing, coding, and long-context reasoning.',
+  },
+  zai: {
+    badge: 'Open model',
+    title: 'GLM / Z.AI',
+    description: 'Direct GLM API for reasoning, structured writing, and multilingual analysis.',
+  },
+  groq: {
+    badge: 'Fast open models',
+    title: 'Groq',
+    description: 'Very fast hosted open models such as Llama and DeepSeek distill.',
+  },
+  mistral: {
+    badge: 'Open model',
+    title: 'Mistral',
+    description: 'European hosted models with strong multilingual performance.',
+  },
+  ollama: {
+    badge: 'Local',
+    title: 'Ollama',
+    description: 'Run open models locally when you want data to stay on this machine.',
+  },
+  openai: {
+    title: 'OpenAI',
+    description: 'OpenAI-compatible API for GPT models.',
+  },
+  anthropic: {
+    title: 'Anthropic',
+    description: 'Claude models. Prefer OpenRouter Claude routes unless your endpoint is OpenAI-compatible.',
+  },
+  xai: {
+    title: 'xAI',
+    description: 'Grok models through an OpenAI-compatible endpoint.',
+  },
+  custom: {
+    title: 'Custom / Other',
+    description: 'Any OpenAI-compatible endpoint, including Together AI, Fireworks, LM Studio, or vLLM.',
+  },
+};
+
+const PROVIDER_GROUP_ORDER = [
+  'gemini',
+  'openrouter',
+  'deepseek',
+  'kimi',
+  'zai',
+  'groq',
+  'mistral',
+  'ollama',
+  'openai',
+  'anthropic',
+  'xai',
+  'custom',
+];
+
+function getProviderKey(preset: ProviderPreset) {
+  const providerName = preset.provider_name.toLowerCase();
+  if (preset.type === 'gemini' || providerName.includes('gemini')) return 'gemini';
+  if (providerName.includes('openrouter')) return 'openrouter';
+  if (providerName.includes('deepseek')) return 'deepseek';
+  if (providerName.includes('kimi') || providerName.includes('moonshot')) return 'kimi';
+  if (providerName.includes('z.ai') || providerName.includes('zhipu')) return 'zai';
+  if (providerName.includes('groq')) return 'groq';
+  if (providerName.includes('mistral')) return 'mistral';
+  if (providerName.includes('ollama')) return 'ollama';
+  if (providerName.includes('openai')) return 'openai';
+  if (providerName.includes('anthropic')) return 'anthropic';
+  if (providerName.includes('xai')) return 'xai';
+  return 'custom';
+}
+
+const PROVIDER_GROUPS = PROVIDER_PRESETS.reduce<Record<string, ProviderGroup>>((groups, preset) => {
+  const key = getProviderKey(preset);
+  const meta = PROVIDER_GROUP_META[key] || PROVIDER_GROUP_META.custom;
+
+  if (!groups[key]) {
+    groups[key] = {
+      api_key_label: preset.api_key_label,
+      api_key_url: preset.api_key_url,
+      badge: meta.badge || preset.badge,
+      base_url: preset.base_url,
+      description: meta.description,
+      key,
+      presets: [],
+      provider_name: preset.provider_name,
+      supports_web_search: preset.supports_web_search,
+      title: meta.title,
+      type: preset.type,
+    };
+  }
+
+  groups[key].presets.push(preset);
+  groups[key].supports_web_search = groups[key].supports_web_search || preset.supports_web_search;
+
+  return groups;
+}, {});
+
+const ORDERED_PROVIDER_GROUPS = Object.values(PROVIDER_GROUPS).sort((a, b) => {
+  const aIndex = PROVIDER_GROUP_ORDER.indexOf(a.key);
+  const bIndex = PROVIDER_GROUP_ORDER.indexOf(b.key);
+  return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+});
+
 export default function SettingsTab() {
   const [settings, setSettings] = useState<LlmSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [selectedPreset, setSelectedPreset] = useState<string>('Gemini');
+  const [selectedPreset, setSelectedPreset] = useState<string>('Gemini 2.5 Flash');
+  const [selectedProviderKey, setSelectedProviderKey] = useState<string>('gemini');
 
   const loadSettings = async () => {
     setLoading(true);
@@ -348,9 +650,19 @@ export default function SettingsTab() {
       setSettings(loaded);
       // Try to match to a preset
       const match = PROVIDER_PRESETS.find(
-        (p) => p.type === loaded.provider_type && (p.type === 'gemini' || p.base_url === loaded.base_url)
+        (p) =>
+          p.type === loaded.provider_type &&
+          p.model === loaded.model &&
+          (p.type === 'gemini' || p.base_url === loaded.base_url),
+      ) || PROVIDER_PRESETS.find(
+        (p) => p.type === loaded.provider_type && (p.type === 'gemini' || p.base_url === loaded.base_url),
       );
       setSelectedPreset(match?.name || 'Custom / Other');
+      if (match) {
+        setSelectedProviderKey(getProviderKey(match));
+      } else {
+        setSelectedProviderKey('custom');
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load settings');
     } finally {
@@ -362,6 +674,7 @@ export default function SettingsTab() {
 
   const applyPreset = (preset: ProviderPreset) => {
     setSelectedPreset(preset.name);
+    setSelectedProviderKey(getProviderKey(preset));
     setSettings((prev) => ({
       ...prev,
       provider_type: preset.type,
@@ -370,6 +683,11 @@ export default function SettingsTab() {
       base_url: preset.base_url,
       api_key: '',
     }));
+  };
+
+  const applyProviderGroup = (provider: ProviderGroup) => {
+    const currentProviderPreset = provider.presets.find((preset) => preset.name === selectedPreset);
+    applyPreset(currentProviderPreset || provider.presets[0]);
   };
 
   const handleSave = async (event: React.FormEvent) => {
@@ -395,6 +713,7 @@ export default function SettingsTab() {
   };
 
   const currentPreset = PROVIDER_PRESETS.find((p) => p.name === selectedPreset);
+  const currentProvider = ORDERED_PROVIDER_GROUPS.find((provider) => provider.key === selectedProviderKey);
 
   if (loading) return <div className="p-8 text-center text-slate-500">Loading settings...</div>;
 
@@ -409,48 +728,93 @@ export default function SettingsTab() {
 
         {/* Provider Picker */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <Settings2 className="w-5 h-5 text-blue-500" />
-            <h2 className="text-lg font-semibold text-slate-900">Choose AI Provider</h2>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5 text-blue-500" />
+              <h2 className="text-lg font-semibold text-slate-900">Choose AI Organization</h2>
+            </div>
+            <div className="text-xs text-slate-500">Select provider, then model</div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {PROVIDER_PRESETS.map((preset) => (
-              <button
-                key={preset.name}
-                type="button"
-                onClick={() => applyPreset(preset)}
-                className={`relative text-left p-3 rounded-xl border-2 transition-all ${
-                  selectedPreset === preset.name
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
-                }`}
-              >
-                {preset.badge && (
-                  <span className={`absolute top-2 right-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                    preset.badge === 'Recommended' ? 'bg-green-100 text-green-700' :
-                    preset.badge === 'Fast & Free' ? 'bg-blue-100 text-blue-700' :
-                    'bg-orange-100 text-orange-700'
-                  }`}>{preset.badge}</span>
-                )}
-                <div className="font-semibold text-sm text-slate-900 mb-1 pr-16">{preset.name}</div>
-                <div className="text-xs text-slate-500 leading-snug">{preset.description}</div>
-                {preset.supports_web_search && (
-                  <div className="mt-2 flex items-center gap-1 text-xs text-green-600 font-medium">
-                    <Globe className="w-3 h-3" /> Web search included
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {ORDERED_PROVIDER_GROUPS.map((provider) => {
+              const isSelected = selectedProviderKey === provider.key;
+              const selectedModel = provider.presets.find((preset) => preset.name === selectedPreset) || provider.presets[0];
+              const providerBadge = provider.badge || selectedModel.badge;
+
+              return (
+                <div
+                  key={provider.key}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isSelected}
+                  onClick={() => applyProviderGroup(provider)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      applyProviderGroup(provider);
+                    }
+                  }}
+                  className={`relative text-left p-4 rounded-xl border-2 transition-all min-h-[186px] cursor-pointer ${
+                    isSelected ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  {providerBadge && (
+                    <span className={`absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      providerBadge === 'Web search' || providerBadge === 'Recommended' ? 'bg-green-100 text-green-700' :
+                      providerBadge === 'Fast & Free' || providerBadge === 'Fast open models' ? 'bg-blue-100 text-blue-700' :
+                      providerBadge === 'Open Source' || providerBadge === 'Open model' ? 'bg-emerald-100 text-emerald-700' :
+                      'bg-orange-100 text-orange-700'
+                    }`}>{providerBadge}</span>
+                  )}
+
+                  <div className="pr-24">
+                    <div className="font-semibold text-base text-slate-900 mb-1">{provider.title}</div>
+                    <div className="text-xs text-slate-500 leading-snug min-h-[34px]">{provider.description}</div>
                   </div>
-                )}
-                {selectedPreset === preset.name && (
-                  <CheckCircle2 className="absolute bottom-2 right-2 w-4 h-4 text-blue-500" />
-                )}
-              </button>
-            ))}
+
+                  <div className="mt-4">
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Model</label>
+                    <select
+                      value={selectedModel.name}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => {
+                        event.stopPropagation();
+                        const nextPreset = provider.presets.find((preset) => preset.name === event.target.value);
+                        if (nextPreset) applyPreset(nextPreset);
+                      }}
+                      className="w-full bg-white border border-slate-300 text-slate-700 px-3 py-2 rounded-md text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                    >
+                      {provider.presets.map((preset) => (
+                        <option key={preset.name} value={preset.name}>{preset.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    {provider.supports_web_search ? (
+                      <div className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                        <Globe className="w-3 h-3" /> Web search included
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-400">{provider.type === 'openai_compatible' ? 'OpenAI-compatible API' : 'Native API'}</div>
+                    )}
+                    {isSelected && <CheckCircle2 className="w-4 h-4 text-blue-500 shrink-0" />}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* Configuration */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
-          <h2 className="text-base font-semibold text-slate-900">Configuration</h2>
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Configuration</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Current selection: {currentProvider?.title || settings.provider_name || 'Custom'} / {currentPreset?.name || settings.model || 'Custom model'}
+            </p>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -547,9 +911,11 @@ export default function SettingsTab() {
               <div><span className="text-slate-400"># Create .env.local in project root:</span></div>
               <div>GEMINI_API_KEY=<span className="text-blue-600">your-gemini-key-here</span></div>
               <div className="text-slate-400 mt-2"># Or for OpenAI-compatible providers:</div>
-              <div>LLM_API_KEY=<span className="text-blue-600">your-openai-key-here</span></div>
-              <div>LLM_BASE_URL=<span className="text-blue-600">https://api.openai.com/v1</span></div>
-              <div>LLM_MODEL=<span className="text-blue-600">gpt-4.1</span></div>
+              <div>LLM_PROVIDER_NAME=<span className="text-blue-600">OpenRouter</span></div>
+              <div>LLM_API_KEY=<span className="text-blue-600">your-provider-key-here</span></div>
+              <div>LLM_BASE_URL=<span className="text-blue-600">https://openrouter.ai/api/v1</span></div>
+              <div>LLM_MODEL=<span className="text-blue-600">deepseek/deepseek-v4-flash</span></div>
+              <div className="text-slate-400 mt-2"># Examples: DeepSeek https://api.deepseek.com, Kimi https://api.moonshot.ai/v1, GLM https://api.z.ai/api/paas/v4</div>
             </div>
             <p className="text-slate-400 text-xs">Restart the server after changing .env.local. System keys take precedence when no key is saved in the UI.</p>
           </div>

@@ -34,7 +34,7 @@ loadEnvFile(path.join(process.cwd(), '.env.local'));
 loadEnvFile(path.join(process.cwd(), '.env'));
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
@@ -416,20 +416,39 @@ async function runLlmCallOnce(
     return response.text || '';
   }
 
+  const shouldOmitTemperature = (() => {
+    const providerName = settings.providerName.toLowerCase();
+    const baseUrl = (settings.baseUrl || '').toLowerCase();
+    return (
+      providerName.includes('kimi') ||
+      providerName.includes('moonshot') ||
+      providerName.includes('z.ai') ||
+      providerName.includes('zhipu') ||
+      baseUrl.includes('moonshot') ||
+      baseUrl.includes('api.z.ai') ||
+      baseUrl.includes('bigmodel')
+    );
+  })();
+
+  const requestBody: Record<string, unknown> = {
+    model: settings.model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `${userPrompt}\n\nReturn only valid JSON.` },
+    ],
+  };
+
+  if (!shouldOmitTemperature) {
+    requestBody.temperature = 0.2;
+  }
+
   const response = await fetch(`${settings.baseUrl!.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${settings.apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: settings.model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `${userPrompt}\n\nReturn only valid JSON.` },
-      ],
-    }),
+    body: JSON.stringify(requestBody),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
