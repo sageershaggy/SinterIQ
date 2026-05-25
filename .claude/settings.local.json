@@ -18,7 +18,30 @@
       "Bash(ls -lh /d/Github/SinterIQ/src/*.tsx)",
       "Read(//d/Github/SinterIQ/**)",
       "Bash(ls d:/Github/SinterIQ/*.md)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(Get-ChildItem -Path \"D:\\\\Github\\\\SinterIQ\\\\src\" -Recurse -Include \"*.tsx\", \"*.ts\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(extract-text \"C:/Users/SMART ZONE/Downloads/Not a target and rejected list 1.docx\")",
+      "Bash(which pandoc *)",
+      "Bash(python 'C:/Users/SMART ZONE/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/c14619ad-a662-48a5-adca-d773ebd1fd11/3b434245-8aca-470f-912b-ff62effacf20/skills/docx/scripts/office/unpack.py' 'C:/Users/SMART ZONE/Downloads/Not a target and rejected list 1.docx' D:/Github/SinterIQ/.tmp_docx)",
+      "Bash(python '/c/Users/SMART ZONE/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/c14619ad-a662-48a5-adca-d773ebd1fd11/3b434245-8aca-470f-912b-ff62effacf20/skills/docx/scripts/office/unpack.py' 'C:/Users/SMART ZONE/Downloads/Not a target and rejected list 1.docx' D:/Github/SinterIQ/.tmp_docx)",
+      "PowerShell($src = \"C:\\\\Users\\\\SMART ZONE\\\\Downloads\\\\Not a target and rejected list 1.docx\"; $dst = \"D:\\\\Github\\\\SinterIQ\\\\.tmp_docx\"; if \\(Test-Path $dst\\) { Remove-Item -Recurse -Force $dst }; New-Item -ItemType Directory -Path $dst | Out-Null; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory\\($src, $dst\\); Get-ChildItem -Recurse $dst | Select-Object -ExpandProperty FullName)",
+      "Bash(node -e ' *)",
+      "Bash(curl -sS -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(curl -sS -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/api/health)",
+      "Bash(curl -sS -X PATCH http://localhost:3000/api/companies/1/status -H \"Content-Type: application/json\" -d '{\"lead_status\":\"DISQUALIFIED\"}')",
+      "Bash(curl -sS -X POST http://localhost:3000/api/companies/1/disqualify -H \"Content-Type: application/json\" -d '{\"category\":\"COMPETITOR\"}')",
+      "Bash(curl -sS -X POST http://localhost:3000/api/companies/1/disqualify -H \"Content-Type: application/json\" -d '{\"reason\":\"test reason here\",\"category\":\"INVALID\"}')",
+      "Bash(curl -sS -X POST http://localhost:3000/api/companies/1/disqualify -H \"Content-Type: application/json\" -d '{\"reason\":\"Test - manufactures competing bearings\",\"category\":\"COMPETITOR\",\"by\":\"Sageer A. Shaikh\"}')",
+      "Bash(node -e \"const d=JSON.parse\\(require\\('fs'\\).readFileSync\\(0,'utf8'\\)\\);console.log\\({status:d.lead_status,priority:d.lead_priority,reason:d.disqualification_reason,category:d.disqualification_category,by:d.disqualified_by}\\)\")",
+      "Bash(curl -sS -X POST http://localhost:3000/api/companies/1/restore -H \"Content-Type: application/json\" -d '{\"lead_status\":\"ENRICHED\"}')",
+      "Bash(node -e \"const d=JSON.parse\\(require\\('fs'\\).readFileSync\\(0,'utf8'\\)\\);console.log\\({status:d.lead_status,priority:d.lead_priority,reason:d.disqualification_reason}\\)\")",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(curl -sS -X POST http://localhost:3000/api/companies/2/mark-reviewed -H \"Content-Type: application/json\" -d '{\"by\":\"Sageer A. Shaikh\",\"notes\":\"smoke test\"}')",
+      "Bash(node -e \"const d=JSON.parse\\(require\\('fs'\\).readFileSync\\(0,'utf8'\\)\\);console.log\\({reviewed:d.human_reviewed,by:d.human_reviewed_by,notes:d.human_review_notes}\\)\")",
+      "Bash(curl -sS -X POST http://localhost:3000/api/companies/2/unmark-reviewed)",
+      "Bash(node -e \"const d=JSON.parse\\(require\\('fs'\\).readFileSync\\(0,'utf8'\\)\\);console.log\\({reviewed:d.human_reviewed}\\)\")"
     ]
   }
 }
