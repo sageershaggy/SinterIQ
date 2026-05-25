@@ -49,6 +49,8 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
   const [marking, setMarking] = useState<number | null>(null);
   const [expandedNoteId, setExpandedNoteId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<number, string>>({});
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkMarking, setBulkMarking] = useState(false);
 
   const queue = useMemo(() => companies.filter(needsReview), [companies]);
 
@@ -100,6 +102,58 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
       showToast('error', 'Mark failed', err instanceof Error ? err.message : '');
     } finally {
       setMarking(null);
+    }
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filtered.length && filtered.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((c) => c.id)));
+    }
+  };
+
+  const handleBulkMarkReviewed = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Mark ${selectedIds.size} leads as reviewed?`)) return;
+    setBulkMarking(true);
+    let succeeded = 0;
+    let failed = 0;
+    try {
+      for (const id of selectedIds) {
+        try {
+          const res = await fetch(`/api/companies/${id}/mark-reviewed`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ by: currentUser }),
+          });
+          if (res.ok) {
+            const payload = await res.json();
+            onCompanyUpdated(payload);
+            succeeded++;
+          } else {
+            failed++;
+          }
+        } catch {
+          failed++;
+        }
+      }
+      setSelectedIds(new Set());
+      showToast(
+        failed === 0 ? 'success' : 'info',
+        `Bulk review complete`,
+        `${succeeded} marked reviewed${failed > 0 ? `, ${failed} failed` : ''}`
+      );
+    } finally {
+      setBulkMarking(false);
     }
   };
 
@@ -157,6 +211,25 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
             </p>
           </div>
         </div>
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600">{selectedIds.size} selected</span>
+            <button
+              onClick={() => void handleBulkMarkReviewed()}
+              disabled={bulkMarking}
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-sm font-medium rounded-md transition-colors"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {bulkMarking ? 'Marking…' : `Mark ${selectedIds.size} reviewed`}
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="px-2 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded-md transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -195,6 +268,14 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
             </button>
           ))}
         </div>
+        {filtered.length > 0 && (
+          <button
+            onClick={toggleSelectAll}
+            className="ml-auto text-xs text-slate-500 hover:text-slate-800 transition-colors px-2 py-1"
+          >
+            {selectedIds.size === filtered.length ? 'Deselect all' : `Select all (${filtered.length})`}
+          </button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -210,8 +291,20 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
           {filtered.map((c) => {
             const priorityLabel = leadPriorityOptions.find((p) => p.value === c.lead_priority)?.label || c.lead_priority || 'Unclassified';
             return (
-              <div key={c.id} className="bg-white border border-slate-200 rounded-xl p-4 hover:border-amber-300 hover:shadow-sm transition-all">
+              <div
+                key={c.id}
+                className={`bg-white border rounded-xl p-4 hover:shadow-sm transition-all ${
+                  selectedIds.has(c.id) ? 'border-amber-400 ring-2 ring-amber-100' : 'border-slate-200 hover:border-amber-300'
+                }`}
+              >
                 <div className="flex items-start gap-4">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(c.id)}
+                    onChange={() => toggleSelect(c.id)}
+                    className="mt-1.5 w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
+                    title="Select for bulk action"
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1.5">
                       <button

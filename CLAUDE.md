@@ -32,9 +32,8 @@ LLM settings can also be configured via the UI Settings tab (stored in `app_sett
 ```
 server.ts                    # Express backend — REST API, SQLite, LLM integration (~2700 lines)
 src/
-  main.tsx                   # React entry point
+  main.tsx                   # React entry point + auth wrapper (gates AppRoot behind LoginScreen)
   AppRoot.tsx                # Main app shell: sidebar nav, dashboard KPIs, company list, filters, exports
-  App.tsx                    # (dead) Legacy dashboard — unreachable
   CompanyDetail.tsx          # Multi-tab company detail with disqualification + human-review banners
   CompanyCreateModal.tsx     # New company creation form
   KanbanBoard.tsx            # Drag-and-drop pipeline (DISQUALIFIED column triggers reason modal)
@@ -43,14 +42,11 @@ src/
   NotATargetTab.tsx          # Combined view of AI-flagged + human-disqualified leads
   DisqualifyModal.tsx        # Required-reason modal with category quick-picks
   ResearchTab.tsx            # AI-powered lead research and contact discovery
-  ContactsTab.tsx            # (dead) Global contacts management — unreachable
   FollowUpsTab.tsx           # Follow-up scheduling, snooze/complete
   CommissionAdmin.tsx        # Commission tiers and calculation
   CommissionsTab.tsx         # Commission display
   ImportTab.tsx              # Bulk import (D&B, LinkedIn, generic CSV) with normalized dedup
   SettingsTab.tsx            # LLM provider configuration UI
-  UsersTab.tsx               # (dead) Team user management — unreachable
-  TrackingTab.tsx            # (dead) Company tracking levels — unreachable
   LoginScreen.tsx            # Authentication
   Toast.tsx                  # Notification system
   ErrorBoundary.tsx          # React error handling
@@ -58,6 +54,8 @@ src/
   companyData.ts             # Shared constants incl. disqualificationCategoryOptions
   formatters.ts              # Formatting utilities (EUR, dates)
   index.css                  # Minimal CSS (Tailwind)
+scripts/
+  audit_duplicates.mjs       # Phase 4 — scan DB for normalized name/website duplicate groups
 ```
 
 ## Sidebar tabs (active in AppRoot)

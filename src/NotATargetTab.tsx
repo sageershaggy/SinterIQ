@@ -23,7 +23,11 @@ interface Props {
 }
 
 function getSource(c: Company): 'HUMAN' | 'AI' | 'OTHER' {
-  if (c.lead_status === 'DISQUALIFIED' && c.disqualified_by) return 'HUMAN';
+  if (c.lead_status === 'DISQUALIFIED' && c.disqualified_by) {
+    // The pre-classifier and AI qualifier set disqualified_by to 'AI Pre-classifier' / 'AI Qualifier'.
+    // Anything else is a real human reviewer.
+    return c.disqualified_by.toLowerCase().includes('ai') ? 'AI' : 'HUMAN';
+  }
   if (c.lead_priority === 'NOT_A_TARGET') return 'AI';
   return 'OTHER';
 }

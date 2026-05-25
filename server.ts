@@ -808,6 +808,17 @@ try { db.exec("ALTER TABLE companies ADD COLUMN human_reviewed_at DATETIME;"); }
 try { db.exec("ALTER TABLE companies ADD COLUMN human_reviewed_by TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN human_review_notes TEXT;"); } catch (e) {}
 
+// Phase 6 — FK indexes for hot join paths (idempotent). Cheap at small scale,
+// matters when companies grows past a few thousand rows.
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_contacts_company_id ON contacts(company_id);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_activities_company_id ON activities(company_id);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_activities_contact_id ON activities(contact_id);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_activities_follow_up ON activities(follow_up_date, follow_up_done);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_orders_company_id ON orders(company_id);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_notes_company_id ON notes(company_id);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_companies_lead_status ON companies(lead_status);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_companies_region ON companies(region);"); } catch (e) {}
+
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
