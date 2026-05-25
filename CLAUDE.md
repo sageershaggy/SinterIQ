@@ -20,13 +20,16 @@ npm run lint      # TypeScript type check (tsc --noEmit)
 
 ## Environment Variables
 ```env
-GEMINI_API_KEY=       # Required for AI features (primary provider)
-GEMINI_MODEL=         # Optional, defaults to gemini-2.5-flash
-LLM_API_KEY=          # Optional OpenAI-compatible fallback
-LLM_MODEL=            # Optional, defaults to gpt-4.1-mini
-LLM_BASE_URL=         # Optional, defaults to https://api.openai.com/v1
+GEMINI_API_KEY=                # Required for AI features (primary provider)
+GEMINI_MODEL=                  # Optional, defaults to gemini-2.5-flash
+LLM_API_KEY=                   # Optional OpenAI-compatible fallback
+LLM_MODEL=                     # Optional, defaults to gpt-4.1-mini
+LLM_BASE_URL=                  # Optional, defaults to https://api.openai.com/v1
+SINTERIQ_ENCRYPTION_KEY=       # Optional 32-byte hex or base64 master key for API-key encryption.
+                               # If omitted, auto-generated and stored in .sinteriq-encryption-key (gitignored).
+                               # Back this file up — losing it makes stored API keys unrecoverable.
 ```
-LLM settings can also be configured via the UI Settings tab (stored in `app_settings` table). DB settings take priority over env vars.
+LLM settings can also be configured via the UI Settings tab (stored in `app_settings` table, **encrypted at rest** since Phase 6). DB settings take priority over env vars. `GET /api/settings/llm` never returns the plaintext key — only a masked preview like `sk-o••••2e94`.
 
 ## Project Structure
 ```
@@ -126,12 +129,24 @@ Supporting tables for team, internal notes, LLM config, and AI research audit tr
 ### Disqualification categories (Phase 1)
 `COMPETITOR`, `WHOLESALER_TRADER`, `UTILITY_OR_SOFTWARE`, `SERVICE_MRO`, `GLOBAL_ENTERPRISE`, `SALES_BRANCH`, `EPC_INTEGRATOR`, `SMALL_END_USER`, `LOW_FIT`, `DUPLICATE`, `OTHER`. Aligned 1:1 with Ahmad's 10 exclusion rules in the AI prompt.
 
-### Import dedup (Phase 4)
-`findExistingCompanyByMatch(name, website)` powers both `POST /companies` and `POST /companies/import`. Matching:
-- Website: protocol/www/trailing-slash normalized, lowercase host comparison
-- Name: German umlaut transliteration (ü↔ue, ö↔oe, ä↔ae, ß↔ss), legal-suffix stripping (GmbH, AG, KG, Vertriebs-GmbH, mbH, Ltd, Inc, etc.), punctuation/whitespace normalized, tokenized
+### Import dedup (Phase 4 + 6)
+`findExistingCompanyByMatch(name, website)` powers both `POST /companies` and `POST /companies/import`. Three-stage match:
 
-Returns `{ id, company_name, matchedBy: 'name'|'website' }` or `null`.
+1. **Indexed website lookup** — `companies.website_key` (Phase 6 stored column, indexed). Protocol/www/trailing-slash normalized, lowercase host comparison.
+2. **Indexed exact name lookup** — `companies.company_name_key` (Phase 6 stored column, indexed). German umlaut transliteration (ü↔ue, ö↔oe, ä↔ae, ß↔ss), legal-suffix stripping (GmbH, AG, KG, Vertriebs-GmbH, mbH, Ltd, Inc, etc.), punctuation/whitespace normalized, tokenized.
+3. **Fuzzy fallback (Phase 6)** — Levenshtein similarity against remaining candidates. Threshold 0.85 (long names) or 0.92 (short names). Compares spaced, compacted, and suffix-stripped variants to catch concatenated-word cases like "ACMETestCo" ↔ "Acme Test Co GmbH".
+
+Returns `{ id, company_name, matchedBy: 'website'|'name'|'fuzzy_name' }` or `null`.
+
+### Identity propagation (Phase 6)
+Frontend installs a global fetch wrapper in [main.tsx](src/main.tsx) that attaches `X-User-Name` header (from `localStorage.sinteriq_user.name`) to every `/api/*` request. Backend's `getRequestUser(req)` reads the header → falls back to `body.by` → falls back to `'System'`. All mutating endpoints (`POST /companies`, `PUT /companies/:id`, `/disqualify`, `/mark-reviewed`, `/import`, etc.) now record the calling user instead of the previous hardcoded `'Sageer A. Shaikh'`.
+
+### Secret encryption (Phase 6)
+LLM API keys are encrypted with AES-256-GCM at rest. Stored format: `enc:v1:<base64(iv|authTag|ciphertext)>`. Master key precedence:
+1. `SINTERIQ_ENCRYPTION_KEY` env var (32-byte hex or base64)
+2. Auto-generated and persisted to `.sinteriq-encryption-key` (gitignored, mode 0600)
+
+On startup, the server migrates any legacy plaintext key found in `app_settings`. `GET /api/settings/llm` returns `{ api_key: '', api_key_preview: 'sk-o••••2e94', has_api_key: true }` — never the plaintext.
 
 ### Contacts
 - `GET /api/contacts` — All contacts with company names

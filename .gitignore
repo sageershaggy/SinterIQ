@@ -7,3 +7,5 @@ coverage/
 .chrome-debug/
 .env*
 !.env.example
+.sinteriq-encryption-key
+.tmp_docx/

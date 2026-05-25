@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import Database from 'better-sqlite3';
 import { GoogleGenAI } from '@google/genai';
 
@@ -32,6 +33,82 @@ function loadEnvFile(filePath: string) {
 
 loadEnvFile(path.join(process.cwd(), '.env.local'));
 loadEnvFile(path.join(process.cwd(), '.env'));
+
+// =========================================================================
+// Secret encryption — AES-256-GCM at rest for LLM API keys
+// =========================================================================
+// Master key precedence:
+//   1. SINTERIQ_ENCRYPTION_KEY env var (32-byte base64 or 64-char hex)
+//   2. Auto-generated key persisted to .sinteriq-encryption-key (gitignored)
+// Both modes log a warning if the key is freshly generated.
+
+const ENC_KEY_FILE = path.join(process.cwd(), '.sinteriq-encryption-key');
+const ENC_PREFIX = 'enc:v1:';
+
+function loadOrGenerateMasterKey(): Buffer {
+  const fromEnv = process.env.SINTERIQ_ENCRYPTION_KEY;
+  if (fromEnv) {
+    if (/^[0-9a-fA-F]{64}$/.test(fromEnv)) return Buffer.from(fromEnv, 'hex');
+    try {
+      const decoded = Buffer.from(fromEnv, 'base64');
+      if (decoded.length === 32) return decoded;
+    } catch {}
+    console.warn('SINTERIQ_ENCRYPTION_KEY is set but not a valid 32-byte hex/base64 string — falling back to file-stored key');
+  }
+
+  if (fs.existsSync(ENC_KEY_FILE)) {
+    try {
+      const stored = fs.readFileSync(ENC_KEY_FILE, 'utf8').trim();
+      if (/^[0-9a-fA-F]{64}$/.test(stored)) return Buffer.from(stored, 'hex');
+    } catch (err) {
+      console.error('Failed to read encryption key file:', err);
+    }
+  }
+
+  const generated = crypto.randomBytes(32);
+  try {
+    fs.writeFileSync(ENC_KEY_FILE, generated.toString('hex'), { encoding: 'utf8', mode: 0o600 });
+    console.warn(`[security] Generated new encryption key at ${ENC_KEY_FILE}. Back this up — losing it makes stored API keys unrecoverable.`);
+  } catch (err) {
+    console.error('Could not persist generated encryption key:', err);
+  }
+  return generated;
+}
+
+const MASTER_KEY = loadOrGenerateMasterKey();
+
+function encryptSecret(plaintext: string): string {
+  if (!plaintext) return '';
+  if (plaintext.startsWith(ENC_PREFIX)) return plaintext; // already encrypted
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', MASTER_KEY, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return ENC_PREFIX + Buffer.concat([iv, authTag, ciphertext]).toString('base64');
+}
+
+function decryptSecret(stored: string): string {
+  if (!stored) return '';
+  if (!stored.startsWith(ENC_PREFIX)) return stored; // legacy plaintext
+  try {
+    const blob = Buffer.from(stored.slice(ENC_PREFIX.length), 'base64');
+    const iv = blob.subarray(0, 12);
+    const authTag = blob.subarray(12, 28);
+    const ciphertext = blob.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', MASTER_KEY, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  } catch (err) {
+    console.error('Failed to decrypt secret (corrupted ciphertext or wrong key):', err instanceof Error ? err.message : err);
+    return '';
+  }
+}
+
+function maskSecret(value: string | null | undefined): string {
+  if (!value) return '';
+  if (value.length <= 8) return '••••';
+  return value.slice(0, 4) + '••••' + value.slice(-4);
+}
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -197,30 +274,114 @@ function normalizeCompanyNameForMatch(value: unknown) {
     .join(' ');
 }
 
-function findExistingCompanyByMatch(name: unknown, website: unknown, excludeId?: number) {
-  const rows = db.prepare('SELECT id, company_name, website FROM companies').all() as Array<{
-    id: number;
-    company_name: string;
-    website: string | null;
-  }>;
+// Levenshtein distance — fuzzy matching for concatenated-word variants
+// that exact normalization can't catch (e.g. "Acme Test Dedup" vs "ACME-TestDedup").
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  // Bail out cheaply when lengths differ wildly (no chance of similarity ≥ threshold)
+  if (Math.abs(a.length - b.length) > Math.max(a.length, b.length) * 0.4) {
+    return Math.max(a.length, b.length);
+  }
+  const prev = new Array(b.length + 1);
+  const curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+  return prev[b.length];
+}
 
+function nameSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  return 1 - levenshtein(a, b) / maxLen;
+}
+
+// Threshold: 0.85 catches "acmetestdedup" vs "acme test dedup" (~0.92)
+// but rejects unrelated short names like "acme" vs "abme" (~0.75).
+// Names below 8 chars use a stricter threshold to avoid false positives.
+const FUZZY_THRESHOLD_LONG = 0.85;
+const FUZZY_THRESHOLD_SHORT = 0.92;
+
+function findExistingCompanyByMatch(name: unknown, website: unknown, excludeId?: number) {
+  // Phase 6: prefer indexed lookup on the stored name_key / website_key when available;
+  // fall back to in-memory scan if the columns don't exist yet.
   const normalizedWebsiteHost = normalizeWebsiteHost(website);
+  const normalizedName = normalizeCompanyNameForMatch(name);
+
   if (normalizedWebsiteHost) {
-    const websiteMatch = rows.find((c) =>
-      (excludeId === undefined || c.id !== excludeId) &&
-      normalizeWebsiteHost(c.website) === normalizedWebsiteHost
-    );
-    if (websiteMatch) return { id: websiteMatch.id, company_name: websiteMatch.company_name, matchedBy: 'website' as const };
+    const exclude = excludeId === undefined ? -1 : excludeId;
+    const websiteMatch = db.prepare(
+      'SELECT id, company_name FROM companies WHERE website_key = ? AND id != ? LIMIT 1'
+    ).get(normalizedWebsiteHost, exclude) as { id: number; company_name: string } | undefined;
+    if (websiteMatch) {
+      return { id: websiteMatch.id, company_name: websiteMatch.company_name, matchedBy: 'website' as const };
+    }
   }
 
-  const normalizedName = normalizeCompanyNameForMatch(name);
   if (!normalizedName) return null;
 
-  const nameMatch = rows.find((c) =>
-    (excludeId === undefined || c.id !== excludeId) &&
-    normalizeCompanyNameForMatch(c.company_name) === normalizedName
-  );
-  if (nameMatch) return { id: nameMatch.id, company_name: nameMatch.company_name, matchedBy: 'name' as const };
+  const exclude = excludeId === undefined ? -1 : excludeId;
+  const nameMatch = db.prepare(
+    'SELECT id, company_name FROM companies WHERE company_name_key = ? AND id != ? LIMIT 1'
+  ).get(normalizedName, exclude) as { id: number; company_name: string } | undefined;
+  if (nameMatch) {
+    return { id: nameMatch.id, company_name: nameMatch.company_name, matchedBy: 'name' as const };
+  }
+
+  // Fuzzy fallback — Levenshtein against all candidates with a similar length.
+  // Catches concatenated-word variants the tokenizer can't split (e.g. "ACMETestCo"
+  // vs "Acme Test Co"), and trailing-suffix variants ("...co" vs no-suffix).
+  const candidates = db.prepare(
+    'SELECT id, company_name, company_name_key FROM companies WHERE company_name_key IS NOT NULL AND id != ?'
+  ).all(exclude) as Array<{ id: number; company_name: string; company_name_key: string }>;
+
+  const threshold = normalizedName.length < 8 ? FUZZY_THRESHOLD_SHORT : FUZZY_THRESHOLD_LONG;
+
+  // Build a few variants of the input for fuzzy comparison:
+  //   - spaced normalized form
+  //   - compacted (no spaces)
+  //   - compacted with trailing legal-suffix substring removed
+  const compactInput = normalizedName.replace(/\s+/g, '');
+  const COMPACT_TRAILING_SUFFIXES = ['gmbh', 'mbh', 'ag', 'kg', 'co', 'ltd', 'inc', 'llc'];
+  const compactInputStripped = COMPACT_TRAILING_SUFFIXES.reduce((acc, suf) => {
+    if (acc.endsWith(suf) && acc.length > suf.length + 2) return acc.slice(0, -suf.length);
+    return acc;
+  }, compactInput);
+
+  let bestMatch: { id: number; company_name: string; similarity: number } | null = null;
+
+  for (const c of candidates) {
+    if (!c.company_name_key) continue;
+    const compactCandidate = c.company_name_key.replace(/\s+/g, '');
+    const compactCandidateStripped = COMPACT_TRAILING_SUFFIXES.reduce((acc, suf) => {
+      if (acc.endsWith(suf) && acc.length > suf.length + 2) return acc.slice(0, -suf.length);
+      return acc;
+    }, compactCandidate);
+
+    const sim = Math.max(
+      nameSimilarity(normalizedName, c.company_name_key),
+      nameSimilarity(compactInput, compactCandidate),
+      nameSimilarity(compactInputStripped, compactCandidateStripped),
+      nameSimilarity(compactInputStripped, compactCandidate),
+      nameSimilarity(compactInput, compactCandidateStripped),
+    );
+    if (sim >= threshold && (!bestMatch || sim > bestMatch.similarity)) {
+      bestMatch = { id: c.id, company_name: c.company_name, similarity: sim };
+    }
+  }
+
+  if (bestMatch) {
+    return { id: bestMatch.id, company_name: bestMatch.company_name, matchedBy: 'fuzzy_name' as const };
+  }
 
   return null;
 }
@@ -233,6 +394,21 @@ function sendApiError(res: any, error: unknown, fallbackMessage: string) {
   }
 
   return res.status(500).json({ error: message || fallbackMessage });
+}
+
+// Extract the calling user's identity from the request.
+// Frontend sends X-User-Name header (set from localStorage.sinteriq_user.name).
+// Body 'by' field is honored as a fallback for endpoints that already accept it.
+function getRequestUser(req: any): string {
+  const headerName = req.headers?.['x-user-name'];
+  if (typeof headerName === 'string' && headerName.trim()) {
+    return headerName.trim().slice(0, 120);
+  }
+  const bodyBy = req.body?.by;
+  if (typeof bodyBy === 'string' && bodyBy.trim()) {
+    return bodyBy.trim().slice(0, 120);
+  }
+  return 'System';
 }
 
 const DEFAULT_USERS = [
@@ -287,7 +463,8 @@ function getLlmSettings(): LlmSettings {
   const storedProviderType = normalizeOptionalString(getSettingValue('llm.provider_type'));
   const storedProviderName = normalizeOptionalString(getSettingValue('llm.provider_name'));
   const storedModel = normalizeOptionalString(getSettingValue('llm.model'));
-  const storedApiKey = normalizeOptionalString(getSettingValue('llm.api_key'));
+  const storedApiKeyRaw = normalizeOptionalString(getSettingValue('llm.api_key'));
+  const storedApiKey = storedApiKeyRaw ? decryptSecret(storedApiKeyRaw) : null;
   const storedBaseUrl = normalizeOptionalString(getSettingValue('llm.base_url'));
 
   if (storedProviderType === 'openai_compatible' || storedProviderType === 'gemini') {
@@ -819,6 +996,13 @@ try { db.exec("CREATE INDEX IF NOT EXISTS idx_notes_company_id ON notes(company_
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_companies_lead_status ON companies(lead_status);"); } catch (e) {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_companies_region ON companies(region);"); } catch (e) {}
 
+// Phase 6 — normalized dedup keys. Stored alongside the company row so
+// the matcher can do an indexed lookup instead of scanning all companies.
+try { db.exec("ALTER TABLE companies ADD COLUMN company_name_key TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN website_key TEXT;"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_companies_name_key ON companies(company_name_key);"); } catch (e) {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_companies_website_key ON companies(website_key);"); } catch (e) {}
+
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -846,6 +1030,43 @@ try { db.exec(`
 db.prepare("UPDATE companies SET tracking_level = 'WATCHLIST' WHERE tracking_level IS NULL OR tracking_level = ''").run();
 db.prepare("UPDATE companies SET tracking_status = 'PENDING' WHERE tracking_status IS NULL OR tracking_status = ''").run();
 
+// Backfill normalized dedup keys for any rows missing them. Cheap on startup.
+try {
+  const rowsToBackfill = db.prepare(
+    "SELECT id, company_name, website FROM companies WHERE company_name_key IS NULL OR website_key IS NULL"
+  ).all() as Array<{ id: number; company_name: string; website: string | null }>;
+  if (rowsToBackfill.length > 0) {
+    const updateKeys = db.prepare("UPDATE companies SET company_name_key = ?, website_key = ? WHERE id = ?");
+    const backfill = db.transaction(() => {
+      for (const row of rowsToBackfill) {
+        updateKeys.run(
+          normalizeCompanyNameForMatch(row.company_name),
+          normalizeWebsiteHost(row.website),
+          row.id,
+        );
+      }
+    });
+    backfill();
+    console.log(`[startup] Backfilled normalized dedup keys for ${rowsToBackfill.length} companies.`);
+  }
+} catch (err) {
+  console.error('Dedup key backfill failed:', err);
+}
+
+// One-time migration: encrypt any plaintext LLM API key that was saved before
+// Phase 6. The encryption prefix 'enc:v1:' marks ciphertext — anything else is
+// legacy plaintext and gets encrypted in place.
+try {
+  const legacyKey = db.prepare("SELECT setting_value FROM app_settings WHERE setting_key = 'llm.api_key'").get() as { setting_value: string } | undefined;
+  if (legacyKey?.setting_value && !legacyKey.setting_value.startsWith(ENC_PREFIX)) {
+    const encrypted = encryptSecret(legacyKey.setting_value);
+    db.prepare("UPDATE app_settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = 'llm.api_key'").run(encrypted);
+    console.log('[security] Migrated legacy plaintext LLM API key to encrypted storage.');
+  }
+} catch (err) {
+  console.error('LLM API key migration failed:', err);
+}
+
 const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
 if (userCount.count === 0) {
   const insertUser = db.prepare(`
@@ -871,14 +1092,14 @@ app.get('/api/health', (req, res) => {
 app.get('/api/settings/llm', (req, res) => {
   try {
     const settings = getLlmSettings();
-    const storedApiKey = normalizeOptionalString(getSettingValue('llm.api_key'));
-
+    // Never return the plaintext API key — only a preview for UI display.
     res.json({
       provider_type: settings.providerType,
       provider_name: settings.providerName,
       model: settings.model,
       base_url: settings.baseUrl || '',
-      api_key: storedApiKey || '',
+      api_key: '', // explicitly empty — UI shows masked preview from has_api_key
+      api_key_preview: settings.apiKey ? maskSecret(settings.apiKey) : '',
       has_api_key: Boolean(settings.apiKey),
       source: settings.source,
       supports_web_search: settings.supportsWebSearch,
@@ -895,6 +1116,10 @@ app.put('/api/settings/llm', (req, res) => {
       return res.status(400).json({ error: 'provider_type must be gemini or openai_compatible' });
     }
 
+    // Encrypt API key at rest. Empty string clears the saved key.
+    const incomingApiKey = normalizeOptionalString(req.body.api_key) || '';
+    const apiKeyForStorage = incomingApiKey ? encryptSecret(incomingApiKey) : '';
+
     saveSettings({
       'llm.provider_type': providerType,
       'llm.provider_name': normalizeOptionalString(req.body.provider_name) || (providerType === 'gemini' ? 'Gemini' : 'OpenAI-Compatible'),
@@ -902,7 +1127,7 @@ app.put('/api/settings/llm', (req, res) => {
       'llm.base_url': providerType === 'openai_compatible'
         ? normalizeOptionalString(req.body.base_url) || 'https://api.openai.com/v1'
         : '',
-      'llm.api_key': normalizeOptionalString(req.body.api_key) || '',
+      'llm.api_key': apiKeyForStorage,
     });
 
     const settings = getLlmSettings();
@@ -1039,6 +1264,8 @@ app.post('/api/companies', (req, res) => {
       });
     }
 
+    const creatorName = getRequestUser(req);
+    const source = normalizeOptionalString(req.body.source) || 'MANUAL';
     const result = db.prepare(`
       INSERT INTO companies (
         company_name,
@@ -1066,9 +1293,11 @@ app.post('/api/companies', (req, res) => {
         tracking_notes,
         next_tracking_date,
         source,
-        created_by
+        created_by,
+        company_name_key,
+        website_key
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       companyName,
       normalizeOptionalString(req.body.website),
@@ -1094,6 +1323,10 @@ app.post('/api/companies', (req, res) => {
       normalizeTrackingStatus(req.body.tracking_status),
       normalizeOptionalString(req.body.tracking_notes),
       normalizeOptionalString(req.body.next_tracking_date),
+      source,
+      creatorName,
+      normalizeCompanyNameForMatch(companyName),
+      normalizeWebsiteHost(req.body.website),
     );
 
     const createdCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(result.lastInsertRowid);
@@ -1140,7 +1373,7 @@ app.put('/api/companies/:id', (req, res) => {
           employee_count = ?, revenue_eur = ?, legal_form = ?, business_role = ?, main_products = ?, related_companies = ?,
           lead_status = ?, technical_fit = ?, lead_priority = ?, assigned_to = ?, qualification_notes = ?, tracking_level = ?, tracking_status = ?, tracking_notes = ?,
           next_tracking_date = ?, duns_number = ?, corporate_parent = ?, is_subsidiary = ?, source = ?,
-          created_by = ?, updated_at = CURRENT_TIMESTAMP
+          created_by = ?, company_name_key = ?, website_key = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       companyName,
@@ -1171,7 +1404,9 @@ app.put('/api/companies/:id', (req, res) => {
       normalizeOptionalString(req.body.corporate_parent),
       req.body.is_subsidiary ? 1 : 0,
       normalizeOptionalString(req.body.source),
-      normalizeOptionalString(req.body.created_by),
+      normalizeOptionalString(req.body.created_by) || getRequestUser(req),
+      normalizeCompanyNameForMatch(companyName),
+      normalizeWebsiteHost(req.body.website),
       req.params.id,
     );
 
@@ -1220,6 +1455,16 @@ app.patch('/api/companies/:id', (req, res) => {
     }
 
     if (setClauses.length <= 1) return res.status(400).json({ error: 'No fields to update' });
+
+    // Keep normalized dedup keys in sync when name or website changes via PATCH.
+    if (req.body.company_name !== undefined) {
+      setClauses.push('company_name_key = ?');
+      values.push(normalizeCompanyNameForMatch(req.body.company_name));
+    }
+    if (req.body.website !== undefined) {
+      setClauses.push('website_key = ?');
+      values.push(normalizeWebsiteHost(req.body.website));
+    }
 
     values.push(companyId);
     db.prepare(`UPDATE companies SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
@@ -2666,8 +2911,8 @@ app.post('/api/companies/import', (req, res) => {
     const { companies } = req.body;
     
     const insertCompany = db.prepare(`
-      INSERT INTO companies (company_name, country, city, region, industry, company_type, employee_count, revenue_eur, website, corporate_parent, source, lead_status, qualification_notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO companies (company_name, country, city, region, industry, company_type, employee_count, revenue_eur, website, corporate_parent, source, lead_status, qualification_notes, company_name_key, website_key, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const insertContact = db.prepare(`
@@ -2708,15 +2953,28 @@ app.post('/api/companies/import', (req, res) => {
         const compWebsite = (data['Website'] || '').trim();
         const existing = findExistingCompanyByMatch(compName, compWebsite);
 
+        const importer = getRequestUser(req);
+
         let companyId: number;
         if (existing) {
-          // Update existing instead of creating duplicate
+          // Update existing instead of creating duplicate. Refresh dedup keys
+          // in case the imported website fills in a previously-missing key.
           companyId = existing.id;
           db.prepare(`
             UPDATE companies SET employee_count = COALESCE(?, employee_count), revenue_eur = COALESCE(?, revenue_eur),
             website = COALESCE(NULLIF(?, ''), website), corporate_parent = COALESCE(NULLIF(?, ''), corporate_parent),
-            city = COALESCE(NULLIF(?, ''), city), updated_at = CURRENT_TIMESTAMP WHERE id = ?
-          `).run(parseInt(data['Employee Count']) || null, revenue, compWebsite, data['Corporate Family'] || '', city, companyId);
+            city = COALESCE(NULLIF(?, ''), city),
+            website_key = COALESCE(NULLIF(?, ''), website_key),
+            updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          `).run(
+            parseInt(data['Employee Count']) || null,
+            revenue,
+            compWebsite,
+            data['Corporate Family'] || '',
+            city,
+            normalizeWebsiteHost(compWebsite),
+            companyId,
+          );
           results.push({ id: companyId, name: compName, action: 'merged', matched_existing: existing.company_name, matched_by: existing.matchedBy });
         } else {
           const info = insertCompany.run(
@@ -2732,7 +2990,10 @@ app.post('/api/companies/import', (req, res) => {
             data['Corporate Family'] || '',
             'DNB_HOOVERS',
             'RAW',
-            data['Notes'] || ''
+            data['Notes'] || '',
+            normalizeCompanyNameForMatch(compName),
+            normalizeWebsiteHost(compWebsite),
+            importer,
           );
           companyId = info.lastInsertRowid as number;
           results.push({ id: companyId, name: compName, action: 'created' });

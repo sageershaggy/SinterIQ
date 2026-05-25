@@ -79,6 +79,35 @@ Import response now includes `total`, `created`, `merged` counts; UI surfaces bo
 - Pre-existing INSERT bug: 25 `?` placeholders vs 24 bound values in `POST /api/companies` was throwing 500 on every new-company create
 - Double-push in import response counting
 
+### Phase 6 — Cleanup + hardening
+**Goal:** finish remaining items from the punch list — identity propagation, encryption at rest, fuzzy dedup, indexed lookups.
+
+**Identity propagation:**
+- Frontend installs a global fetch wrapper that attaches `X-User-Name` header to every `/api/*` call
+- Backend `getRequestUser(req)` reads it; falls back to `body.by` then `'System'`
+- Removed hardcoded `'Sageer A. Shaikh'` from `POST /companies`; import endpoint also records caller now
+
+**Encryption at rest:**
+- AES-256-GCM, format `enc:v1:<base64(iv|authTag|ciphertext)>`
+- Master key from `SINTERIQ_ENCRYPTION_KEY` env or auto-generated `.sinteriq-encryption-key` (gitignored, mode 0600)
+- Startup migration encrypts any legacy plaintext key found in `app_settings`
+- `GET /api/settings/llm` returns masked preview only (`sk-o••••2e94`)
+
+**Dedup overhaul:**
+- Stored normalized keys: `company_name_key`, `website_key` columns + indexes (idx_companies_name_key, idx_companies_website_key)
+- Backfill on startup for any row missing them; insert/update paths populate going forward
+- `findExistingCompanyByMatch` switches from O(N) full scan to O(log N) indexed lookup
+- Levenshtein fuzzy fallback (threshold 0.85 long / 0.92 short) catches concatenated-word variants
+- Suffix-stripped compact comparison handles cases like "Phase6TestCoGmbH" ↔ "Phase6 Test Co"
+
+**Cleanup:**
+- Removed 4 dead files (App.tsx, ContactsTab.tsx, UsersTab.tsx, TrackingTab.tsx)
+- 8 FK indexes added for hot join paths
+- `scripts/audit_duplicates.mjs` standalone audit script
+- Review Queue gets bulk-select + bulk-approve
+
+**Smoke tested end-to-end:** all five paths verified — identity, encryption migration, exact dedup, fuzzy dedup, false-positive guard.
+
 ### Phase 5 — Token optimization
 **Goal:** Cut LLM cost on `/ai-qualify`. The deep prompt is ~25k chars per call.
 
