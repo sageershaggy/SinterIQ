@@ -111,3 +111,17 @@ export const userRoleOptions: SelectOption[] = [
   { value: 'Research', label: 'Research' },
   { value: 'Manager', label: 'Manager' },
 ];
+
+export const disqualificationCategoryOptions: SelectOption[] = [
+  { value: 'COMPETITOR', label: 'Direct competitor (bearing maker)' },
+  { value: 'WHOLESALER_TRADER', label: 'Wholesaler / trader / mail-order (no manufacturing)' },
+  { value: 'UTILITY_OR_SOFTWARE', label: 'Utility operator / software-only firm' },
+  { value: 'SERVICE_MRO', label: 'Pure service / MRO / site operator' },
+  { value: 'GLOBAL_ENTERPRISE', label: 'Global enterprise (>5k, no local spec authority)' },
+  { value: 'SALES_BRANCH', label: 'Sales branch / Vertriebs-GmbH (no design authority)' },
+  { value: 'EPC_INTEGRATOR', label: 'EPC contractor / system integrator' },
+  { value: 'SMALL_END_USER', label: 'Tiny craft producer / regional end-user' },
+  { value: 'LOW_FIT', label: 'Low fit — no plausible bearing need' },
+  { value: 'DUPLICATE', label: 'Duplicate of another record' },
+  { value: 'OTHER', label: 'Other (explain in reason)' },
+];

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Building2, Globe, Users, Euro, Phone, Mail, Linkedin, Plus, Calendar, CheckCircle2, MessageSquare, Briefcase, Trash2, Activity, Edit2, Clock, AlertCircle, Edit, Download, Send, Sparkles, Copy, Check, ChevronDown, ChevronUp, Target, TrendingUp, Zap } from 'lucide-react';
+import { ArrowLeft, Building2, Globe, Users, Euro, Phone, Mail, Linkedin, Plus, Calendar, CheckCircle2, MessageSquare, Briefcase, Trash2, Activity, Edit2, Clock, AlertCircle, Edit, Download, Send, Sparkles, Copy, Check, ChevronDown, ChevronUp, Target, TrendingUp, Zap, RotateCcw, Shield } from 'lucide-react';
 import {
   companyTypeOptions,
+  disqualificationCategoryOptions,
   industryOptions,
   leadStatusOptions,
   regionOptions,
@@ -11,6 +12,7 @@ import {
 } from './companyData';
 import { formatCompactEur, formatEur, parseStringArray } from './formatters';
 import ErrorBoundary from './ErrorBoundary';
+import DisqualifyModal from './DisqualifyModal';
 import { showToast } from './Toast';
 
 interface Contact {
@@ -157,6 +159,11 @@ export default function CompanyDetail({
   // Inline edit state for company details
   const [editField, setEditField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+
+  // Disqualify modal state
+  const [showDisqualifyModal, setShowDisqualifyModal] = useState(false);
+  const [disqualifying, setDisqualifying] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   // Order Form State (kept for data integrity)
   const [showOrderForm, setShowOrderForm] = useState(false);
@@ -363,6 +370,55 @@ export default function CompanyDetail({
     }
   };
 
+  const handleDisqualifySubmit = async ({ reason, category }: { reason: string; category: string }) => {
+    setDisqualifying(true);
+    try {
+      const by = (() => {
+        try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').name || 'Unknown'; }
+        catch { return 'Unknown'; }
+      })();
+      const res = await fetch(`/api/companies/${companyId}/disqualify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, category, by }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to disqualify');
+      setCompany(payload);
+      setCompanyForm(payload);
+      setShowDisqualifyModal(false);
+      showToast('success', 'Lead disqualified');
+      await onDataChanged?.();
+    } catch (err) {
+      showToast('error', 'Disqualify failed', err instanceof Error ? err.message : '');
+      throw err;
+    } finally {
+      setDisqualifying(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    if (!confirm('Restore this lead? Status will revert to Enriched and the disqualification reason will be cleared.')) return;
+    setRestoring(true);
+    try {
+      const res = await fetch(`/api/companies/${companyId}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_status: 'ENRICHED' }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to restore');
+      setCompany(payload);
+      setCompanyForm(payload);
+      showToast('success', 'Lead restored');
+      await onDataChanged?.();
+    } catch (err) {
+      showToast('error', 'Restore failed', err instanceof Error ? err.message : '');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const handleAIQualify = async () => {
     setQualifying(true);
     try {
@@ -517,6 +573,24 @@ export default function CompanyDetail({
             <Sparkles className="w-4 h-4" />
             {qualifying ? 'Researching...' : company.ai_qualified_at ? 'Re-qualify' : 'AI Qualify'}
           </button>
+          {company.lead_status === 'DISQUALIFIED' ? (
+            <button
+              onClick={() => void handleRestore()}
+              disabled={restoring}
+              className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700 disabled:opacity-50"
+              title="Restore lead — clears disqualification"
+            >
+              <RotateCcw className="w-4 h-4" /> {restoring ? 'Restoring…' : 'Restore'}
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowDisqualifyModal(true)}
+              className="bg-white border border-red-200 text-red-600 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm hover:bg-red-50 transition-colors text-sm font-medium"
+              title="Disqualify this lead with a reason"
+            >
+              <Shield className="w-4 h-4" /> Disqualify
+            </button>
+          )}
           <button
             onClick={() => setShowEditCompany(true)}
             className="bg-white border border-slate-200 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700"
@@ -547,6 +621,58 @@ export default function CompanyDetail({
           )}
         </div>
       </div>
+
+      {/* Human review banner (shown when reviewed but not disqualified) */}
+      {!!company.human_reviewed && company.lead_status !== 'DISQUALIFIED' && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold text-emerald-900 text-sm">Human-reviewed</h3>
+                {company.ai_confidence !== null && company.ai_confidence !== undefined && (
+                  <span className="px-2 py-0.5 bg-white border border-emerald-200 text-emerald-700 text-[11px] rounded font-medium">
+                    AI was {company.ai_confidence}% confident
+                  </span>
+                )}
+              </div>
+              {company.human_review_notes && (
+                <p className="text-sm text-emerald-800 mt-1.5">{company.human_review_notes}</p>
+              )}
+              <div className="text-xs text-emerald-600/80 mt-2">
+                {company.human_reviewed_by ? `By ${company.human_reviewed_by}` : 'Reviewer unknown'}
+                {company.human_reviewed_at && ` · ${String(company.human_reviewed_at).slice(0, 10)}`}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disqualification banner */}
+      {company.lead_status === 'DISQUALIFIED' && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <Shield className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold text-red-900 text-sm">Disqualified</h3>
+                {company.disqualification_category && (
+                  <span className="px-2 py-0.5 bg-white border border-red-200 text-red-700 text-[11px] rounded font-medium">
+                    {disqualificationCategoryOptions.find((o) => o.value === company.disqualification_category)?.label || company.disqualification_category}
+                  </span>
+                )}
+              </div>
+              {company.disqualification_reason && (
+                <p className="text-sm text-red-800 mt-1.5">{company.disqualification_reason}</p>
+              )}
+              <div className="text-xs text-red-600/80 mt-2">
+                {company.disqualified_by ? `By ${company.disqualified_by}` : 'Source unknown'}
+                {company.disqualified_at && ` · ${company.disqualified_at.slice(0, 10)}`}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="border-b border-slate-200">
@@ -1789,10 +1915,15 @@ export default function CompanyDetail({
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Lead Status</label>
                   <select value={companyForm.lead_status || ''} onChange={e => setCompanyForm({...companyForm, lead_status: e.target.value})} className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                    {leadStatusOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
+                    {leadStatusOptions
+                      .filter((option) => option.value !== 'DISQUALIFIED' || company.lead_status === 'DISQUALIFIED')
+                      .map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                   </select>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    To disqualify a lead, use the <span className="font-medium">Disqualify</span> button in the header.
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Technical Fit</label>
@@ -1848,6 +1979,14 @@ export default function CompanyDetail({
           </div>
         </div>
       )}
+
+      <DisqualifyModal
+        open={showDisqualifyModal}
+        companyName={company?.company_name}
+        onClose={() => { if (!disqualifying) setShowDisqualifyModal(false); }}
+        onSubmit={handleDisqualifySubmit}
+        submitting={disqualifying}
+      />
     </div>
   );
 }

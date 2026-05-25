@@ -1,6 +1,6 @@
 # SinterIQ — Project Status
 
-_Last updated: 2026-04-09_
+_Last updated: 2026-05-25_
 
 A running snapshot of where the project is, what was done in the most recent session, and where to pick up next.
 
@@ -27,8 +27,68 @@ For deeper architecture and conventions see [CLAUDE.md](CLAUDE.md).
 | Commissions admin + display | Working |
 | Settings (LLM provider config) | Working |
 | Users / team management | Working |
-| Customer-tracker Excel export | Working |
-| CSV exports (All / Filtered / Qualified / Approved / Disqualified / Selected) | Working |
+| Customer-tracker Excel export | Working — now includes AI fields (Phase 3) |
+| CSV exports (All / Filtered / Qualified / Approved / Disqualified / Selected) | Working — adds AI Qualified Yes/No + disqualification context (Phase 3) |
+| **GCC Marketing tab** | New — region=GCC + QUALIFIED/APPROVED, marketing-pack CSV |
+| **Disqualification flow** | New — required reason + 11-category taxonomy (Phase 1) |
+| **Not-a-Target tab** | New — unified AI-flagged + human-disqualified list |
+| **Review Queue tab** | New — human QC for low-confidence AI qualifications (Phase 2) |
+| **Import dedup** | Hardened — umlaut/suffix/website normalization (Phase 4) |
+| **AI token optimization** | New — cheap pre-classifier short-circuits obvious NOT_A_TARGETs (Phase 5) |
+
+---
+
+## Session log — 2026-05-25
+
+### Phase 1 — Disqualification + Not-a-Target UI
+**Goal:** Force a reason when marking leads disqualified so future QC reviewers see why.
+
+**Schema:** 4 new columns on `companies` (`disqualification_reason`, `disqualification_category`, `disqualified_by`, `disqualified_at`).
+
+**Endpoints:**
+- `POST /api/companies/:id/disqualify` — required `{ reason, category, by }`; sets status=DISQUALIFIED, lead_priority=NOT_A_TARGET, auto-marks human_reviewed
+- `POST /api/companies/:id/restore` — clears all disqualification fields, reverts status to ENRICHED
+- `PATCH /companies/:id/status`, `PUT /companies/:id`, `PATCH /companies/:id` — now reject lead_status=DISQUALIFIED from any other state
+
+**Frontend:** `DisqualifyModal` with category-aware quick-pick reasons; `NotATargetTab` (combined AI-flagged + human-disqualified, with restore); banner on `CompanyDetail` when applicable.
+
+### Phase 2 — Manual Review Queue
+**Goal:** Sales team systematically QC the AI's output instead of trusting blindly.
+
+**Schema:** 4 new columns (`human_reviewed`, `human_reviewed_at`, `human_reviewed_by`, `human_review_notes`).
+
+**Endpoints:** `POST /:id/mark-reviewed`, `POST /:id/unmark-reviewed`.
+
+**Frontend:** `ReviewQueueTab` lists AI-qualified leads with confidence <70% (or null) not yet reviewed. Per-card actions: "Looks good", "Disqualify" (opens modal), inline "+ Add note" (Phase 2 + addendum). Marking either way removes from queue.
+
+### Phase 3 — Export fixes
+**Excel customer-tracker:** appended 13 AI columns at the end (Lead Status, Lead Priority AI, AI Qualified At, AI Confidence, Approach Strategy AI, Opportunity Notes AI, Sales Script AI, Email Script AI, Qualification Notes, Disqualification Category/Reason/By, Human Reviewed).
+
+**CSV exports:** added explicit "AI Qualified Yes/No" column + AI confidence + full disqualification context. New filter dropdown options: "Qualified but never AI-qualified" (diagnostic for the user's complaint about missing notes) and "Needs human review".
+
+### Phase 4 — Import dedup
+**Goal:** Stop creating duplicates when the same company appears with umlaut/suffix variants.
+
+`normalizeCompanyNameForMatch()`: German umlaut transliteration (ü↔ue, ö↔oe, ä↔ae, ß↔ss), expanded legal-suffix list (GmbH, mbH, KG, AG, OHG, eG, e.K., Vertriebs-GmbH, Ltd, Inc, LLC, Holding, Group, Deutschland, etc.).
+
+`findExistingCompanyByMatch(name, website)` — single helper now used by both `POST /companies` and `POST /companies/import`. Returns `{ id, company_name, matchedBy: 'name'|'website' }`.
+
+Import response now includes `total`, `created`, `merged` counts; UI surfaces both.
+
+**Bonus bugs fixed:**
+- Pre-existing INSERT bug: 25 `?` placeholders vs 24 bound values in `POST /api/companies` was throwing 500 on every new-company create
+- Double-push in import response counting
+
+### Phase 5 — Token optimization
+**Goal:** Cut LLM cost on `/ai-qualify`. The deep prompt is ~25k chars per call.
+
+**Pre-classifier (Pass A):** Cheap call with only `name + country + industry + 800-char website snippet`. No web search. Asks: target / uncertain / not_target with category and confidence. If verdict=LIKELY_NOT_TARGET and confidence≥75, auto-disqualifies with `disqualified_by='AI Pre-classifier'` and skips the deep prompt entirely.
+
+**Bypass:** `?skip_prefilter=true` query param forces deep pass.
+
+**Website context (Pass B):** Reduced from 6000 chars / 9 paths → 3000 chars / 4 paths. ~50% saving on the largest variable input.
+
+**Expected savings:** roughly half of obvious-no leads will short-circuit at ~10% the cost of a deep call. Real numbers need an A/B against Ahmad's QC list.
 
 ---
 

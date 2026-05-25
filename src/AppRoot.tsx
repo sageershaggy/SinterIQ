@@ -23,6 +23,8 @@ import {
   CalendarClock,
   Target,
   ChevronDown,
+  Shield,
+  ClipboardCheck,
 } from 'lucide-react';
 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
@@ -37,6 +39,10 @@ import KanbanBoard from './KanbanBoard';
 import ResearchTab from './ResearchTab';
 import SettingsTab from './SettingsTab';
 import CommissionAdmin from './CommissionAdmin';
+import GccMarketingTab from './GccMarketingTab';
+import NotATargetTab from './NotATargetTab';
+import ReviewQueueTab from './ReviewQueueTab';
+import DisqualifyModal from './DisqualifyModal';
 import { companyTypeOptions, industryOptions, internalUsers as defaultInternalUsers, leadStatusOptions } from './companyData';
 import { formatCompactEur, getDateOnly, isPastDate } from './formatters';
 
@@ -179,9 +185,12 @@ export default function AppRoot() {
       'Employees','Revenue (EUR)','Website','DUNS Number','Legal Form','Main Products','Corporate Parent','Source',
       'Lead Score','Technical Fit','Lead Priority','Product Fit','Lead Status','Buying Probability',
       'Website Score','Social Score','Social Media Active','Mentions Technology',
-      'Assigned To','Created By','Created At','Updated At','AI Qualified At',
+      'Assigned To','Created By','Created At','Updated At',
+      'AI Qualified','AI Qualified At','AI Confidence',
       'Approach Strategy','Opportunity Notes','Qualification Notes',
       'Sales Script','Email Script',
+      'Disqualification Category','Disqualification Reason','Disqualified By',
+      'Human Reviewed',
       'Tracking Level','Tracking Status','Next Tracking Date','Contacts'
     ];
     const rows = data.map((c: any) => [
@@ -189,9 +198,12 @@ export default function AppRoot() {
       c.employee_count||'', c.revenue_eur||'', c.website||'', c.duns_number||'', c.legal_form||'', c.main_products||'', c.corporate_parent||'', c.source||'',
       c.lead_score??'', c.technical_fit||'', c.lead_priority||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
       c.website_score??'', c.social_score??'', c.social_media_active?'Yes':'No', c.mentions_technology?'Yes':'No',
-      c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'', c.ai_qualified_at||'',
-      (c.approach_strategy||'').replace(/\n/g,' '), (c.opportunity_notes||'').replace(/\n/g,' '), (c.qualification_notes||'').replace(/\n/g,' '),
-      (c.sales_script||'').replace(/\n/g,' '), (c.email_script||'').replace(/\n/g,' '),
+      c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'',
+      c.ai_qualified_at?'Yes':'No', c.ai_qualified_at||'', c.ai_confidence??'',
+      (c.approach_strategy||'').replace(/[\r\n]+/g,' '), (c.opportunity_notes||'').replace(/[\r\n]+/g,' '), (c.qualification_notes||'').replace(/[\r\n]+/g,' '),
+      (c.sales_script||'').replace(/[\r\n]+/g,' '), (c.email_script||'').replace(/[\r\n]+/g,' '),
+      c.disqualification_category||'', (c.disqualification_reason||'').replace(/[\r\n]+/g,' '), c.disqualified_by||'',
+      c.human_reviewed?'Yes':'No',
       c.tracking_level||'', c.tracking_status||'', c.next_tracking_date||'', c.contact_count??''
     ]);
     const bom = '\uFEFF';
@@ -242,7 +254,7 @@ export default function AppRoot() {
       const parts = hash.split('/');
       setSelectedCompanyId(Number(parts[1]));
       if (parts[2]) setInitialTab(parts[2]);
-    } else if (hash && ['dashboard', 'companies', 'pipeline', 'research', 'import', 'settings'].includes(hash)) {
+    } else if (hash && ['dashboard', 'companies', 'pipeline', 'gcc', 'review', 'not-a-target', 'research', 'import', 'settings', 'commissions'].includes(hash)) {
       setActiveTab(hash);
     }
   }, []);
@@ -302,6 +314,8 @@ export default function AppRoot() {
     if (aiQualFilter === 'AI_QUALIFIED' && !company.ai_qualified_at) return false;
     if (aiQualFilter === 'NOT_QUALIFIED' && company.ai_qualified_at) return false;
     if (aiQualFilter === 'ENRICHED' && company.lead_status !== 'ENRICHED') return false;
+    if (aiQualFilter === 'QUALIFIED_NO_AI' && !(company.lead_status === 'QUALIFIED' && !company.ai_qualified_at)) return false;
+    if (aiQualFilter === 'NEEDS_REVIEW' && !(company.ai_qualified_at && !company.human_reviewed && (company.ai_confidence === null || company.ai_confidence === undefined || (typeof company.ai_confidence === 'number' && company.ai_confidence < 70)))) return false;
     if (dateFrom && company.updated_at && company.updated_at < dateFrom) return false;
     if (dateTo && company.updated_at && company.updated_at > dateTo + 'T23:59:59') return false;
     if (!searchQuery.trim()) return true;
@@ -395,7 +409,15 @@ export default function AppRoot() {
     }
   };
 
+  const [disqualifyTarget, setDisqualifyTarget] = useState<{ id: number; name: string } | null>(null);
+  const [disqualifying, setDisqualifying] = useState(false);
+
   const handleStatusChange = async (id: number, newStatus: string) => {
+    if (newStatus === 'DISQUALIFIED') {
+      const target = companies.find((c) => c.id === id);
+      setDisqualifyTarget({ id, name: target?.company_name || '' });
+      return;
+    }
     try {
       const response = await fetch(`/api/companies/${id}/status`, {
         method: 'PATCH',
@@ -404,9 +426,55 @@ export default function AppRoot() {
       });
       if (response.ok) {
         setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, lead_status: newStatus } : c)));
+      } else {
+        const payload = await response.json().catch(() => null);
+        showToast('error', 'Status change failed', payload?.error || `HTTP ${response.status}`);
       }
     } catch (error) {
       console.error(error);
+      showToast('error', 'Status change failed');
+    }
+  };
+
+  const submitDisqualify = async ({ reason, category }: { reason: string; category: string }) => {
+    if (!disqualifyTarget) return;
+    setDisqualifying(true);
+    try {
+      const by = (() => {
+        try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').name || 'Unknown'; }
+        catch { return 'Unknown'; }
+      })();
+      const response = await fetch(`/api/companies/${disqualifyTarget.id}/disqualify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, category, by }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || 'Failed to disqualify');
+      setCompanies((prev) => prev.map((c) => (c.id === disqualifyTarget.id ? { ...c, ...payload } : c)));
+      showToast('success', 'Lead disqualified', disqualifyTarget.name);
+      setDisqualifyTarget(null);
+    } catch (error) {
+      showToast('error', 'Disqualify failed', error instanceof Error ? error.message : '');
+      throw error;
+    } finally {
+      setDisqualifying(false);
+    }
+  };
+
+  const handleRestoreCompany = async (id: number) => {
+    try {
+      const response = await fetch(`/api/companies/${id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_status: 'ENRICHED' }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || 'Failed to restore');
+      setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...payload } : c)));
+      showToast('success', 'Lead restored');
+    } catch (error) {
+      showToast('error', 'Restore failed', error instanceof Error ? error.message : '');
     }
   };
 
@@ -985,7 +1053,9 @@ export default function AppRoot() {
               <select value={aiQualFilter} onChange={(e) => setAiQualFilter(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-md text-sm outline-none">
                 <option value="">All</option>
                 <option value="AI_QUALIFIED">AI Qualified</option>
-                <option value="NOT_QUALIFIED">Not Qualified</option>
+                <option value="NOT_QUALIFIED">Not AI Qualified</option>
+                <option value="QUALIFIED_NO_AI">Qualified but never AI-qualified</option>
+                <option value="NEEDS_REVIEW">Needs human review</option>
                 <option value="ENRICHED">Enriched</option>
               </select>
             </div>
@@ -1210,6 +1280,9 @@ export default function AppRoot() {
     { key: 'dashboard', label: 'Dashboard', icon: Activity },
     { key: 'companies', label: 'Companies', icon: Building2 },
     { key: 'pipeline', label: 'Pipeline', icon: Kanban },
+    { key: 'gcc', label: 'GCC Marketing', icon: Target },
+    { key: 'review', label: 'Review Queue', icon: ClipboardCheck },
+    { key: 'not-a-target', label: 'Not a Target', icon: Shield },
     { key: 'research', label: 'Lead Research', icon: Search },
     { key: 'import', label: 'Import Data', icon: Upload },
     ...(isAdmin ? [{ key: 'commissions', label: 'Commissions', icon: Euro as LucideIcon }] : []),
@@ -1347,6 +1420,16 @@ export default function AppRoot() {
             </div>
           ) : activeTab === 'pipeline' ? (
             <KanbanBoard companies={companies} onCompanyClick={openCompany} onStatusChange={handleStatusChange} />
+          ) : activeTab === 'gcc' ? (
+            <GccMarketingTab companies={companies} onCompanyClick={openCompany} />
+          ) : activeTab === 'not-a-target' ? (
+            <NotATargetTab companies={companies} onCompanyClick={openCompany} onRestore={handleRestoreCompany} />
+          ) : activeTab === 'review' ? (
+            <ReviewQueueTab
+              companies={companies}
+              onCompanyClick={openCompany}
+              onCompanyUpdated={(updated) => setCompanies((prev) => prev.map((c) => c.id === updated.id ? { ...c, ...updated } : c))}
+            />
           ) : activeTab === 'research' ? (
             <ResearchTab users={userOptions} onCompanyClick={openCompany} />
           ) : activeTab === 'commissions' && isAdmin ? (
@@ -1369,6 +1452,14 @@ export default function AppRoot() {
         onSubmit={handleCreateCompany}
         submitting={savingCompany}
         users={userOptions}
+      />
+
+      <DisqualifyModal
+        open={!!disqualifyTarget}
+        companyName={disqualifyTarget?.name}
+        onClose={() => { if (!disqualifying) setDisqualifyTarget(null); }}
+        onSubmit={submitDisqualify}
+        submitting={disqualifying}
       />
     </div>
   );

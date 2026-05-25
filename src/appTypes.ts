@@ -70,6 +70,18 @@ export interface Company {
   tracking_status?: string | null;
   tracking_notes?: string | null;
   next_tracking_date?: string | null;
+
+  // Disqualification
+  disqualification_reason?: string | null;
+  disqualification_category?: string | null;
+  disqualified_by?: string | null;
+  disqualified_at?: string | null;
+
+  // Human review
+  human_reviewed?: boolean | number | null;
+  human_reviewed_at?: string | null;
+  human_reviewed_by?: string | null;
+  human_review_notes?: string | null;
 }
 
 export interface LlmSettings {

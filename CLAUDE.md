@@ -30,41 +30,59 @@ LLM settings can also be configured via the UI Settings tab (stored in `app_sett
 
 ## Project Structure
 ```
-server.ts                    # Express backend — REST API, SQLite, LLM integration (~2300 lines)
+server.ts                    # Express backend — REST API, SQLite, LLM integration (~2700 lines)
 src/
   main.tsx                   # React entry point
   AppRoot.tsx                # Main app shell: sidebar nav, dashboard KPIs, company list, filters, exports
-  App.tsx                    # Legacy dashboard (simpler company list view)
-  CompanyDetail.tsx          # Multi-tab company detail: overview, contacts, activities, orders, notes, tracking
+  App.tsx                    # (dead) Legacy dashboard — unreachable
+  CompanyDetail.tsx          # Multi-tab company detail with disqualification + human-review banners
   CompanyCreateModal.tsx     # New company creation form
-  KanbanBoard.tsx            # Drag-and-drop pipeline visualization
+  KanbanBoard.tsx            # Drag-and-drop pipeline (DISQUALIFIED column triggers reason modal)
+  GccMarketingTab.tsx        # GCC marketing-ready leads (region=GCC + QUALIFIED/APPROVED)
+  ReviewQueueTab.tsx         # Human QC queue for low-confidence AI qualifications
+  NotATargetTab.tsx          # Combined view of AI-flagged + human-disqualified leads
+  DisqualifyModal.tsx        # Required-reason modal with category quick-picks
   ResearchTab.tsx            # AI-powered lead research and contact discovery
-  ContactsTab.tsx            # Global contacts management
+  ContactsTab.tsx            # (dead) Global contacts management — unreachable
   FollowUpsTab.tsx           # Follow-up scheduling, snooze/complete
   CommissionAdmin.tsx        # Commission tiers and calculation
   CommissionsTab.tsx         # Commission display
-  ImportTab.tsx              # Bulk import from Excel/CSV (D&B, Hoovers)
+  ImportTab.tsx              # Bulk import (D&B, LinkedIn, generic CSV) with normalized dedup
   SettingsTab.tsx            # LLM provider configuration UI
-  UsersTab.tsx               # Team user management
-  TrackingTab.tsx            # Company tracking levels and statuses
+  UsersTab.tsx               # (dead) Team user management — unreachable
+  TrackingTab.tsx            # (dead) Company tracking levels — unreachable
   LoginScreen.tsx            # Authentication
   Toast.tsx                  # Notification system
   ErrorBoundary.tsx          # React error handling
   appTypes.ts                # TypeScript interfaces (Company, AppUser, LlmSettings)
-  companyData.ts             # Shared constants: industry/company types, lead statuses, default users
+  companyData.ts             # Shared constants incl. disqualificationCategoryOptions
   formatters.ts              # Formatting utilities (EUR, dates)
   index.css                  # Minimal CSS (Tailwind)
 ```
 
+## Sidebar tabs (active in AppRoot)
+1. **Dashboard** — KPIs + follow-ups
+2. **Companies** — main list with filters, bulk delete, bulk AI qualify
+3. **Pipeline** — kanban drag-and-drop (DISQUALIFIED column opens DisqualifyModal)
+4. **GCC Marketing** — region=GCC + QUALIFIED/APPROVED, marketing-pack CSV export
+5. **Review Queue** — AI-qualified leads with confidence <70% awaiting human spot-check
+6. **Not a Target** — unified view: `lead_priority='NOT_A_TARGET'` OR `status='DISQUALIFIED'`, supports restore
+7. **Lead Research** — AI contact discovery
+8. **Import Data** — bulk import with normalized dedup
+9. **Commissions** (admin only) — commission tiers
+10. **Settings** — LLM provider config
+
 ## Database Schema (SQLite)
 
-### companies (~41 columns)
+### companies (~56 columns)
 Core lead/company record. Key fields:
 - Identity: `company_name`, `country`, `city`, `region`, `industry`, `company_type`
 - Sizing: `employee_count`, `revenue_eur`
 - Legal: `legal_form`, `duns_number`, `corporate_parent`, `is_subsidiary`
 - Lead intelligence: `lead_score` (0-100), `lead_status`, `technical_fit`, `lead_priority`, `qualification_notes`
-- AI qualification: `ai_qualified_at`, `website_score`, `social_score`, `buying_probability`, `approach_strategy`, `sales_script`, `email_script`, `opportunity_notes`, `social_profiles_json`
+- AI qualification: `ai_qualified_at`, `ai_confidence` (0-100), `website_score`, `social_score`, `buying_probability`, `approach_strategy`, `sales_script`, `email_script`, `opportunity_notes`, `social_profiles_json`
+- **Disqualification (Phase 1)**: `disqualification_reason`, `disqualification_category`, `disqualified_by`, `disqualified_at`
+- **Human review (Phase 2)**: `human_reviewed` (0/1), `human_reviewed_at`, `human_reviewed_by`, `human_review_notes`
 - Tracking: `tracking_level` (WATCHLIST/ACTIVE/HIGH_PRIORITY/STRATEGIC), `tracking_status`, `next_tracking_date`
 - Metadata: `assigned_to`, `created_by`, `source` (DNB_HOOVERS/MANUAL/AI_RESEARCH), `created_at`, `updated_at`
 
@@ -91,15 +109,31 @@ Supporting tables for team, internal notes, LLM config, and AI research audit tr
 
 ### Companies
 - `GET /api/companies` — List all (with contact counts, follow-up dates)
-- `POST /api/companies` — Create
+- `POST /api/companies` — Create (uses normalized dedup — see "Import dedup" below)
 - `GET /api/companies/:id` — Detail (with contacts, activities, orders)
-- `PUT /api/companies/:id` — Full update
-- `PATCH /api/companies/:id` — Inline single-field update
+- `PUT /api/companies/:id` — Full update (rejects status=DISQUALIFIED from any other state)
+- `PATCH /api/companies/:id` — Inline single-field update (same DISQUALIFIED guard)
 - `DELETE /api/companies/:id` — Cascade delete (contacts, activities, orders, notes)
-- `PATCH /api/companies/:id/status` — Update lead_status
+- `PATCH /api/companies/:id/status` — Update lead_status (rejects DISQUALIFIED — use /disqualify)
+- `POST /api/companies/:id/disqualify` — **Phase 1.** Required `{ reason, category, by }`; sets status=DISQUALIFIED, lead_priority=NOT_A_TARGET, marks human_reviewed
+- `POST /api/companies/:id/restore` — **Phase 1.** Clears all disqualification fields, reverts status
+- `POST /api/companies/:id/mark-reviewed` — **Phase 2.** Marks human_reviewed=1 with `{ by, notes }`
+- `POST /api/companies/:id/unmark-reviewed` — **Phase 2.** Reverse of mark-reviewed
 - `POST /api/companies/merge` — Merge two companies
-- `POST /api/companies/import` — Bulk import from Excel
+- `POST /api/companies/import` — Bulk import; response: `{ total, created, merged, companies }`
 - `POST /api/companies/:id/ai-qualify` — AI qualification with web search
+  - **Phase 5:** Runs cheap pre-classifier first; short-circuits LIKELY_NOT_TARGET at >=75% confidence
+  - Query params: `?force=true` (re-run within 7d), `?skip_prefilter=true` (force deep pass)
+
+### Disqualification categories (Phase 1)
+`COMPETITOR`, `WHOLESALER_TRADER`, `UTILITY_OR_SOFTWARE`, `SERVICE_MRO`, `GLOBAL_ENTERPRISE`, `SALES_BRANCH`, `EPC_INTEGRATOR`, `SMALL_END_USER`, `LOW_FIT`, `DUPLICATE`, `OTHER`. Aligned 1:1 with Ahmad's 10 exclusion rules in the AI prompt.
+
+### Import dedup (Phase 4)
+`findExistingCompanyByMatch(name, website)` powers both `POST /companies` and `POST /companies/import`. Matching:
+- Website: protocol/www/trailing-slash normalized, lowercase host comparison
+- Name: German umlaut transliteration (ü↔ue, ö↔oe, ä↔ae, ß↔ss), legal-suffix stripping (GmbH, AG, KG, Vertriebs-GmbH, mbH, Ltd, Inc, etc.), punctuation/whitespace normalized, tokenized
+
+Returns `{ id, company_name, matchedBy: 'name'|'website' }` or `null`.
 
 ### Contacts
 - `GET /api/contacts` — All contacts with company names

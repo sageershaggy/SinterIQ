@@ -98,7 +98,10 @@ export default function ImportTab({ onImportComplete }: ImportTabProps) {
       });
       if (!response.ok) throw new Error('Import failed');
       const result = await response.json();
-      setResult({ success: true, message: `Successfully imported ${result.imported || rows.length} companies from D&B Hoovers.` });
+      const detail = result.created !== undefined && result.merged !== undefined
+        ? ` (${result.created} new, ${result.merged} merged into existing records)`
+        : '';
+      setResult({ success: true, message: `Successfully imported ${result.total || result.imported || rows.length} companies from D&B Hoovers${detail}.` });
       onImportComplete();
     } catch (err) {
       setResult({ success: false, message: 'Failed to import D&B Hoovers file. Check the file format.' });
@@ -164,9 +167,12 @@ export default function ImportTab({ onImportComplete }: ImportTabProps) {
       if (!response.ok) throw new Error('Import failed');
       const res = await response.json();
       const contactCount = Array.from(companyMap.values()).reduce((sum, c) => sum + c.contacts.length, 0);
+      const detail = res.created !== undefined && res.merged !== undefined
+        ? ` (${res.created} new, ${res.merged} merged into existing records)`
+        : '';
       setResult({
         success: true,
-        message: `Imported ${res.imported || companyMap.size} companies and ${contactCount} contacts from LinkedIn.`,
+        message: `Imported ${res.total || res.imported || companyMap.size} companies${detail} and ${contactCount} contacts from LinkedIn.`,
       });
       onImportComplete();
     } catch (err) {
@@ -265,7 +271,11 @@ export default function ImportTab({ onImportComplete }: ImportTabProps) {
         body: JSON.stringify({ companies: importPayload, source: 'CSV' }),
       });
       if (!response.ok) throw new Error('Import failed');
-      setResult({ success: true, message: `Successfully imported ${importPayload.length} companies from CSV.` });
+      const res = await response.json();
+      const detail = res.created !== undefined && res.merged !== undefined
+        ? ` (${res.created} new, ${res.merged} merged into existing records)`
+        : '';
+      setResult({ success: true, message: `Successfully imported ${res.total || importPayload.length} companies from CSV${detail}.` });
       setShowMapping(false);
       onImportComplete();
     } catch (err) {

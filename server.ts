@@ -153,8 +153,20 @@ function normalizeWebsiteHost(value: unknown) {
   }
 }
 
+function transliterateGerman(value: string) {
+  return value
+    .replace(/ß/g, 'ss')
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/Ä/g, 'ae')
+    .replace(/Ö/g, 'oe')
+    .replace(/Ü/g, 'ue');
+}
+
 function normalizeCompanyNameForMatch(value: unknown) {
-  const normalizedValue = normalizeRequiredString(value)
+  const transliterated = transliterateGerman(normalizeRequiredString(value));
+  const normalizedValue = transliterated
     .toLowerCase()
     .replace(/&/g, ' and ')
     .replace(/[^a-z0-9]+/g, ' ')
@@ -165,29 +177,52 @@ function normalizeCompanyNameForMatch(value: unknown) {
   }
 
   const ignoredTokens = new Set([
-    'gmbh',
-    'llc',
-    'ltd',
-    'limited',
-    'inc',
-    'corp',
-    'corporation',
-    'co',
-    'company',
-    'kg',
-    'ag',
-    'bv',
-    'sa',
-    'sarl',
-    'pte',
-    'plc',
-    'the',
+    // German legal forms
+    'gmbh', 'mbh', 'mbh+co', 'kg', 'ag', 'ohg', 'gbr', 'eg', 'ek',
+    'gesellschaft', 'gesellschaften',
+    'co', 'company', 'companies', 'compagnie',
+    'und', 'and', 'the',
+    // English / international
+    'llc', 'ltd', 'limited', 'inc', 'incorporated',
+    'corp', 'corporation', 'plc', 'pte', 'pvt', 'private',
+    'bv', 'nv', 'sarl', 'sa', 'srl', 'spa', 'oy', 'ab', 'as', 'aps',
+    'holdings', 'holding', 'group', 'groupe', 'gruppe',
+    'international', 'intl',
+    'deutschland', 'germany', 'europe', 'europa',
   ]);
 
   return normalizedValue
     .split(/\s+/)
     .filter((token) => token && !ignoredTokens.has(token))
     .join(' ');
+}
+
+function findExistingCompanyByMatch(name: unknown, website: unknown, excludeId?: number) {
+  const rows = db.prepare('SELECT id, company_name, website FROM companies').all() as Array<{
+    id: number;
+    company_name: string;
+    website: string | null;
+  }>;
+
+  const normalizedWebsiteHost = normalizeWebsiteHost(website);
+  if (normalizedWebsiteHost) {
+    const websiteMatch = rows.find((c) =>
+      (excludeId === undefined || c.id !== excludeId) &&
+      normalizeWebsiteHost(c.website) === normalizedWebsiteHost
+    );
+    if (websiteMatch) return { id: websiteMatch.id, company_name: websiteMatch.company_name, matchedBy: 'website' as const };
+  }
+
+  const normalizedName = normalizeCompanyNameForMatch(name);
+  if (!normalizedName) return null;
+
+  const nameMatch = rows.find((c) =>
+    (excludeId === undefined || c.id !== excludeId) &&
+    normalizeCompanyNameForMatch(c.company_name) === normalizedName
+  );
+  if (nameMatch) return { id: nameMatch.id, company_name: nameMatch.company_name, matchedBy: 'name' as const };
+
+  return null;
 }
 
 function sendApiError(res: any, error: unknown, fallbackMessage: string) {
@@ -351,14 +386,16 @@ async function fetchPageText(url: string, timeoutMs = 5000) {
   }
 }
 
-async function fetchWebsiteContext(value: unknown) {
+async function fetchWebsiteContext(value: unknown, opts?: { paths?: string[]; perPageCap?: number; totalCap?: number }) {
   const websiteUrl = normalizeWebsiteUrl(value);
   if (!websiteUrl) {
     return null;
   }
 
   const base = websiteUrl.replace(/\/+$/, '');
-  const paths = ['', '/about', '/about-us', '/products', '/company', '/ueber-uns', '/unternehmen', '/en/about', '/en/products'];
+  const paths = opts?.paths ?? ['', '/about', '/products', '/ueber-uns'];
+  const perPageCap = opts?.perPageCap ?? 1500;
+  const totalCap = opts?.totalCap ?? 3000;
 
   const pages = await Promise.all(paths.map((p) => fetchPageText(`${base}${p}`)));
 
@@ -371,11 +408,56 @@ async function fetchWebsiteContext(value: unknown) {
     if (seenFingerprints.has(fingerprint)) continue;
     seenFingerprints.add(fingerprint);
     const label = i === 0 ? 'HOMEPAGE' : `PAGE ${paths[i]}`;
-    uniqueTexts.push(`[${label}]\n${text.slice(0, 2500)}`);
+    uniqueTexts.push(`[${label}]\n${text.slice(0, perPageCap)}`);
   }
 
-  const combined = uniqueTexts.join('\n\n---\n\n').slice(0, 6000);
+  const combined = uniqueTexts.join('\n\n---\n\n').slice(0, totalCap);
   return combined || null;
+}
+
+// Cheap pre-classification pass — short prompt, low temperature, no web search.
+// Used to skip the expensive deep qualification for obvious NOT_A_TARGETs.
+async function preClassifyLead(company: { company_name: string; website?: string | null; industry?: string | null; company_type?: string | null; country?: string | null }, websiteSnippet?: string | null) {
+  const snippet = websiteSnippet ? websiteSnippet.slice(0, 800) : '';
+  const userPrompt = `Classify this B2B lead for Sintertechnik (Germany, precision ceramic & hybrid bearings manufacturer).
+
+Company: ${company.company_name}
+Country: ${company.country || 'Unknown'}
+Industry: ${company.industry || 'Unknown'}
+Type: ${company.company_type || 'Unknown'}
+Website: ${company.website || 'none'}
+${snippet ? `Website snippet:\n${snippet}\n` : ''}
+
+Sintertechnik sells precision rolling bearings to OEMs that USE bearings in machinery (pumps, food/pharma/chemical/cryogenic equipment, etc.). They do NOT sell to:
+- Other bearing manufacturers (competitors)
+- Pure wholesalers / mail-order / authorized dealers / trade-only firms
+- Utility operators / software-only firms
+- Pure service / MRO / site-operator businesses
+- Vertriebs-GmbH / regional sales branches of foreign parents
+- EPC contractors / pure system integrators
+- Tiny craft producers / micro end-users
+
+Return strict JSON: {"verdict": <"LIKELY_TARGET"|"UNCERTAIN"|"LIKELY_NOT_TARGET">, "category": <"COMPETITOR"|"WHOLESALER_TRADER"|"UTILITY_OR_SOFTWARE"|"SERVICE_MRO"|"GLOBAL_ENTERPRISE"|"SALES_BRANCH"|"EPC_INTEGRATOR"|"SMALL_END_USER"|"LOW_FIT"|null>, "confidence": <0-100>, "reason": "<one short sentence>"}
+
+Only mark LIKELY_NOT_TARGET if confidence >= 75 and the evidence is clear. When in doubt: UNCERTAIN.`;
+
+  try {
+    const raw = await generateJsonWithLlm({
+      systemPrompt: 'You are a fast B2B lead pre-classifier. Return strict JSON only — no markdown, no code fences.',
+      userPrompt,
+      useWebSearch: false,
+      timeoutMs: 30000,
+    });
+    return parseJsonResponse<{
+      verdict?: string;
+      category?: string;
+      confidence?: number;
+      reason?: string;
+    }>(raw, {});
+  } catch (err) {
+    console.warn('Pre-classify failed, falling through to deep qualify:', err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -717,6 +799,14 @@ try { db.exec("ALTER TABLE companies ADD COLUMN opportunity_notes TEXT;"); } cat
 try { db.exec("ALTER TABLE companies ADD COLUMN social_profiles_json TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN lead_priority TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE companies ADD COLUMN ai_confidence INTEGER;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN disqualification_reason TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN disqualification_category TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN disqualified_by TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN disqualified_at DATETIME;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN human_reviewed INTEGER DEFAULT 0;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN human_reviewed_at DATETIME;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN human_reviewed_by TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE companies ADD COLUMN human_review_notes TEXT;"); } catch (e) {}
 
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS notes (
@@ -928,19 +1018,13 @@ app.post('/api/companies', (req, res) => {
     }
 
     const website = normalizeOptionalString(req.body.website);
-    const existingByName = db
-      .prepare('SELECT id, company_name FROM companies WHERE lower(company_name) = lower(?)')
-      .get(companyName) as { id: number; company_name: string } | undefined;
-    const existingByWebsite = website ? db
-      .prepare('SELECT id, company_name FROM companies WHERE lower(website) = lower(?) OR lower(website) = lower(?)')
-      .get(website, website.replace(/^https?:\/\//, '').replace(/\/$/, '')) as { id: number; company_name: string } | undefined : undefined;
-
-    const duplicate = existingByName || existingByWebsite;
+    const duplicate = findExistingCompanyByMatch(companyName, website);
     if (duplicate) {
       return res.status(409).json({
-        error: `Duplicate found: "${duplicate.company_name}" (ID: ${duplicate.id}). Use merge if these are the same company.`,
+        error: `Duplicate found: "${duplicate.company_name}" (ID: ${duplicate.id}) — matched by ${duplicate.matchedBy}. Use merge if these are the same company.`,
         duplicate_id: duplicate.id,
         duplicate_name: duplicate.company_name,
+        matched_by: duplicate.matchedBy,
       });
     }
 
@@ -973,7 +1057,7 @@ app.post('/api/companies', (req, res) => {
         source,
         created_by
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Sageer A. Shaikh')
     `).run(
       companyName,
       normalizeOptionalString(req.body.website),
@@ -1031,6 +1115,14 @@ app.put('/api/companies/:id', (req, res) => {
       return res.status(400).json({ error: 'company_name and country are required' });
     }
 
+    const newStatus = normalizeRequiredString(req.body.lead_status) || 'RAW';
+    if (newStatus === 'DISQUALIFIED') {
+      const existing = db.prepare('SELECT lead_status FROM companies WHERE id = ?').get(req.params.id) as { lead_status: string } | undefined;
+      if (existing && existing.lead_status !== 'DISQUALIFIED') {
+        return res.status(400).json({ error: 'Use /disqualify to record a reason before marking a lead disqualified' });
+      }
+    }
+
     db.prepare(`
       UPDATE companies
       SET company_name = ?, website = ?, company_email = ?, country = ?, address = ?, city = ?, region = ?, industry = ?, company_type = ?,
@@ -1086,6 +1178,10 @@ app.patch('/api/companies/:id', (req, res) => {
     const companyId = req.params.id;
     const existing = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
     if (!existing) return res.status(404).json({ error: 'Company not found' });
+
+    if (req.body.lead_status === 'DISQUALIFIED' && existing.lead_status !== 'DISQUALIFIED') {
+      return res.status(400).json({ error: 'Use /disqualify to record a reason before marking a lead disqualified' });
+    }
 
     // Build dynamic SET clause from request body fields
     const allowedFields = [
@@ -1468,10 +1564,137 @@ app.patch('/api/companies/:id/status', (req, res) => {
   try {
     const newStatus = normalizeOptionalString(req.body.lead_status);
     if (!newStatus) return res.status(400).json({ error: 'lead_status is required' });
+    if (newStatus === 'DISQUALIFIED') {
+      return res.status(400).json({ error: 'Use POST /api/companies/:id/disqualify to record a reason' });
+    }
     db.prepare('UPDATE companies SET lead_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, req.params.id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update status' });
+  }
+});
+
+const DISQUALIFICATION_CATEGORIES = new Set([
+  'COMPETITOR',
+  'WHOLESALER_TRADER',
+  'UTILITY_OR_SOFTWARE',
+  'SERVICE_MRO',
+  'GLOBAL_ENTERPRISE',
+  'SALES_BRANCH',
+  'EPC_INTEGRATOR',
+  'SMALL_END_USER',
+  'LOW_FIT',
+  'DUPLICATE',
+  'OTHER',
+]);
+
+app.post('/api/companies/:id/disqualify', (req, res) => {
+  try {
+    const company = db.prepare('SELECT id FROM companies WHERE id = ?').get(req.params.id) as { id: number } | undefined;
+    if (!company) return res.status(404).json({ error: 'Company not found' });
+
+    const reason = normalizeOptionalString(req.body.reason);
+    const category = normalizeOptionalString(req.body.category);
+    const by = normalizeOptionalString(req.body.by) || 'Unknown';
+
+    if (!reason || reason.length < 3) {
+      return res.status(400).json({ error: 'A reason of at least 3 characters is required' });
+    }
+    if (!category || !DISQUALIFICATION_CATEGORIES.has(category)) {
+      return res.status(400).json({ error: 'A valid category is required' });
+    }
+
+    db.prepare(`
+      UPDATE companies
+      SET lead_status = 'DISQUALIFIED',
+          lead_priority = 'NOT_A_TARGET',
+          disqualification_reason = ?,
+          disqualification_category = ?,
+          disqualified_by = ?,
+          disqualified_at = CURRENT_TIMESTAMP,
+          human_reviewed = 1,
+          human_reviewed_at = CURRENT_TIMESTAMP,
+          human_reviewed_by = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(reason, category, by, by, req.params.id);
+
+    const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id);
+    res.json(updated);
+  } catch (err) {
+    console.error('Disqualify error:', err);
+    res.status(500).json({ error: 'Failed to disqualify company' });
+  }
+});
+
+app.post('/api/companies/:id/mark-reviewed', (req, res) => {
+  try {
+    const company = db.prepare('SELECT id FROM companies WHERE id = ?').get(req.params.id) as { id: number } | undefined;
+    if (!company) return res.status(404).json({ error: 'Company not found' });
+    const by = normalizeOptionalString(req.body.by) || 'Unknown';
+    const notes = normalizeOptionalString(req.body.notes);
+    db.prepare(`
+      UPDATE companies
+      SET human_reviewed = 1,
+          human_reviewed_at = CURRENT_TIMESTAMP,
+          human_reviewed_by = ?,
+          human_review_notes = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(by, notes, req.params.id);
+    const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id);
+    res.json(updated);
+  } catch (err) {
+    console.error('Mark reviewed error:', err);
+    res.status(500).json({ error: 'Failed to mark reviewed' });
+  }
+});
+
+app.post('/api/companies/:id/unmark-reviewed', (req, res) => {
+  try {
+    db.prepare(`
+      UPDATE companies
+      SET human_reviewed = 0,
+          human_reviewed_at = NULL,
+          human_reviewed_by = NULL,
+          human_review_notes = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(req.params.id);
+    const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to unmark reviewed' });
+  }
+});
+
+app.post('/api/companies/:id/restore', (req, res) => {
+  try {
+    const company = db.prepare('SELECT id FROM companies WHERE id = ?').get(req.params.id) as { id: number } | undefined;
+    if (!company) return res.status(404).json({ error: 'Company not found' });
+
+    const newStatus = normalizeOptionalString(req.body.lead_status) || 'ENRICHED';
+    if (newStatus === 'DISQUALIFIED') {
+      return res.status(400).json({ error: 'Cannot restore to DISQUALIFIED' });
+    }
+
+    db.prepare(`
+      UPDATE companies
+      SET lead_status = ?,
+          lead_priority = CASE WHEN lead_priority = 'NOT_A_TARGET' THEN NULL ELSE lead_priority END,
+          disqualification_reason = NULL,
+          disqualification_category = NULL,
+          disqualified_by = NULL,
+          disqualified_at = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newStatus, req.params.id);
+
+    const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id);
+    res.json(updated);
+  } catch (err) {
+    console.error('Restore error:', err);
+    res.status(500).json({ error: 'Failed to restore company' });
   }
 });
 
@@ -1561,6 +1784,20 @@ app.get('/api/export/customer-tracker', (req, res) => {
       'Contacted for clarifying further actions',
       'Order placed, date',
       'Comments',
+      // SinterIQ AI fields (appended)
+      'Lead Status',
+      'Lead Priority (AI)',
+      'AI Qualified At',
+      'AI Confidence',
+      'Approach Strategy (AI)',
+      'Opportunity Notes (AI)',
+      'Sales Script (AI)',
+      'Email Script (AI)',
+      'Qualification Notes',
+      'Disqualification Category',
+      'Disqualification Reason',
+      'Disqualified By',
+      'Human Reviewed',
     ];
 
     const timelineActivityTypes = new Set([
@@ -1711,6 +1948,20 @@ app.get('/api/export/customer-tracker', (req, res) => {
             getActivityDateTime(clarifyingActions),
             formatExportDateTime(selectedOrder?.order_date || ''),
             comments,
+            // SinterIQ AI fields
+            company.lead_status || '',
+            company.lead_priority || '',
+            company.ai_qualified_at ? formatExportDateTime(company.ai_qualified_at) : '',
+            company.ai_confidence ?? '',
+            (company.approach_strategy || '').replace(/[\r\n]+/g, ' '),
+            (company.opportunity_notes || '').replace(/[\r\n]+/g, ' '),
+            (company.sales_script || '').replace(/[\r\n]+/g, ' '),
+            (company.email_script || '').replace(/[\r\n]+/g, ' '),
+            (company.qualification_notes || '').replace(/[\r\n]+/g, ' '),
+            company.disqualification_category || '',
+            (company.disqualification_reason || '').replace(/[\r\n]+/g, ' '),
+            company.disqualified_by || '',
+            company.human_reviewed ? 'Yes' : 'No',
           ],
           sortValue,
         };
@@ -2027,10 +2278,46 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
     if (!company) return res.status(404).json({ error: 'Company not found' });
 
     const force = req.query.force === 'true' || req.body?.force === true;
+    const skipPrefilter = req.query.skip_prefilter === 'true' || req.body?.skip_prefilter === true;
+
     if (!force && company.ai_qualified_at) {
       const daysSince = (Date.now() - new Date(company.ai_qualified_at).getTime()) / 86400000;
       if (daysSince < 7) {
         return res.json({ ...company, skipped: true, skipReason: `Qualified ${Math.round(daysSince)}d ago — pass force=true to re-run.` });
+      }
+    }
+
+    // Two-pass: cheap pre-classifier first. If it strongly says NOT_A_TARGET, skip the deep prompt.
+    if (!skipPrefilter) {
+      const previewContext = await fetchWebsiteContext(company.website, { paths: [''], perPageCap: 800, totalCap: 800 });
+      const preCheck = await preClassifyLead(company, previewContext);
+      if (preCheck && preCheck.verdict === 'LIKELY_NOT_TARGET' && (preCheck.confidence || 0) >= 75) {
+        const reason = preCheck.reason || 'Pre-classifier filtered as not a target';
+        db.prepare(`
+          UPDATE companies
+          SET lead_score = 0,
+              technical_fit = 'NOT_FIT',
+              qualification_notes = ?,
+              lead_status = 'DISQUALIFIED',
+              lead_priority = 'NOT_A_TARGET',
+              ai_confidence = ?,
+              ai_qualified_at = CURRENT_TIMESTAMP,
+              disqualification_reason = ?,
+              disqualification_category = ?,
+              disqualified_by = 'AI Pre-classifier',
+              disqualified_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(
+          `[Pre-classified ${preCheck.confidence}% confidence] ${reason}`,
+          normalizeNullableNumber(preCheck.confidence),
+          reason,
+          preCheck.category || 'LOW_FIT',
+          companyId,
+        );
+        const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as Record<string, unknown>;
+        console.log(`AI Qualify (pre-filter SHORT-CIRCUIT) ${company.company_name}: ${preCheck.category} @ ${preCheck.confidence}%`);
+        return res.json({ ...updated, prefiltered: true });
       }
     }
 
@@ -2405,14 +2692,10 @@ app.post('/api/companies/import', (req, res) => {
           }
         }
 
-        // Duplicate check by name or website
+        // Duplicate check by normalized name or website
         const compName = data['Company Name'].trim();
         const compWebsite = (data['Website'] || '').trim();
-        const existingByName = db.prepare('SELECT id FROM companies WHERE lower(company_name) = lower(?)').get(compName) as any;
-        const existingByWeb = compWebsite
-          ? db.prepare('SELECT id FROM companies WHERE lower(website) = lower(?) OR lower(website) = lower(?)').get(compWebsite, compWebsite.replace(/^https?:\/\//, '').replace(/\/$/, '')) as any
-          : null;
-        const existing = existingByName || existingByWeb;
+        const existing = findExistingCompanyByMatch(compName, compWebsite);
 
         let companyId: number;
         if (existing) {
@@ -2423,7 +2706,7 @@ app.post('/api/companies/import', (req, res) => {
             website = COALESCE(NULLIF(?, ''), website), corporate_parent = COALESCE(NULLIF(?, ''), corporate_parent),
             city = COALESCE(NULLIF(?, ''), city), updated_at = CURRENT_TIMESTAMP WHERE id = ?
           `).run(parseInt(data['Employee Count']) || null, revenue, compWebsite, data['Corporate Family'] || '', city, companyId);
-          results.push({ id: companyId, name: compName, action: 'merged' });
+          results.push({ id: companyId, name: compName, action: 'merged', matched_existing: existing.company_name, matched_by: existing.matchedBy });
         } else {
           const info = insertCompany.run(
             compName,
@@ -2455,12 +2738,19 @@ app.post('/api/companies/import', (req, res) => {
             data['Notes'] || ''
           );
         }
-        
-        results.push({ id: companyId, name: data['Company Name'] });
       }
     })();
 
-    res.json({ success: true, imported: results.length, companies: results });
+    const created = results.filter((r) => r.action === 'created').length;
+    const merged = results.filter((r) => r.action === 'merged').length;
+    res.json({
+      success: true,
+      total: results.length,
+      created,
+      merged,
+      imported: results.length, // backward compat
+      companies: results,
+    });
   } catch (error) {
     console.error('Import error:', error);
     res.status(500).json({ error: 'Import failed' });
