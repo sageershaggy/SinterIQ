@@ -180,14 +180,18 @@ export default function AppRoot() {
   };
 
   const exportFilteredCSV = (data: Company[], filename: string) => {
+    // AI-generated fields (Approach Strategy, Opportunity Notes, Qualification
+    // Notes) moved right after Lead Status so reviewers see them without
+    // scrolling 30+ columns — fixes "missing columns" perception in Excel.
     const headers = [
       'Company Name','Type','Country','City','Address','Region','Industry',
       'Employees','Revenue (EUR)','Website','DUNS Number','Legal Form','Main Products','Corporate Parent','Source',
-      'Lead Score','Technical Fit','Lead Priority','Product Fit','Lead Status','Buying Probability',
+      'Lead Score','Technical Fit','Lead Priority','Product Fit','Lead Status',
+      'Approach Strategy','Opportunity Notes','Qualification Notes',
+      'Buying Probability',
       'Website Score','Social Score','Social Media Active','Mentions Technology',
       'Assigned To','Created By','Created At','Updated At',
       'AI Qualified','AI Qualified At','AI Confidence',
-      'Approach Strategy','Opportunity Notes','Qualification Notes',
       'Sales Script','Email Script',
       'Disqualification Category','Disqualification Reason','Disqualified By',
       'Human Reviewed',
@@ -196,11 +200,12 @@ export default function AppRoot() {
     const rows = data.map((c: any) => [
       c.company_name, c.company_type, c.country, c.city||'', c.address||'', c.region||'', c.industry,
       c.employee_count||'', c.revenue_eur||'', c.website||'', c.duns_number||'', c.legal_form||'', c.main_products||'', c.corporate_parent||'', c.source||'',
-      c.lead_score??'', c.technical_fit||'', c.lead_priority||'', c.product_fit||'', c.lead_status, c.buying_probability??'',
+      c.lead_score??'', c.technical_fit||'', c.lead_priority||'', c.product_fit||'', c.lead_status,
+      (c.approach_strategy||'').replace(/[\r\n]+/g,' '), (c.opportunity_notes||'').replace(/[\r\n]+/g,' '), (c.qualification_notes||'').replace(/[\r\n]+/g,' '),
+      c.buying_probability??'',
       c.website_score??'', c.social_score??'', c.social_media_active?'Yes':'No', c.mentions_technology?'Yes':'No',
       c.assigned_to||'', c.created_by||'', c.created_at||'', c.updated_at||'',
       c.ai_qualified_at?'Yes':'No', c.ai_qualified_at||'', c.ai_confidence??'',
-      (c.approach_strategy||'').replace(/[\r\n]+/g,' '), (c.opportunity_notes||'').replace(/[\r\n]+/g,' '), (c.qualification_notes||'').replace(/[\r\n]+/g,' '),
       (c.sales_script||'').replace(/[\r\n]+/g,' '), (c.email_script||'').replace(/[\r\n]+/g,' '),
       c.disqualification_category||'', (c.disqualification_reason||'').replace(/[\r\n]+/g,' '), c.disqualified_by||'',
       c.human_reviewed?'Yes':'No',

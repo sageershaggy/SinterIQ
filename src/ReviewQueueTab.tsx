@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
@@ -7,9 +7,11 @@ import {
   ClipboardCheck,
   Download,
   Eye,
+  RotateCcw,
   Search,
   Shield,
   Sparkles,
+  User,
 } from 'lucide-react';
 
 import { Company } from './appTypes';
@@ -24,6 +26,7 @@ interface Props {
 }
 
 type ConfidenceBand = 'ALL' | 'LOW' | 'MEDIUM' | 'UNKNOWN';
+type StatusTab = 'PENDING' | 'QUALIFIED' | 'NON_QUALIFIED';
 
 const LOW_CONFIDENCE_THRESHOLD = 70;
 const MEDIUM_CONFIDENCE_FLOOR = 50;
@@ -36,6 +39,17 @@ function needsReview(c: Company): boolean {
   return c.ai_confidence < LOW_CONFIDENCE_THRESHOLD;
 }
 
+function isQualifiedByHuman(c: Company): boolean {
+  return Boolean(c.human_reviewed) && c.lead_status !== 'DISQUALIFIED' && Boolean(c.ai_qualified_at);
+}
+
+function isDisqualifiedByHuman(c: Company): boolean {
+  if (c.lead_status !== 'DISQUALIFIED') return false;
+  const by = (c.disqualified_by || '').toLowerCase();
+  // Exclude AI pre-classifier / AI qualifier disqualifications — those live on the "Not a Target" tab.
+  return Boolean(by) && !by.includes('ai');
+}
+
 function confidenceBand(c: Company): ConfidenceBand {
   if (c.ai_confidence === null || c.ai_confidence === undefined) return 'UNKNOWN';
   if (c.ai_confidence < MEDIUM_CONFIDENCE_FLOOR) return 'LOW';
@@ -43,6 +57,7 @@ function confidenceBand(c: Company): ConfidenceBand {
 }
 
 export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpdated }: Props) {
+  const [statusTab, setStatusTab] = useState<StatusTab>('PENDING');
   const [bandFilter, setBandFilter] = useState<ConfidenceBand>('ALL');
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -55,14 +70,26 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkMarking, setBulkMarking] = useState(false);
 
-  const queue = useMemo(() => companies.filter(needsReview), [companies]);
+  const pendingPool = useMemo(() => companies.filter(needsReview), [companies]);
+  const qualifiedPool = useMemo(() => companies.filter(isQualifiedByHuman), [companies]);
+  const nonQualifiedPool = useMemo(() => companies.filter(isDisqualifiedByHuman), [companies]);
+
+  const activePool = statusTab === 'PENDING'
+    ? pendingPool
+    : statusTab === 'QUALIFIED'
+      ? qualifiedPool
+      : nonQualifiedPool;
+
+  // Clear selection when switching tabs — actions differ between tabs.
+  useEffect(() => { setSelectedIds(new Set()); setExpandedNoteId(null); }, [statusTab]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const fromTs = dateFrom ? new Date(dateFrom + 'T00:00:00').getTime() : null;
     const toTs = dateTo ? new Date(dateTo + 'T23:59:59.999').getTime() : null;
-    return queue.filter((c) => {
-      if (bandFilter !== 'ALL' && confidenceBand(c) !== bandFilter) return false;
+    return activePool.filter((c) => {
+      // Confidence band only meaningful for Pending — Qualified/Non-Qualified ignore it.
+      if (statusTab === 'PENDING' && bandFilter !== 'ALL' && confidenceBand(c) !== bandFilter) return false;
       if (fromTs !== null || toTs !== null) {
         const ts = c.ai_qualified_at ? new Date(c.ai_qualified_at).getTime() : NaN;
         if (Number.isNaN(ts)) return false;
@@ -70,26 +97,33 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
         if (toTs !== null && ts > toTs) return false;
       }
       if (!q) return true;
-      const haystack = [c.company_name, c.country, c.city, c.industry, c.qualification_notes, c.opportunity_notes]
+      const haystack = [c.company_name, c.country, c.city, c.industry, c.qualification_notes, c.opportunity_notes, c.disqualification_reason, c.human_review_notes]
         .filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [queue, bandFilter, search, dateFrom, dateTo]);
+  }, [activePool, statusTab, bandFilter, search, dateFrom, dateTo]);
 
-  const filtersActive = bandFilter !== 'ALL' || !!dateFrom || !!dateTo || !!search.trim();
+  const filtersActive = (statusTab === 'PENDING' && bandFilter !== 'ALL') || !!dateFrom || !!dateTo || !!search.trim();
 
   const stats = useMemo(() => {
     let low = 0;
     let medium = 0;
     let unknown = 0;
-    for (const c of queue) {
+    for (const c of pendingPool) {
       const band = confidenceBand(c);
       if (band === 'LOW') low++;
       else if (band === 'MEDIUM') medium++;
       else if (band === 'UNKNOWN') unknown++;
     }
-    return { total: queue.length, low, medium, unknown };
-  }, [queue]);
+    return {
+      pending: pendingPool.length,
+      qualified: qualifiedPool.length,
+      nonQualified: nonQualifiedPool.length,
+      low,
+      medium,
+      unknown,
+    };
+  }, [pendingPool, qualifiedPool, nonQualifiedPool]);
 
   const currentUser = (() => {
     try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').name || 'Unknown'; }
@@ -161,6 +195,44 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
       showToast('error', 'Bulk mark failed', err instanceof Error ? err.message : '');
     } finally {
       setBulkMarking(false);
+    }
+  };
+
+  const handleUnmarkReviewed = async (id: number) => {
+    setMarking(id);
+    try {
+      const res = await fetch(`/api/companies/${id}/unmark-reviewed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ by: currentUser }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to unmark');
+      onCompanyUpdated(payload);
+      showToast('success', 'Moved back to Pending');
+    } catch (err) {
+      showToast('error', 'Unmark failed', err instanceof Error ? err.message : '');
+    } finally {
+      setMarking(null);
+    }
+  };
+
+  const handleRestore = async (id: number) => {
+    setMarking(id);
+    try {
+      const res = await fetch(`/api/companies/${id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ by: currentUser }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to restore');
+      onCompanyUpdated(payload);
+      showToast('success', 'Lead restored to Pending');
+    } catch (err) {
+      showToast('error', 'Restore failed', err instanceof Error ? err.message : '');
+    } finally {
+      setMarking(null);
     }
   };
 
@@ -253,12 +325,12 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">Review Queue</h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              {stats.total} AI-qualified leads need a human spot-check — keep the AI honest
+              {stats.pending} pending · {stats.qualified} qualified · {stats.nonQualified} non-qualified
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {selectedIds.size > 0 && (
+          {statusTab === 'PENDING' && selectedIds.size > 0 && (
             <>
               <span className="text-sm text-slate-600">{selectedIds.size} selected</span>
               <button
@@ -289,40 +361,66 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard
-          label="Pending review"
-          value={stats.total}
-          icon={<ClipboardCheck className="w-4 h-4" />}
-          tone="slate"
-          active={bandFilter === 'ALL'}
-          onClick={() => setBandFilter('ALL')}
-        />
-        <KpiCard
-          label="Low confidence (<50%)"
-          value={stats.low}
-          icon={<AlertTriangle className="w-4 h-4" />}
-          tone="rose"
-          active={bandFilter === 'LOW'}
-          onClick={() => setBandFilter(bandFilter === 'LOW' ? 'ALL' : 'LOW')}
-        />
-        <KpiCard
-          label="Medium confidence (50–69%)"
-          value={stats.medium}
-          icon={<Bot className="w-4 h-4" />}
-          tone="amber"
-          active={bandFilter === 'MEDIUM'}
-          onClick={() => setBandFilter(bandFilter === 'MEDIUM' ? 'ALL' : 'MEDIUM')}
-        />
-        <KpiCard
-          label="No confidence reported"
-          value={stats.unknown}
-          icon={<Eye className="w-4 h-4" />}
-          tone="slate"
-          active={bandFilter === 'UNKNOWN'}
-          onClick={() => setBandFilter(bandFilter === 'UNKNOWN' ? 'ALL' : 'UNKNOWN')}
-        />
+      {/* Status tabs — primary scope of the queue */}
+      <div className="flex items-center gap-1 bg-slate-100 border border-slate-200 rounded-xl p-1 w-fit">
+        {([
+          ['PENDING', 'Pending Review', stats.pending, 'amber'],
+          ['QUALIFIED', 'Qualified', stats.qualified, 'emerald'],
+          ['NON_QUALIFIED', 'Non Qualified', stats.nonQualified, 'rose'],
+        ] as Array<[StatusTab, string, number, 'amber' | 'emerald' | 'rose']>).map(([key, label, count, tone]) => {
+          const isActive = statusTab === key;
+          const activeTone = tone === 'amber' ? 'bg-amber-500 text-white' : tone === 'emerald' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white';
+          return (
+            <button
+              key={key}
+              onClick={() => setStatusTab(key)}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                isActive ? activeTone : 'text-slate-600 hover:bg-white hover:text-slate-900'
+              }`}
+            >
+              {label} <span className={`ml-1 text-xs ${isActive ? 'opacity-90' : 'text-slate-400'}`}>({count})</span>
+            </button>
+          );
+        })}
       </div>
+
+      {/* Confidence breakdown — only meaningful for the Pending tab. */}
+      {statusTab === 'PENDING' && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard
+            label="Pending total"
+            value={stats.pending}
+            icon={<ClipboardCheck className="w-4 h-4" />}
+            tone="slate"
+            active={bandFilter === 'ALL'}
+            onClick={() => setBandFilter('ALL')}
+          />
+          <KpiCard
+            label="Low confidence (<50%)"
+            value={stats.low}
+            icon={<AlertTriangle className="w-4 h-4" />}
+            tone="rose"
+            active={bandFilter === 'LOW'}
+            onClick={() => setBandFilter(bandFilter === 'LOW' ? 'ALL' : 'LOW')}
+          />
+          <KpiCard
+            label="Medium confidence (50–69%)"
+            value={stats.medium}
+            icon={<Bot className="w-4 h-4" />}
+            tone="amber"
+            active={bandFilter === 'MEDIUM'}
+            onClick={() => setBandFilter(bandFilter === 'MEDIUM' ? 'ALL' : 'MEDIUM')}
+          />
+          <KpiCard
+            label="No confidence reported"
+            value={stats.unknown}
+            icon={<Eye className="w-4 h-4" />}
+            tone="slate"
+            active={bandFilter === 'UNKNOWN'}
+            onClick={() => setBandFilter(bandFilter === 'UNKNOWN' ? 'ALL' : 'UNKNOWN')}
+          />
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -372,7 +470,7 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
             Clear all
           </button>
         )}
-        {filtered.length > 0 && (
+        {statusTab === 'PENDING' && filtered.length > 0 && (
           <button
             onClick={toggleSelectAll}
             className="ml-auto text-xs text-slate-500 hover:text-slate-800 transition-colors px-2 py-1"
@@ -386,12 +484,20 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
         <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center">
           <CheckCircle2 className="w-10 h-10 text-emerald-300 mx-auto mb-3" />
           <div className="text-sm font-medium text-slate-700">
-            {filtersActive && queue.length > 0 ? 'No leads match your filters' : 'All caught up'}
+            {filtersActive && activePool.length > 0
+              ? 'No leads match your filters'
+              : statusTab === 'PENDING' ? 'All caught up'
+              : statusTab === 'QUALIFIED' ? 'No leads have been marked Looks good yet'
+              : 'No leads have been disqualified by a human yet'}
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            {filtersActive && queue.length > 0
-              ? `${queue.length} leads pending review — try clearing filters or widening the date range.`
-              : 'No AI-qualified leads are waiting for human verification.'}
+            {filtersActive && activePool.length > 0
+              ? `${activePool.length} leads in this tab — try clearing filters or widening the date range.`
+              : statusTab === 'PENDING'
+                ? 'No AI-qualified leads are waiting for human verification.'
+                : statusTab === 'QUALIFIED'
+                  ? 'Approve leads from the Pending tab to populate this view.'
+                  : 'Disqualify leads from the Pending tab to populate this view.'}
           </div>
         </div>
       ) : (
@@ -406,13 +512,15 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
                 }`}
               >
                 <div className="flex items-start gap-4">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(c.id)}
-                    onChange={() => toggleSelect(c.id)}
-                    className="mt-1.5 w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
-                    title="Select for bulk action"
-                  />
+                  {statusTab === 'PENDING' && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(c.id)}
+                      onChange={() => toggleSelect(c.id)}
+                      className="mt-1.5 w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
+                      title="Select for bulk action"
+                    />
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1.5">
                       <button
@@ -442,6 +550,27 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
                       {[c.city, c.country].filter(Boolean).join(', ')} {c.industry ? `· ${c.industry}` : ''}
                       {c.employee_count ? ` · ${c.employee_count} employees` : ''}
                     </div>
+                    {statusTab === 'QUALIFIED' && c.human_reviewed_by && (
+                      <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 mb-2 inline-flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Reviewed by {c.human_reviewed_by}
+                        {c.human_reviewed_at ? ` · ${String(c.human_reviewed_at).slice(0, 10)}` : ''}
+                        {c.human_review_notes ? ` · "${c.human_review_notes}"` : ''}
+                      </div>
+                    )}
+                    {statusTab === 'NON_QUALIFIED' && (
+                      <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1 mb-2">
+                        <div className="inline-flex items-center gap-1.5">
+                          <Shield className="w-3 h-3" />
+                          Disqualified by {c.disqualified_by || 'Unknown'}
+                          {c.disqualified_at ? ` · ${String(c.disqualified_at).slice(0, 10)}` : ''}
+                          {c.disqualification_category ? ` · ${c.disqualification_category}` : ''}
+                        </div>
+                        {c.disqualification_reason && (
+                          <div className="mt-0.5 text-rose-800 line-clamp-2">{c.disqualification_reason}</div>
+                        )}
+                      </div>
+                    )}
                     {c.qualification_notes && (
                       <div className="text-sm text-slate-600 line-clamp-3 mb-2">
                         <span className="font-medium text-slate-700">AI: </span>
@@ -456,27 +585,62 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
                     )}
                   </div>
                   <div className="shrink-0 flex flex-col gap-2 min-w-[160px]">
-                    <button
-                      onClick={() => void handleMarkReviewed(c.id, noteDraft[c.id])}
-                      disabled={marking === c.id}
-                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-medium rounded-md transition-colors"
-                      title={noteDraft[c.id] ? 'Mark reviewed with your note' : 'Mark reviewed'}
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      {marking === c.id ? 'Saving…' : noteDraft[c.id] ? 'Mark with note' : 'Looks good'}
-                    </button>
-                    <button
-                      onClick={() => setDisqualifyTarget({ id: c.id, name: c.company_name })}
-                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 text-xs font-medium rounded-md transition-colors"
-                    >
-                      <Shield className="w-3.5 h-3.5" /> Disqualify
-                    </button>
-                    <button
-                      onClick={() => setExpandedNoteId(expandedNoteId === c.id ? null : c.id)}
-                      className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-slate-500 hover:bg-slate-50 text-xs font-medium rounded-md transition-colors"
-                    >
-                      {expandedNoteId === c.id ? 'Hide note' : noteDraft[c.id] ? 'Edit note' : '+ Add note'}
-                    </button>
+                    {statusTab === 'PENDING' && (
+                      <>
+                        <button
+                          onClick={() => void handleMarkReviewed(c.id, noteDraft[c.id])}
+                          disabled={marking === c.id}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-medium rounded-md transition-colors"
+                          title={noteDraft[c.id] ? 'Mark reviewed with your note' : 'Mark reviewed'}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          {marking === c.id ? 'Saving…' : noteDraft[c.id] ? 'Mark with note' : 'Looks good'}
+                        </button>
+                        <button
+                          onClick={() => setDisqualifyTarget({ id: c.id, name: c.company_name })}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 text-xs font-medium rounded-md transition-colors"
+                        >
+                          <Shield className="w-3.5 h-3.5" /> Disqualify
+                        </button>
+                        <button
+                          onClick={() => setExpandedNoteId(expandedNoteId === c.id ? null : c.id)}
+                          className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-slate-500 hover:bg-slate-50 text-xs font-medium rounded-md transition-colors"
+                        >
+                          {expandedNoteId === c.id ? 'Hide note' : noteDraft[c.id] ? 'Edit note' : '+ Add note'}
+                        </button>
+                      </>
+                    )}
+                    {statusTab === 'QUALIFIED' && (
+                      <>
+                        <button
+                          onClick={() => void handleUnmarkReviewed(c.id)}
+                          disabled={marking === c.id}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-medium rounded-md transition-colors"
+                          title="Move this lead back to Pending Review"
+                        >
+                          <User className="w-3.5 h-3.5" />
+                          {marking === c.id ? 'Saving…' : 'Move to Pending'}
+                        </button>
+                        <button
+                          onClick={() => setDisqualifyTarget({ id: c.id, name: c.company_name })}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 text-xs font-medium rounded-md transition-colors"
+                          title="Change your mind — disqualify this lead"
+                        >
+                          <Shield className="w-3.5 h-3.5" /> Disqualify
+                        </button>
+                      </>
+                    )}
+                    {statusTab === 'NON_QUALIFIED' && (
+                      <button
+                        onClick={() => void handleRestore(c.id)}
+                        disabled={marking === c.id}
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-medium rounded-md transition-colors"
+                        title="Clear disqualification and revert to Enriched"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        {marking === c.id ? 'Restoring…' : 'Restore'}
+                      </button>
+                    )}
                     <button
                       onClick={() => onCompanyClick(c.id)}
                       className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-slate-400 hover:bg-slate-50 text-[11px] font-medium rounded-md transition-colors"
