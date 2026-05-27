@@ -5,14 +5,15 @@ interface LoginScreenProps {
   onLogin: (userName: string) => void;
 }
 
-const USERS = [
-  { name: 'Sageer A. Shaikh', firstName: 'sageer', role: 'Lead Research & Qualification' },
-  { name: 'Ahmad Khan', firstName: 'ahmad', role: 'Sales Representative' },
-  { name: 'Dr. Jochen Langguth', firstName: 'jochen', role: 'Managing Director' },
-  { name: 'Dr. Juergen Schellenberger', firstName: 'juergen', role: 'Technical Director' },
-  { name: 'Christoph Langguth', firstName: 'christoph', role: 'Business Development' },
-  { name: 'Patton Lucas', firstName: 'patton', role: 'Sales Manager' },
-  { name: 'Dr. Kathrin Langguth', firstName: 'kathrin', role: 'Operations' },
+// Username hints only — server is the source of truth for auth.
+const USER_HINTS = [
+  { name: 'Sageer A. Shaikh', firstName: 'sageer' },
+  { name: 'Ahmad Khan', firstName: 'ahmad' },
+  { name: 'Dr. Jochen Langguth', firstName: 'jochen' },
+  { name: 'Dr. Juergen Schellenberger', firstName: 'juergen' },
+  { name: 'Christoph Langguth', firstName: 'christoph' },
+  { name: 'Patton Lucas', firstName: 'patton' },
+  { name: 'Dr. Kathrin Langguth', firstName: 'kathrin' },
 ];
 
 export default function LoginScreen({ onLogin }: LoginScreenProps) {
@@ -22,34 +23,39 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
-    setTimeout(() => {
-      const user = USERS.find(u =>
-        u.firstName.toLowerCase() === username.toLowerCase().trim() ||
-        u.name.toLowerCase() === username.toLowerCase().trim()
-      );
-
-      if (!user) {
-        setError('User not found. Use your first name to log in.');
-        setLoading(false);
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        setError(payload?.error || 'Invalid credentials.');
         return;
       }
-
-      const expectedPassword = `${user.firstName.toLowerCase()}@135`;
-      if (password !== expectedPassword) {
-        setError('Invalid password. Hint: firstname@135');
-        setLoading(false);
+      const user = payload?.user;
+      if (!user?.name) {
+        setError('Login succeeded but response was malformed.');
         return;
       }
-
-      localStorage.setItem('sinteriq_user', JSON.stringify({ name: user.name, role: user.role, loginAt: new Date().toISOString() }));
+      // Mirror identity in localStorage so the X-User-Name header keeps
+      // working for legacy callers. Server cookie is the real source of truth.
+      localStorage.setItem('sinteriq_user', JSON.stringify({
+        name: user.name,
+        role: user.role || '',
+        loginAt: new Date().toISOString(),
+      }));
       onLogin(user.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error during login.');
+    } finally {
       setLoading(false);
-    }, 500);
+    }
   };
 
   return (
@@ -136,11 +142,13 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
           <div className="mt-6 pt-6 border-t border-slate-100">
             <p className="text-xs text-slate-400 mb-3 text-center">Team Members</p>
             <div className="flex flex-wrap gap-1.5 justify-center">
-              {USERS.map(u => (
+              {USER_HINTS.map(u => (
                 <button
                   key={u.firstName}
-                  onClick={() => { setUsername(u.firstName); setPassword(`${u.firstName.toLowerCase()}@135`); setError(''); }}
+                  type="button"
+                  onClick={() => { setUsername(u.firstName); setPassword(`${u.firstName}@135`); setError(''); }}
                   className="text-xs bg-slate-100 hover:bg-blue-100 hover:text-blue-700 text-slate-600 px-2.5 py-1 rounded-full transition-colors"
+                  title="Defaults to firstname@135 — change via SINTERIQ_PASSWORD_<NAME> env var"
                 >
                   {u.name.split(' ')[0]}
                 </button>

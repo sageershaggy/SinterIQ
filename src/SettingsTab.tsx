@@ -811,17 +811,58 @@ export default function SettingsTab() {
     setError('');
     setSuccess('');
     try {
+      // Only send api_key when the user typed a new value. The server preserves
+      // the existing encrypted key when api_key is missing/empty, so unrelated
+      // edits (model, provider, base_url) no longer wipe the stored key.
+      const typedKey = settings.api_key.trim();
+      const payloadBody: Record<string, unknown> = {
+        provider_type: settings.provider_type,
+        provider_name: settings.provider_name,
+        model: settings.model,
+        base_url: settings.base_url,
+      };
+      if (typedKey) payloadBody.api_key = typedKey;
+
       const response = await fetch('/api/settings/llm', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
+        body: JSON.stringify(payloadBody),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || 'Failed to save settings');
-      setSettings((prev) => ({ ...prev, ...payload, api_key: prev.api_key }));
-      setSuccess('Settings saved successfully.');
+      // Reset the api_key input after a save — server never echoes plaintext back.
+      setSettings((prev) => ({ ...prev, ...payload, api_key: '' }));
+      setSuccess(typedKey ? 'Settings saved (API key updated).' : 'Settings saved.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClearApiKey = async () => {
+    if (!confirm('Delete the saved API key? AI qualification will stop working until you enter a new one.')) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const response = await fetch('/api/settings/llm', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider_type: settings.provider_type,
+          provider_name: settings.provider_name,
+          model: settings.model,
+          base_url: settings.base_url,
+          clear_api_key: true,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || 'Failed to clear key');
+      setSettings((prev) => ({ ...prev, ...payload, api_key: '' }));
+      setSuccess('API key cleared.');
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : 'Failed to clear key');
     } finally {
       setSaving(false);
     }
@@ -1003,7 +1044,22 @@ export default function SettingsTab() {
                 ? <span className="text-green-700">Configured ({settings.source === 'environment' ? 'System .env' : settings.source === 'database' ? 'Saved in app' : settings.source})</span>
                 : <span className="text-red-700">Not configured — AI features will not work</span>
               }</span>
-              {settings.has_api_key && <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto" />}
+              {settings.has_api_key && (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto" />
+                  {settings.source === 'database' && (
+                    <button
+                      type="button"
+                      onClick={() => void handleClearApiKey()}
+                      disabled={saving}
+                      className="text-xs text-red-600 hover:text-red-800 hover:underline disabled:opacity-50"
+                      title="Delete the saved API key from the app database"
+                    >
+                      Clear saved key
+                    </button>
+                  )}
+                </>
+              )}
             </div>
             <p className="text-slate-600">
               {settings.provider_type === 'gemini'

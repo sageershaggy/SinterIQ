@@ -115,6 +115,175 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
+// =========================================================================
+// Session authentication — HMAC-signed httpOnly cookie
+// =========================================================================
+// All /api/* routes except /api/health and /api/auth/* require a valid
+// session cookie. The cookie payload is base64url-encoded JSON with an
+// HMAC-SHA256 signature appended. Secret is loaded from SINTERIQ_AUTH_SECRET
+// env var, or auto-generated and persisted to .sinteriq-auth-secret
+// (gitignored, mode 0600). Lose the secret → every active session is
+// invalidated, but stored data is unaffected.
+//
+// Escape hatch: set SINTERIQ_AUTH_DISABLED=true to bypass auth during
+// development or if you get locked out. NEVER set in production.
+
+const AUTH_SECRET_FILE = path.join(process.cwd(), '.sinteriq-auth-secret');
+const SESSION_COOKIE = 'sinteriq_session';
+const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+function loadOrGenerateAuthSecret(): Buffer {
+  const fromEnv = process.env.SINTERIQ_AUTH_SECRET;
+  if (fromEnv && fromEnv.length >= 32) return Buffer.from(fromEnv, 'utf8');
+  if (fs.existsSync(AUTH_SECRET_FILE)) {
+    try {
+      const stored = fs.readFileSync(AUTH_SECRET_FILE, 'utf8').trim();
+      if (stored.length >= 32) return Buffer.from(stored, 'hex');
+    } catch {}
+  }
+  const generated = crypto.randomBytes(32);
+  try {
+    fs.writeFileSync(AUTH_SECRET_FILE, generated.toString('hex'), { encoding: 'utf8', mode: 0o600 });
+    console.warn(`[security] Generated new auth secret at ${AUTH_SECRET_FILE}. Back this up — losing it logs everyone out.`);
+  } catch (err) {
+    console.error('Could not persist auth secret:', err);
+  }
+  return generated;
+}
+
+const AUTH_SECRET = loadOrGenerateAuthSecret();
+const AUTH_DISABLED = process.env.SINTERIQ_AUTH_DISABLED === 'true';
+if (AUTH_DISABLED) {
+  console.warn('[security] SINTERIQ_AUTH_DISABLED=true — API authentication is OFF. Do not use in production.');
+}
+
+// Default team accounts. Passwords match the previous client-side scheme
+// (firstname@135) to keep the existing UX. Override per-user via env vars
+// like SINTERIQ_PASSWORD_SAGEER=mynewpass for production.
+const SESSION_USERS: Array<{ name: string; firstName: string; role: string }> = [
+  { name: 'Sageer A. Shaikh', firstName: 'sageer', role: 'Lead Research & Qualification' },
+  { name: 'Ahmad Khan', firstName: 'ahmad', role: 'Sales Representative' },
+  { name: 'Dr. Jochen Langguth', firstName: 'jochen', role: 'Managing Director' },
+  { name: 'Dr. Juergen Schellenberger', firstName: 'juergen', role: 'Technical Director' },
+  { name: 'Christoph Langguth', firstName: 'christoph', role: 'Business Development' },
+  { name: 'Patton Lucas', firstName: 'patton', role: 'Sales Manager' },
+  { name: 'Dr. Kathrin Langguth', firstName: 'kathrin', role: 'Operations' },
+];
+
+function getUserPassword(firstName: string): string {
+  const envKey = `SINTERIQ_PASSWORD_${firstName.toUpperCase()}`;
+  return process.env[envKey] || `${firstName}@135`;
+}
+
+function signSessionToken(payload: { name: string; role: string; issuedAt: number }): string {
+  const json = JSON.stringify(payload);
+  const data = Buffer.from(json, 'utf8').toString('base64url');
+  const sig = crypto.createHmac('sha256', AUTH_SECRET).update(data).digest('base64url');
+  return `${data}.${sig}`;
+}
+
+function verifySessionToken(token: string | undefined): { name: string; role: string; issuedAt: number } | null {
+  if (!token || typeof token !== 'string') return null;
+  const dotIdx = token.indexOf('.');
+  if (dotIdx <= 0 || dotIdx === token.length - 1) return null;
+  const data = token.slice(0, dotIdx);
+  const sig = token.slice(dotIdx + 1);
+  const expected = crypto.createHmac('sha256', AUTH_SECRET).update(data).digest('base64url');
+  // Constant-time compare.
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
+    if (typeof parsed.name !== 'string' || typeof parsed.issuedAt !== 'number') return null;
+    if (Date.now() - parsed.issuedAt > SESSION_TTL_MS) return null;
+    return { name: parsed.name, role: parsed.role || '', issuedAt: parsed.issuedAt };
+  } catch {
+    return null;
+  }
+}
+
+function parseCookieHeader(header: string | undefined): Record<string, string> {
+  if (!header) return {};
+  const out: Record<string, string> = {};
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  }
+  return out;
+}
+
+function getSessionFromRequest(req: any): { name: string; role: string; issuedAt: number } | null {
+  const cookies = parseCookieHeader(req.headers?.cookie);
+  return verifySessionToken(cookies[SESSION_COOKIE]);
+}
+
+function setSessionCookie(res: any, token: string) {
+  const maxAgeSec = Math.floor(SESSION_TTL_MS / 1000);
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}`);
+}
+
+function clearSessionCookie(res: any) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+}
+
+// Auth middleware. Mounted before all /api/* routes. Allows /api/health and
+// /api/auth/* without a session; rejects everything else with 401.
+app.use('/api', (req, res, next) => {
+  if (AUTH_DISABLED) return next();
+  if (req.path === '/health' || req.path.startsWith('/auth/')) return next();
+  const session = getSessionFromRequest(req);
+  if (!session) return res.status(401).json({ error: 'Not authenticated' });
+  (req as any).session = session;
+  next();
+});
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const username = normalizeOptionalString(req.body?.username)?.toLowerCase() || '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!username || !password) {
+      return res.status(400).json({ error: 'username and password required' });
+    }
+    const user = SESSION_USERS.find((u) =>
+      u.firstName === username || u.name.toLowerCase() === username,
+    );
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const expected = getUserPassword(user.firstName);
+    // Constant-time compare to avoid timing oracles.
+    const pwdBuf = Buffer.from(password, 'utf8');
+    const expBuf = Buffer.from(expected, 'utf8');
+    const ok = pwdBuf.length === expBuf.length && crypto.timingSafeEqual(pwdBuf, expBuf);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const token = signSessionToken({ name: user.name, role: user.role, issuedAt: Date.now() });
+    setSessionCookie(res, token);
+    res.json({ user: { name: user.name, role: user.role } });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/logout', (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  if (AUTH_DISABLED) {
+    return res.json({ user: { name: 'Dev (auth disabled)', role: 'Developer' }, authDisabled: true });
+  }
+  const session = getSessionFromRequest(req);
+  if (!session) return res.status(401).json({ error: 'Not authenticated' });
+  res.json({ user: { name: session.name, role: session.role } });
+});
+
 // Initialize SQLite database
 const db = new Database('sintertechnik.db');
 
@@ -397,9 +566,15 @@ function sendApiError(res: any, error: unknown, fallbackMessage: string) {
 }
 
 // Extract the calling user's identity from the request.
-// Frontend sends X-User-Name header (set from localStorage.sinteriq_user.name).
-// Body 'by' field is honored as a fallback for endpoints that already accept it.
+// Order of trust:
+//   1. Verified session cookie (set by /api/auth/login, signed with HMAC).
+//   2. X-User-Name header — kept for backward compat / dev (auth disabled).
+//   3. Body 'by' field — legacy fallback.
 function getRequestUser(req: any): string {
+  const session = (req as any).session;
+  if (session?.name && typeof session.name === 'string') {
+    return session.name.slice(0, 120);
+  }
   const headerName = req.headers?.['x-user-name'];
   if (typeof headerName === 'string' && headerName.trim()) {
     return headerName.trim().slice(0, 120);
@@ -563,6 +738,19 @@ async function fetchPageText(url: string, timeoutMs = 5000) {
   }
 }
 
+// In-memory LRU cache for fetched website context. Saves repeated HTML fetches
+// when the same site is qualified back-to-back (e.g. bulk import of related
+// companies, or pre-classifier + deep pass within the same AI-qualify call).
+// Bounded at 500 entries with a 6h TTL — well within memory budget and stale
+// enough to be safe for any site whose copy actually changes during the day.
+const WEBSITE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const WEBSITE_CACHE_MAX = 500;
+const websiteContextCache = new Map<string, { value: string; expiresAt: number }>();
+
+function buildWebsiteCacheKey(host: string, paths: string[], perPageCap: number, totalCap: number) {
+  return `${host}|${paths.join(',')}|${perPageCap}|${totalCap}`;
+}
+
 async function fetchWebsiteContext(value: unknown, opts?: { paths?: string[]; perPageCap?: number; totalCap?: number }) {
   const websiteUrl = normalizeWebsiteUrl(value);
   if (!websiteUrl) {
@@ -573,6 +761,19 @@ async function fetchWebsiteContext(value: unknown, opts?: { paths?: string[]; pe
   const paths = opts?.paths ?? ['', '/about', '/products', '/ueber-uns'];
   const perPageCap = opts?.perPageCap ?? 1500;
   const totalCap = opts?.totalCap ?? 3000;
+
+  const host = normalizeWebsiteHost(value);
+  const cacheKey = host ? buildWebsiteCacheKey(host, paths, perPageCap, totalCap) : '';
+  if (cacheKey) {
+    const cached = websiteContextCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      // LRU touch — re-insert at end.
+      websiteContextCache.delete(cacheKey);
+      websiteContextCache.set(cacheKey, cached);
+      return cached.value;
+    }
+    if (cached) websiteContextCache.delete(cacheKey);
+  }
 
   const pages = await Promise.all(paths.map((p) => fetchPageText(`${base}${p}`)));
 
@@ -589,7 +790,17 @@ async function fetchWebsiteContext(value: unknown, opts?: { paths?: string[]; pe
   }
 
   const combined = uniqueTexts.join('\n\n---\n\n').slice(0, totalCap);
-  return combined || null;
+  const result = combined || null;
+
+  if (result && cacheKey) {
+    if (websiteContextCache.size >= WEBSITE_CACHE_MAX) {
+      const oldestKey = websiteContextCache.keys().next().value;
+      if (oldestKey) websiteContextCache.delete(oldestKey);
+    }
+    websiteContextCache.set(cacheKey, { value: result, expiresAt: Date.now() + WEBSITE_CACHE_TTL_MS });
+  }
+
+  return result;
 }
 
 // Cheap pre-classification pass — short prompt, low temperature, no web search.
@@ -1116,9 +1327,18 @@ app.put('/api/settings/llm', (req, res) => {
       return res.status(400).json({ error: 'provider_type must be gemini or openai_compatible' });
     }
 
-    // Encrypt API key at rest. Empty string clears the saved key.
+    // Only touch llm.api_key when the caller explicitly sets a new key OR
+    // explicitly requests deletion via clear_api_key=true. An empty/missing
+    // api_key field means "preserve the existing encrypted key" — the GET
+    // endpoint never returns the plaintext, so the form re-sends '' by default.
     const incomingApiKey = normalizeOptionalString(req.body.api_key) || '';
-    const apiKeyForStorage = incomingApiKey ? encryptSecret(incomingApiKey) : '';
+    const shouldClearKey = req.body.clear_api_key === true;
+    const apiKeyEntry: Record<string, string> = {};
+    if (incomingApiKey) {
+      apiKeyEntry['llm.api_key'] = encryptSecret(incomingApiKey);
+    } else if (shouldClearKey) {
+      apiKeyEntry['llm.api_key'] = '';
+    }
 
     saveSettings({
       'llm.provider_type': providerType,
@@ -1127,7 +1347,7 @@ app.put('/api/settings/llm', (req, res) => {
       'llm.base_url': providerType === 'openai_compatible'
         ? normalizeOptionalString(req.body.base_url) || 'https://api.openai.com/v1'
         : '',
-      'llm.api_key': apiKeyForStorage,
+      ...apiKeyEntry,
     });
 
     const settings = getLlmSettings();
@@ -1229,10 +1449,30 @@ app.put('/api/users/:id', (req, res) => {
   }
 });
 
+// ?slim=true returns list-view columns only — excludes the heavy AI-generated
+// text fields (approach_strategy, sales_script, email_script, opportunity_notes,
+// qualification_notes, social_profiles_json) that the Companies list doesn't
+// render. Cuts payload by roughly half on large datasets. Detail view and CSV
+// exports continue to use the default (full) response.
 app.get('/api/companies', (req, res) => {
+  const slim = req.query.slim === 'true';
+  const selectClause = slim
+    ? `c.id, c.company_name, c.company_type, c.country, c.city, c.region, c.industry,
+       c.employee_count, c.revenue_eur, c.website, c.duns_number, c.legal_form,
+       c.main_products, c.corporate_parent, c.is_subsidiary, c.source,
+       c.lead_score, c.lead_status, c.lead_priority, c.technical_fit, c.product_fit,
+       c.buying_probability, c.website_score, c.social_score,
+       c.social_media_active, c.mentions_technology,
+       c.assigned_to, c.created_by, c.created_at, c.updated_at,
+       c.ai_qualified_at, c.ai_confidence,
+       c.disqualification_reason, c.disqualification_category, c.disqualified_by, c.disqualified_at,
+       c.human_reviewed, c.human_reviewed_at, c.human_reviewed_by,
+       c.tracking_level, c.tracking_status, c.next_tracking_date,
+       c.company_name_key, c.website_key`
+    : 'c.*';
   const companies = db.prepare(`
     SELECT
-      c.*,
+      ${selectClause},
       COUNT(DISTINCT con.id) as contact_count,
       MIN(CASE WHEN a.follow_up_done = 0 AND a.follow_up_date IS NOT NULL THEN a.follow_up_date END) as follow_up_date
     FROM companies c
@@ -1242,6 +1482,126 @@ app.get('/api/companies', (req, res) => {
     ORDER BY c.updated_at DESC, c.company_name ASC
   `).all();
   res.json(companies);
+});
+
+// Paged companies endpoint — server-side filter + sort + paginate.
+// Used by the main Companies tab list so the client doesn't sift through
+// the full table in memory. Returns slim columns only (heavy AI text fields
+// excluded — see comment on /api/companies above).
+app.get('/api/companies/paged', (req, res) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+
+    const page = Math.max(1, Number(q.page) || 1);
+    const pageSize = Math.min(500, Math.max(1, Number(q.page_size) || 50));
+    const offset = (page - 1) * pageSize;
+
+    const sortKeyAllowlist = new Set([
+      'company_name', 'country', 'city', 'industry', 'company_type',
+      'employee_count', 'revenue_eur', 'lead_score', 'lead_status',
+      'lead_priority', 'ai_confidence', 'ai_qualified_at',
+      'created_at', 'updated_at',
+    ]);
+    const sortKey = q.sort_key && sortKeyAllowlist.has(q.sort_key) ? q.sort_key : 'updated_at';
+    const sortDir = q.sort_dir === 'asc' ? 'ASC' : 'DESC';
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    const eqFilter = (column: string, value: string | undefined) => {
+      if (value && value.trim()) {
+        where.push(`c.${column} = ?`);
+        params.push(value.trim());
+      }
+    };
+    eqFilter('lead_status', q.status);
+    eqFilter('lead_priority', q.priority);
+    eqFilter('country', q.country);
+    eqFilter('industry', q.industry);
+    eqFilter('company_type', q.company_type);
+    eqFilter('assigned_to', q.assigned_to);
+    eqFilter('region', q.region);
+
+    if (q.min_score && !Number.isNaN(Number(q.min_score))) {
+      where.push('c.lead_score >= ?');
+      params.push(Number(q.min_score));
+    }
+    if (q.max_score && !Number.isNaN(Number(q.max_score))) {
+      where.push('c.lead_score <= ?');
+      params.push(Number(q.max_score));
+    }
+    if (q.date_from) {
+      where.push('c.updated_at >= ?');
+      params.push(q.date_from);
+    }
+    if (q.date_to) {
+      where.push('c.updated_at <= ?');
+      params.push(`${q.date_to}T23:59:59`);
+    }
+
+    switch (q.ai_qual) {
+      case 'AI_QUALIFIED':
+        where.push('c.ai_qualified_at IS NOT NULL');
+        break;
+      case 'NOT_QUALIFIED':
+        where.push('c.ai_qualified_at IS NULL');
+        break;
+      case 'ENRICHED':
+        where.push("c.lead_status = 'ENRICHED'");
+        break;
+      case 'QUALIFIED_NO_AI':
+        where.push("c.lead_status = 'QUALIFIED' AND c.ai_qualified_at IS NULL");
+        break;
+      case 'NEEDS_REVIEW':
+        where.push("c.ai_qualified_at IS NOT NULL AND c.human_reviewed = 0 AND (c.ai_confidence IS NULL OR c.ai_confidence < 70)");
+        break;
+    }
+
+    if (q.search && q.search.trim()) {
+      const term = `%${q.search.trim()}%`;
+      where.push('(c.company_name LIKE ? OR c.country LIKE ? OR c.city LIKE ? OR c.industry LIKE ? OR c.company_type LIKE ? OR c.assigned_to LIKE ?)');
+      params.push(term, term, term, term, term, term);
+    }
+
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const totalRow = db.prepare(`SELECT COUNT(*) as total FROM companies c ${whereClause}`).get(...params) as { total: number };
+    const revenueRow = db.prepare(`SELECT COALESCE(SUM(revenue_eur), 0) as revenue FROM companies c ${whereClause}`).get(...params) as { revenue: number };
+
+    const slimSelect = `c.id, c.company_name, c.company_type, c.country, c.city, c.region, c.industry,
+      c.employee_count, c.revenue_eur, c.website, c.duns_number, c.legal_form,
+      c.main_products, c.corporate_parent, c.is_subsidiary, c.source,
+      c.lead_score, c.lead_status, c.lead_priority, c.technical_fit, c.product_fit,
+      c.buying_probability, c.website_score, c.social_score,
+      c.social_media_active, c.mentions_technology,
+      c.assigned_to, c.created_by, c.created_at, c.updated_at,
+      c.ai_qualified_at, c.ai_confidence,
+      c.disqualification_reason, c.disqualification_category, c.disqualified_by, c.disqualified_at,
+      c.human_reviewed, c.human_reviewed_at, c.human_reviewed_by,
+      c.tracking_level, c.tracking_status, c.next_tracking_date`;
+
+    const rows = db.prepare(`
+      SELECT ${slimSelect},
+        (SELECT COUNT(*) FROM contacts con WHERE con.company_id = c.id) as contact_count,
+        (SELECT MIN(a.follow_up_date) FROM activities a WHERE a.company_id = c.id AND a.follow_up_done = 0 AND a.follow_up_date IS NOT NULL) as follow_up_date
+      FROM companies c
+      ${whereClause}
+      ORDER BY c.${sortKey} ${sortDir}, c.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, offset);
+
+    res.json({
+      rows,
+      total: totalRow.total,
+      total_revenue: revenueRow.revenue,
+      page,
+      page_size: pageSize,
+      total_pages: Math.ceil(totalRow.total / pageSize),
+    });
+  } catch (error) {
+    console.error('Paged companies error:', error);
+    sendApiError(res, error, 'Failed to load paged companies');
+  }
 });
 
 app.post('/api/companies', (req, res) => {
@@ -1903,6 +2263,73 @@ app.post('/api/companies/:id/mark-reviewed', (req, res) => {
   } catch (err) {
     console.error('Mark reviewed error:', err);
     res.status(500).json({ error: 'Failed to mark reviewed' });
+  }
+});
+
+// Note: NOT mounted under /api/companies/:id/... — Express would match the
+// :id segment as "bulk" and shadow this with the single-id endpoint above.
+// Sibling /api/bulk/* namespace avoids that footgun for future batch routes.
+app.post('/api/bulk/companies/mark-reviewed', (req, res) => {
+  try {
+    const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : null;
+    if (!rawIds || rawIds.length === 0) {
+      return res.status(400).json({ error: 'ids must be a non-empty array' });
+    }
+    const ids = rawIds
+      .map((v: unknown) => Number(v))
+      .filter((n: number) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) {
+      return res.status(400).json({ error: 'ids must contain positive integers' });
+    }
+    if (ids.length > 5000) {
+      return res.status(400).json({ error: 'bulk limit is 5000 ids per call' });
+    }
+
+    const by = getRequestUser(req);
+    const notes = normalizeOptionalString(req.body?.notes);
+
+    const updateStmt = db.prepare(`
+      UPDATE companies
+      SET human_reviewed = 1,
+          human_reviewed_at = CURRENT_TIMESTAMP,
+          human_reviewed_by = ?,
+          human_review_notes = COALESCE(?, human_review_notes),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+    const existsStmt = db.prepare('SELECT 1 FROM companies WHERE id = ?');
+
+    let succeeded = 0;
+    const missing: number[] = [];
+    const touchedIds: number[] = [];
+
+    const runBatch = db.transaction(() => {
+      for (const id of ids) {
+        if (!existsStmt.get(id)) {
+          missing.push(id);
+          continue;
+        }
+        updateStmt.run(by, notes, id);
+        touchedIds.push(id);
+        succeeded++;
+      }
+    });
+    runBatch();
+
+    // Hydrate updated rows once outside the transaction.
+    const updated = touchedIds.length > 0
+      ? db.prepare(`SELECT * FROM companies WHERE id IN (${touchedIds.map(() => '?').join(',')})`).all(...touchedIds)
+      : [];
+
+    res.json({
+      succeeded,
+      failed: missing.length,
+      missing,
+      updated,
+    });
+  } catch (err) {
+    console.error('Bulk mark-reviewed error:', err);
+    res.status(500).json({ error: 'Failed to bulk mark reviewed' });
   }
 });
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -292,19 +292,34 @@ export default function AppRoot() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const totalRevenue = companies.reduce((sum, company) => sum + (company.revenue_eur || 0), 0);
-  const activeUsers = users.filter((user) => user.is_active).map((user) => user.full_name);
+  const totalRevenue = useMemo(
+    () => companies.reduce((sum, company) => sum + (company.revenue_eur || 0), 0),
+    [companies],
+  );
+  const activeUsers = useMemo(
+    () => users.filter((user) => user.is_active).map((user) => user.full_name),
+    [users],
+  );
   const userOptions = activeUsers.length > 0 ? activeUsers : [...defaultInternalUsers];
-  const qualifiedCount = companies.filter((company) => company.lead_status === 'QUALIFIED').length;
+  const qualifiedCount = useMemo(
+    () => companies.filter((company) => company.lead_status === 'QUALIFIED').length,
+    [companies],
+  );
   const today = getDateOnly(new Date().toISOString());
-  const overdueFollowUpsCount = followUps.filter(
-    (followUp) => !followUp.follow_up_done && getDateOnly(followUp.follow_up_date) < today,
-  ).length;
-  const trackingDueCount = companies.filter(
-    (company) => company.next_tracking_date && getDateOnly(company.next_tracking_date) <= today,
-  ).length;
+  const overdueFollowUpsCount = useMemo(
+    () => followUps.filter(
+      (followUp) => !followUp.follow_up_done && getDateOnly(followUp.follow_up_date) < today,
+    ).length,
+    [followUps, today],
+  );
+  const trackingDueCount = useMemo(
+    () => companies.filter(
+      (company) => company.next_tracking_date && getDateOnly(company.next_tracking_date) <= today,
+    ).length,
+    [companies, today],
+  );
 
-  const filteredCompanies = companies.filter((company) => {
+  const filteredCompanies = useMemo(() => companies.filter((company) => {
     if (minScore && company.lead_score !== null && company.lead_score < parseInt(minScore, 10)) return false;
     if (maxScore && company.lead_score !== null && company.lead_score > parseInt(maxScore, 10)) return false;
     if (assignedFilter && company.assigned_to !== assignedFilter) return false;
@@ -322,20 +337,33 @@ export default function AppRoot() {
     const haystack = [company.company_name, company.country, company.city, company.industry, company.company_type, company.assigned_to]
       .filter(Boolean).join(' ').toLowerCase();
     return haystack.includes(searchQuery.trim().toLowerCase());
-  });
+  }), [companies, minScore, maxScore, assignedFilter, industryFilter, companyTypeFilter, statusFilter, aiQualFilter, dateFrom, dateTo, searchQuery]);
 
-  const sortedCompanies = [...filteredCompanies].sort((a, b) => {
+  const sortedCompanies = useMemo(() => [...filteredCompanies].sort((a, b) => {
     const av = (a as any)[sortKey] ?? '';
     const bv = (b as any)[sortKey] ?? '';
     const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
     return sortDir === 'asc' ? cmp : -cmp;
-  });
-  const qualifiedExportCompanies = sortedCompanies.filter((company) => company.lead_status === 'QUALIFIED');
-  const approvedExportCompanies = sortedCompanies.filter((company) => company.lead_status === 'APPROVED');
-  const disqualifiedExportCompanies = sortedCompanies.filter((company) => company.lead_status === 'DISQUALIFIED');
+  }), [filteredCompanies, sortKey, sortDir]);
+
+  const qualifiedExportCompanies = useMemo(
+    () => sortedCompanies.filter((company) => company.lead_status === 'QUALIFIED'),
+    [sortedCompanies],
+  );
+  const approvedExportCompanies = useMemo(
+    () => sortedCompanies.filter((company) => company.lead_status === 'APPROVED'),
+    [sortedCompanies],
+  );
+  const disqualifiedExportCompanies = useMemo(
+    () => sortedCompanies.filter((company) => company.lead_status === 'DISQUALIFIED'),
+    [sortedCompanies],
+  );
 
   const totalPages = Math.ceil(sortedCompanies.length / PAGE_SIZE);
-  const paginatedCompanies = sortedCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const paginatedCompanies = useMemo(
+    () => sortedCompanies.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [sortedCompanies, currentPage],
+  );
 
   // Reset page when filters change
   useEffect(() => { setCurrentPage(1); setSelectedIds(new Set()); }, [searchQuery, assignedFilter, industryFilter, companyTypeFilter, statusFilter, aiQualFilter, minScore, maxScore, dateFrom, dateTo]);
@@ -391,14 +419,25 @@ export default function AppRoot() {
     await Promise.all([loadCompanies(), loadFollowUps(), loadRecentActivities()]);
   };
 
-  const handleAIQualify = async (id: number) => {
+  const handleAIQualify = async (id: number, force = false) => {
     setQualifyingId(id);
-    showToast('info', 'AI Qualification started', 'Searching the web and analyzing...');
+    if (!force) showToast('info', 'AI Qualification started', 'Searching the web and analyzing...');
     try {
-      const response = await fetch(`/api/companies/${id}/ai-qualify?force=true`, { method: 'POST' });
+      const qs = force ? '?force=true' : '';
+      const response = await fetch(`/api/companies/${id}/ai-qualify${qs}`, { method: 'POST' });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || 'AI qualification failed');
       setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...payload } : c)));
+      if (payload?.skipped) {
+        setQualifyingId(null);
+        const reason = payload.skipReason || 'Recently qualified.';
+        if (confirm(`${reason}\n\nRe-run AI qualification anyway? (uses API credits)`)) {
+          void handleAIQualify(id, true);
+        } else {
+          showToast('info', 'Using cached qualification', reason);
+        }
+        return;
+      }
       showToast('success', 'AI Qualification complete', `${payload.company_name}: Score ${payload.lead_score || 0}`);
     } catch (error) {
       console.error(error);
@@ -1344,7 +1383,17 @@ export default function AppRoot() {
               </div>
             </div>
             <button
-              onClick={() => { localStorage.removeItem('sinteriq_user'); window.location.reload(); }}
+              onClick={() => {
+                const logout = (window as any).sinteriqLogout;
+                if (typeof logout === 'function') {
+                  void logout();
+                } else {
+                  // Fallback if main.tsx hasn't installed the handler.
+                  void fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+                  localStorage.removeItem('sinteriq_user');
+                  window.location.reload();
+                }
+              }}
               className="text-slate-500 hover:text-red-400 text-xs font-medium transition-colors"
               title="Sign out"
             >

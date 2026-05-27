@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardCheck,
+  Download,
   Eye,
   Search,
   Shield,
@@ -44,6 +45,8 @@ function confidenceBand(c: Company): ConfidenceBand {
 export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpdated }: Props) {
   const [bandFilter, setBandFilter] = useState<ConfidenceBand>('ALL');
   const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [disqualifyTarget, setDisqualifyTarget] = useState<{ id: number; name: string } | null>(null);
   const [disqualifying, setDisqualifying] = useState(false);
   const [marking, setMarking] = useState<number | null>(null);
@@ -56,14 +59,24 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const fromTs = dateFrom ? new Date(dateFrom + 'T00:00:00').getTime() : null;
+    const toTs = dateTo ? new Date(dateTo + 'T23:59:59.999').getTime() : null;
     return queue.filter((c) => {
       if (bandFilter !== 'ALL' && confidenceBand(c) !== bandFilter) return false;
+      if (fromTs !== null || toTs !== null) {
+        const ts = c.ai_qualified_at ? new Date(c.ai_qualified_at).getTime() : NaN;
+        if (Number.isNaN(ts)) return false;
+        if (fromTs !== null && ts < fromTs) return false;
+        if (toTs !== null && ts > toTs) return false;
+      }
       if (!q) return true;
       const haystack = [c.company_name, c.country, c.city, c.industry, c.qualification_notes, c.opportunity_notes]
         .filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [queue, bandFilter, search]);
+  }, [queue, bandFilter, search, dateFrom, dateTo]);
+
+  const filtersActive = bandFilter !== 'ALL' || !!dateFrom || !!dateTo || !!search.trim();
 
   const stats = useMemo(() => {
     let low = 0;
@@ -125,33 +138,27 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
     if (selectedIds.size === 0) return;
     if (!confirm(`Mark ${selectedIds.size} leads as reviewed?`)) return;
     setBulkMarking(true);
-    let succeeded = 0;
-    let failed = 0;
     try {
-      for (const id of selectedIds) {
-        try {
-          const res = await fetch(`/api/companies/${id}/mark-reviewed`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ by: currentUser }),
-          });
-          if (res.ok) {
-            const payload = await res.json();
-            onCompanyUpdated(payload);
-            succeeded++;
-          } else {
-            failed++;
-          }
-        } catch {
-          failed++;
-        }
-      }
+      const ids = Array.from(selectedIds);
+      const res = await fetch('/api/bulk/companies/mark-reviewed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, by: currentUser }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Bulk mark failed');
+      const updated = Array.isArray(payload?.updated) ? payload.updated as Company[] : [];
+      for (const company of updated) onCompanyUpdated(company);
       setSelectedIds(new Set());
+      const succeeded = Number(payload?.succeeded ?? updated.length);
+      const failed = Number(payload?.failed ?? 0);
       showToast(
         failed === 0 ? 'success' : 'info',
-        `Bulk review complete`,
-        `${succeeded} marked reviewed${failed > 0 ? `, ${failed} failed` : ''}`
+        'Bulk review complete',
+        `${succeeded} marked reviewed${failed > 0 ? `, ${failed} not found` : ''}`
       );
+    } catch (err) {
+      showToast('error', 'Bulk mark failed', err instanceof Error ? err.message : '');
     } finally {
       setBulkMarking(false);
     }
@@ -177,6 +184,45 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
     } finally {
       setDisqualifying(false);
     }
+  };
+
+  const handleExportCsv = () => {
+    if (filtered.length === 0) {
+      showToast('info', 'Nothing to export', 'Adjust filters to include leads');
+      return;
+    }
+    const headers = [
+      'Company', 'Country', 'City', 'Industry', 'Employees',
+      'AI Confidence %', 'Lead Priority', 'Lead Score',
+      'AI Qualified At', 'AI Notes', 'Opportunity Notes',
+    ];
+    const rows = filtered.map((c) => [
+      c.company_name || '',
+      c.country || '',
+      c.city || '',
+      c.industry || '',
+      c.employee_count ?? '',
+      c.ai_confidence ?? '',
+      c.lead_priority || '',
+      c.lead_score ?? '',
+      c.ai_qualified_at || '',
+      (c.qualification_notes || '').replace(/\s+/g, ' ').trim(),
+      (c.opportunity_notes || '').replace(/\s+/g, ' ').trim(),
+    ]);
+    const bom = '﻿';
+    const csv = bom + [headers, ...rows]
+      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const today = new Date().toISOString().split('T')[0];
+    const rangeTag = dateFrom || dateTo ? `_${dateFrom || 'start'}_to_${dateTo || today}` : '';
+    a.download = `SinterIQ_ReviewQueue${rangeTag}_${filtered.length}leads.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('success', 'Export ready', `${filtered.length} leads exported`);
   };
 
   const renderConfidenceBadge = (c: Company) => {
@@ -211,32 +257,71 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
             </p>
           </div>
         </div>
-        {selectedIds.size > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-600">{selectedIds.size} selected</span>
-            <button
-              onClick={() => void handleBulkMarkReviewed()}
-              disabled={bulkMarking}
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-sm font-medium rounded-md transition-colors"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              {bulkMarking ? 'Marking…' : `Mark ${selectedIds.size} reviewed`}
-            </button>
-            <button
-              onClick={() => setSelectedIds(new Set())}
-              className="px-2 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded-md transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <>
+              <span className="text-sm text-slate-600">{selectedIds.size} selected</span>
+              <button
+                onClick={() => void handleBulkMarkReviewed()}
+                disabled={bulkMarking}
+                className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-sm font-medium rounded-md transition-colors"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {bulkMarking ? 'Marking…' : `Mark ${selectedIds.size} reviewed`}
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="px-2 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded-md transition-colors"
+              >
+                Clear
+              </button>
+            </>
+          )}
+          <button
+            onClick={handleExportCsv}
+            disabled={filtered.length === 0}
+            className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 text-sm font-medium rounded-md transition-colors"
+            title={filtersActive ? `Export ${filtered.length} filtered leads as CSV` : `Export all ${filtered.length} leads as CSV`}
+          >
+            <Download className="w-4 h-4" />
+            Export CSV ({filtered.length})
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label="Pending review" value={stats.total} icon={<ClipboardCheck className="w-4 h-4" />} tone="slate" />
-        <KpiCard label="Low confidence (<50%)" value={stats.low} icon={<AlertTriangle className="w-4 h-4" />} tone="rose" />
-        <KpiCard label="Medium confidence (50–69%)" value={stats.medium} icon={<Bot className="w-4 h-4" />} tone="amber" />
-        <KpiCard label="No confidence reported" value={stats.unknown} icon={<Eye className="w-4 h-4" />} tone="slate" />
+        <KpiCard
+          label="Pending review"
+          value={stats.total}
+          icon={<ClipboardCheck className="w-4 h-4" />}
+          tone="slate"
+          active={bandFilter === 'ALL'}
+          onClick={() => setBandFilter('ALL')}
+        />
+        <KpiCard
+          label="Low confidence (<50%)"
+          value={stats.low}
+          icon={<AlertTriangle className="w-4 h-4" />}
+          tone="rose"
+          active={bandFilter === 'LOW'}
+          onClick={() => setBandFilter(bandFilter === 'LOW' ? 'ALL' : 'LOW')}
+        />
+        <KpiCard
+          label="Medium confidence (50–69%)"
+          value={stats.medium}
+          icon={<Bot className="w-4 h-4" />}
+          tone="amber"
+          active={bandFilter === 'MEDIUM'}
+          onClick={() => setBandFilter(bandFilter === 'MEDIUM' ? 'ALL' : 'MEDIUM')}
+        />
+        <KpiCard
+          label="No confidence reported"
+          value={stats.unknown}
+          icon={<Eye className="w-4 h-4" />}
+          tone="slate"
+          active={bandFilter === 'UNKNOWN'}
+          onClick={() => setBandFilter(bandFilter === 'UNKNOWN' ? 'ALL' : 'UNKNOWN')}
+        />
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
@@ -250,24 +335,43 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
             className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-md text-sm outline-none focus:border-blue-500"
           />
         </div>
-        <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md p-0.5">
-          {([
-            ['ALL', `All (${stats.total})`],
-            ['LOW', `Low (${stats.low})`],
-            ['MEDIUM', `Medium (${stats.medium})`],
-            ['UNKNOWN', `Unknown (${stats.unknown})`],
-          ] as Array<[ConfidenceBand, string]>).map(([key, label]) => (
+        <div className="flex items-center gap-1.5 text-xs text-slate-600">
+          <span className="text-slate-500">AI qualified</span>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            max={dateTo || undefined}
+            className="border border-slate-200 rounded-md px-2 py-1 text-xs outline-none focus:border-blue-500"
+            title="From date (AI qualified at)"
+          />
+          <span className="text-slate-400">→</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            min={dateFrom || undefined}
+            className="border border-slate-200 rounded-md px-2 py-1 text-xs outline-none focus:border-blue-500"
+            title="To date (AI qualified at)"
+          />
+          {(dateFrom || dateTo) && (
             <button
-              key={key}
-              onClick={() => setBandFilter(key)}
-              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                bandFilter === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="text-slate-400 hover:text-slate-700 px-1"
+              title="Clear date range"
             >
-              {label}
+              ×
             </button>
-          ))}
+          )}
         </div>
+        {filtersActive && (
+          <button
+            onClick={() => { setBandFilter('ALL'); setSearch(''); setDateFrom(''); setDateTo(''); }}
+            className="text-xs text-slate-500 hover:text-slate-800 transition-colors px-2 py-1 border border-slate-200 rounded-md"
+          >
+            Clear all
+          </button>
+        )}
         {filtered.length > 0 && (
           <button
             onClick={toggleSelectAll}
@@ -281,9 +385,13 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
       {filtered.length === 0 ? (
         <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center">
           <CheckCircle2 className="w-10 h-10 text-emerald-300 mx-auto mb-3" />
-          <div className="text-sm font-medium text-slate-700">All caught up</div>
+          <div className="text-sm font-medium text-slate-700">
+            {filtersActive && queue.length > 0 ? 'No leads match your filters' : 'All caught up'}
+          </div>
           <div className="text-xs text-slate-500 mt-1">
-            No AI-qualified leads are waiting for human verification.
+            {filtersActive && queue.length > 0
+              ? `${queue.length} leads pending review — try clearing filters or widening the date range.`
+              : 'No AI-qualified leads are waiting for human verification.'}
           </div>
         </div>
       ) : (
@@ -411,19 +519,39 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
   );
 }
 
-function KpiCard({ label, value, icon, tone }: { label: string; value: number; icon: React.ReactNode; tone: 'slate' | 'rose' | 'amber' }) {
-  const tones: Record<string, string> = {
-    slate: 'bg-slate-50 text-slate-700 border-slate-200',
-    rose: 'bg-rose-50 text-rose-700 border-rose-200',
-    amber: 'bg-amber-50 text-amber-700 border-amber-200',
+function KpiCard({
+  label,
+  value,
+  icon,
+  tone,
+  active,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+  tone: 'slate' | 'rose' | 'amber';
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const tones: Record<string, { base: string; activeRing: string }> = {
+    slate: { base: 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-400', activeRing: 'ring-2 ring-slate-400 border-slate-400' },
+    rose: { base: 'bg-rose-50 text-rose-700 border-rose-200 hover:border-rose-400', activeRing: 'ring-2 ring-rose-400 border-rose-400' },
+    amber: { base: 'bg-amber-50 text-amber-700 border-amber-200 hover:border-amber-400', activeRing: 'ring-2 ring-amber-400 border-amber-400' },
   };
+  const t = tones[tone];
   return (
-    <div className={`border rounded-xl p-3 ${tones[tone]}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className={`text-left border rounded-xl p-3 transition-all ${t.base} ${active ? t.activeRing : ''} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
+    >
       <div className="flex items-center gap-2 text-xs font-medium opacity-80">
         {icon}
         {label}
       </div>
       <div className="text-2xl font-bold mt-1">{value}</div>
-    </div>
+    </button>
   );
 }

@@ -8,4 +8,5 @@ coverage/
 .env*
 !.env.example
 .sinteriq-encryption-key
+.sinteriq-auth-secret
 .tmp_docx/

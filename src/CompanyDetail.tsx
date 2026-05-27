@@ -419,14 +419,25 @@ export default function CompanyDetail({
     }
   };
 
-  const handleAIQualify = async () => {
+  const handleAIQualify = async (force = false) => {
     setQualifying(true);
     try {
-      const res = await fetch(`/api/companies/${companyId}/ai-qualify?force=true`, { method: 'POST' });
+      const qs = force ? '?force=true' : '';
+      const res = await fetch(`/api/companies/${companyId}/ai-qualify${qs}`, { method: 'POST' });
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || 'AI qualification failed');
       setCompany(payload);
       setCompanyForm(payload);
+      if (payload?.skipped) {
+        setQualifying(false);
+        const reason = payload.skipReason || 'Recently qualified.';
+        if (confirm(`${reason}\n\nRe-run AI qualification anyway? (uses API credits)`)) {
+          void handleAIQualify(true);
+        } else {
+          showToast('info', 'Using cached qualification', reason);
+        }
+        return;
+      }
       // Refresh contacts (AI may have added new ones)
       await fetchData();
       await onDataChanged?.();
