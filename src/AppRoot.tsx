@@ -98,6 +98,15 @@ const CONTACT_GUIDE_ROWS = [
   ['FAQ', 'Be ready to answer why ceramic bearings help, cost expectations, why Sintertechnik is trustworthy, disadvantages versus steel, and delivery time.'],
 ];
 
+function isDateInRange(value: string | null | undefined, from: string, to: string) {
+  if (!from && !to) return true;
+  const dateOnly = getDateOnly(value);
+  if (!dateOnly) return false;
+  if (from && dateOnly < from) return false;
+  if (to && dateOnly > to) return false;
+  return true;
+}
+
 function buildSheetColumns(rows: Array<Array<string | number>>) {
   return rows[0].map((_, columnIndex) => {
     const width = rows.reduce((maxWidth, row) => {
@@ -336,8 +345,7 @@ export default function AppRoot() {
     if (aiQualFilter === 'ENRICHED' && company.lead_status !== 'ENRICHED') return false;
     if (aiQualFilter === 'QUALIFIED_NO_AI' && !(company.lead_status === 'QUALIFIED' && !company.ai_qualified_at)) return false;
     if (aiQualFilter === 'NEEDS_REVIEW' && !(company.ai_qualified_at && !company.human_reviewed && (company.ai_confidence === null || company.ai_confidence === undefined || (typeof company.ai_confidence === 'number' && company.ai_confidence < 70)))) return false;
-    if (dateFrom && company.updated_at && company.updated_at < dateFrom) return false;
-    if (dateTo && company.updated_at && company.updated_at > dateTo + 'T23:59:59') return false;
+    if (!isDateInRange(company.updated_at, dateFrom, dateTo)) return false;
     if (!searchQuery.trim()) return true;
     const haystack = [company.company_name, company.country, company.city, company.industry, company.company_type, company.assigned_to]
       .filter(Boolean).join(' ').toLowerCase();
@@ -412,10 +420,10 @@ export default function AppRoot() {
     }
   };
 
-  const openCompany = (id: number, tab = 'overview') => {
+  const openCompany = (id: number, tab = 'overview', returnTab = activeTab) => {
     setInitialTab(tab);
     setSelectedCompanyId(id);
-    setActiveTab('companies');
+    setActiveTab(returnTab);
     setSearchQuery('');
     setShowSearchDropdown(false);
   };
@@ -541,18 +549,29 @@ export default function AppRoot() {
   };
 
   const handleBulkAIQualify = async () => {
-    const rawLeads = filteredCompanies.filter((c: any) => c.lead_status === 'RAW');
+    const selectedRawLeads = selectedIds.size > 0
+      ? filteredCompanies.filter((c: any) => selectedIds.has(c.id) && c.lead_status === 'RAW')
+      : [];
+    const rawLeads = selectedIds.size > 0
+      ? selectedRawLeads
+      : filteredCompanies.filter((c: any) => c.lead_status === 'RAW' && !c.ai_qualified_at);
     if (rawLeads.length === 0) {
-      showToast('info', 'No RAW leads', 'No unqualified RAW leads found in the current view.');
+      showToast('info', 'No RAW leads', selectedIds.size > 0 ? 'Selected rows do not include RAW leads.' : 'No unqualified RAW leads found in the current view.');
       return;
     }
-    if (!confirm(`Run AI qualification on ${rawLeads.length} RAW leads in parallel (3 at a time)?`)) return;
+    const BULK_AI_LIMIT = 50;
+    const leadsToRun = rawLeads.slice(0, BULK_AI_LIMIT);
+    const limitNote = rawLeads.length > BULK_AI_LIMIT
+      ? `\n\nCost guard: only the first ${BULK_AI_LIMIT} leads will run now. Narrow the filter or select specific rows for the next batch.`
+      : '';
+    const scopeNote = selectedIds.size > 0 ? 'selected RAW leads' : 'RAW leads in the current filter';
+    if (!confirm(`Run AI qualification on ${leadsToRun.length} ${scopeNote}?\n\nThis uses API credits. SinterIQ will run the local and cheap pre-classifiers first, then deep AI only when needed.${limitNote}`)) return;
     setBulkQualifying(true);
     bulkQualifyCancelRef.current = false;
-    setBulkQualifyProgress({ done: 0, total: rawLeads.length });
+    setBulkQualifyProgress({ done: 0, total: leadsToRun.length });
 
-    const CONCURRENCY = 3;
-    const queue = [...rawLeads];
+    const CONCURRENCY = 2;
+    const queue = [...leadsToRun];
     let done = 0;
     let successCount = 0;
     let failCount = 0;
@@ -577,7 +596,7 @@ export default function AppRoot() {
           failCount++;
         }
         done++;
-        setBulkQualifyProgress({ done, total: rawLeads.length });
+        setBulkQualifyProgress({ done, total: leadsToRun.length });
       }
     };
 
@@ -661,7 +680,7 @@ export default function AppRoot() {
       setShowCompanyForm(false);
       setCompanyForm(emptyCompanyForm);
       showToast('success', 'Company created', payload.company_name);
-      openCompany(payload.id);
+      openCompany(payload.id, 'overview', 'companies');
     } catch (error) {
       console.error(error);
       showToast('error', 'Failed to create company', error instanceof Error ? error.message : '');

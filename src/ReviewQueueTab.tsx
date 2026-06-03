@@ -18,6 +18,7 @@ import { Company } from './appTypes';
 import { showToast } from './Toast';
 import { leadPriorityOptions } from './companyData';
 import DisqualifyModal from './DisqualifyModal';
+import { getDateOnly } from './formatters';
 
 interface Props {
   companies: Company[];
@@ -30,9 +31,36 @@ type StatusTab = 'PENDING' | 'QUALIFIED' | 'NON_QUALIFIED';
 
 const LOW_CONFIDENCE_THRESHOLD = 70;
 const MEDIUM_CONFIDENCE_FLOOR = 50;
+const REVIEW_QUEUE_STATE_KEY = 'sinteriq_review_queue_state';
+
+interface PersistedReviewQueueState {
+  bandFilter?: ConfidenceBand;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+  statusTab?: StatusTab;
+}
+
+function loadReviewQueueState(): PersistedReviewQueueState {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(REVIEW_QUEUE_STATE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isAiDisqualifiedPendingReview(c: Company): boolean {
+  if (c.human_reviewed) return false;
+  if (c.lead_status !== 'DISQUALIFIED') return false;
+  if (!c.ai_qualified_at) return false;
+  const by = (c.disqualified_by || '').toLowerCase();
+  return !by || by.includes('ai') || by.includes('prefilter');
+}
 
 function needsReview(c: Company): boolean {
   if (c.human_reviewed) return false;
+  if (isAiDisqualifiedPendingReview(c)) return true;
   if (c.lead_status === 'DISQUALIFIED') return false;
   if (!c.ai_qualified_at) return false;
   if (c.ai_confidence === null || c.ai_confidence === undefined) return true;
@@ -45,9 +73,7 @@ function isQualifiedByHuman(c: Company): boolean {
 
 function isDisqualifiedByHuman(c: Company): boolean {
   if (c.lead_status !== 'DISQUALIFIED') return false;
-  const by = (c.disqualified_by || '').toLowerCase();
-  // Exclude AI pre-classifier / AI qualifier disqualifications — those live on the "Not a Target" tab.
-  return Boolean(by) && !by.includes('ai');
+  return Boolean(c.human_reviewed);
 }
 
 function confidenceBand(c: Company): ConfidenceBand {
@@ -57,11 +83,12 @@ function confidenceBand(c: Company): ConfidenceBand {
 }
 
 export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpdated }: Props) {
-  const [statusTab, setStatusTab] = useState<StatusTab>('PENDING');
-  const [bandFilter, setBandFilter] = useState<ConfidenceBand>('ALL');
-  const [search, setSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const persistedState = useMemo(loadReviewQueueState, []);
+  const [statusTab, setStatusTab] = useState<StatusTab>(persistedState.statusTab || 'PENDING');
+  const [bandFilter, setBandFilter] = useState<ConfidenceBand>(persistedState.bandFilter || 'ALL');
+  const [search, setSearch] = useState(persistedState.search || '');
+  const [dateFrom, setDateFrom] = useState(persistedState.dateFrom || '');
+  const [dateTo, setDateTo] = useState(persistedState.dateTo || '');
   const [disqualifyTarget, setDisqualifyTarget] = useState<{ id: number; name: string } | null>(null);
   const [disqualifying, setDisqualifying] = useState(false);
   const [marking, setMarking] = useState<number | null>(null);
@@ -83,18 +110,26 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
   // Clear selection when switching tabs — actions differ between tabs.
   useEffect(() => { setSelectedIds(new Set()); setExpandedNoteId(null); }, [statusTab]);
 
+  useEffect(() => {
+    sessionStorage.setItem(REVIEW_QUEUE_STATE_KEY, JSON.stringify({
+      bandFilter,
+      dateFrom,
+      dateTo,
+      search,
+      statusTab,
+    }));
+  }, [bandFilter, dateFrom, dateTo, search, statusTab]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const fromTs = dateFrom ? new Date(dateFrom + 'T00:00:00').getTime() : null;
-    const toTs = dateTo ? new Date(dateTo + 'T23:59:59.999').getTime() : null;
     return activePool.filter((c) => {
       // Confidence band only meaningful for Pending — Qualified/Non-Qualified ignore it.
       if (statusTab === 'PENDING' && bandFilter !== 'ALL' && confidenceBand(c) !== bandFilter) return false;
-      if (fromTs !== null || toTs !== null) {
-        const ts = c.ai_qualified_at ? new Date(c.ai_qualified_at).getTime() : NaN;
-        if (Number.isNaN(ts)) return false;
-        if (fromTs !== null && ts < fromTs) return false;
-        if (toTs !== null && ts > toTs) return false;
+      if (dateFrom || dateTo) {
+        const dateOnly = getDateOnly(c.ai_qualified_at);
+        if (!dateOnly) return false;
+        if (dateFrom && dateOnly < dateFrom) return false;
+        if (dateTo && dateOnly > dateTo) return false;
       }
       if (!q) return true;
       const haystack = [c.company_name, c.country, c.city, c.industry, c.qualification_notes, c.opportunity_notes, c.disqualification_reason, c.human_review_notes]
@@ -228,7 +263,7 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || 'Failed to restore');
       onCompanyUpdated(payload);
-      showToast('success', 'Lead restored to Pending');
+      showToast('success', 'Lead restored to Enriched');
     } catch (err) {
       showToast('error', 'Restore failed', err instanceof Error ? err.message : '');
     } finally {
@@ -504,6 +539,7 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
         <div className="space-y-3">
           {filtered.map((c) => {
             const priorityLabel = leadPriorityOptions.find((p) => p.value === c.lead_priority)?.label || c.lead_priority || 'Unclassified';
+            const isPendingAiDisqualified = statusTab === 'PENDING' && isAiDisqualifiedPendingReview(c);
             return (
               <div
                 key={c.id}
@@ -530,6 +566,11 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
                         {c.company_name}
                       </button>
                       {renderConfidenceBadge(c)}
+                      {isPendingAiDisqualified && (
+                        <span className="px-2 py-0.5 text-[11px] rounded border bg-rose-50 text-rose-700 border-rose-200">
+                          AI disqualified
+                        </span>
+                      )}
                       {c.lead_priority && (
                         <span className={`px-2 py-0.5 text-[11px] rounded border ${
                           c.lead_priority === 'HIGH_PRIORITY' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -587,14 +628,25 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
                   <div className="shrink-0 flex flex-col gap-2 min-w-[160px]">
                     {statusTab === 'PENDING' && (
                       <>
+                        {isPendingAiDisqualified && (
+                          <button
+                            onClick={() => void handleRestore(c.id)}
+                            disabled={marking === c.id}
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-medium rounded-md transition-colors"
+                            title="Clear AI disqualification and move this lead back to Enriched"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            {marking === c.id ? 'Restoring...' : 'Restore as Enriched'}
+                          </button>
+                        )}
                         <button
-                          onClick={() => void handleMarkReviewed(c.id, noteDraft[c.id])}
+                          onClick={() => void handleMarkReviewed(c.id, isPendingAiDisqualified ? (noteDraft[c.id] || 'Confirmed AI disqualification') : noteDraft[c.id])}
                           disabled={marking === c.id}
                           className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-medium rounded-md transition-colors"
                           title={noteDraft[c.id] ? 'Mark reviewed with your note' : 'Mark reviewed'}
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          {marking === c.id ? 'Saving…' : noteDraft[c.id] ? 'Mark with note' : 'Looks good'}
+                          {marking === c.id ? 'Saving...' : isPendingAiDisqualified ? 'Confirm Not Target' : noteDraft[c.id] ? 'Mark with note' : 'Looks good'}
                         </button>
                         <button
                           onClick={() => setDisqualifyTarget({ id: c.id, name: c.company_name })}

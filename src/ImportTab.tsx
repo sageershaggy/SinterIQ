@@ -40,6 +40,22 @@ interface ColumnMapping {
   appField: string;
 }
 
+function formatImportSummary(result: any, label: string, fallbackTotal: number, suffix = '') {
+  const total = result.total ?? fallbackTotal;
+  const processed = result.processed ?? result.imported ?? fallbackTotal;
+  const parts = [
+    `${result.created ?? 0} new`,
+    `${result.merged ?? 0} merged`,
+  ];
+  if (result.duplicate_rows) parts.push(`${result.duplicate_rows} duplicate rows collapsed`);
+  if (result.contacts_created) parts.push(`${result.contacts_created} contacts added`);
+  if (result.skipped) parts.push(`${result.skipped} skipped`);
+  if (result.failed) parts.push(`${result.failed} failed`);
+
+  const prefix = result.partial || result.failed ? 'Partially imported' : 'Successfully imported';
+  return `${prefix} ${processed} of ${total} ${label}${suffix} (${parts.join(', ')}).`;
+}
+
 const APP_FIELDS = [
   { value: '', label: '-- Skip --' },
   { value: 'company_name', label: 'Company Name' },
@@ -98,10 +114,7 @@ export default function ImportTab({ onImportComplete }: ImportTabProps) {
       });
       if (!response.ok) throw new Error('Import failed');
       const result = await response.json();
-      const detail = result.created !== undefined && result.merged !== undefined
-        ? ` (${result.created} new, ${result.merged} merged into existing records)`
-        : '';
-      setResult({ success: true, message: `Successfully imported ${result.total || result.imported || rows.length} companies from D&B Hoovers${detail}.` });
+      setResult({ success: !result.partial && !result.failed, message: formatImportSummary(result, 'companies from D&B Hoovers', rows.length) });
       onImportComplete();
     } catch (err) {
       setResult({ success: false, message: 'Failed to import D&B Hoovers file. Check the file format.' });
@@ -167,12 +180,9 @@ export default function ImportTab({ onImportComplete }: ImportTabProps) {
       if (!response.ok) throw new Error('Import failed');
       const res = await response.json();
       const contactCount = Array.from(companyMap.values()).reduce((sum, c) => sum + c.contacts.length, 0);
-      const detail = res.created !== undefined && res.merged !== undefined
-        ? ` (${res.created} new, ${res.merged} merged into existing records)`
-        : '';
       setResult({
-        success: true,
-        message: `Imported ${res.total || res.imported || companyMap.size} companies${detail} and ${contactCount} contacts from LinkedIn.`,
+        success: !res.partial && !res.failed,
+        message: formatImportSummary(res, 'companies from LinkedIn', companyMap.size, ` with ${contactCount} contacts in the file`),
       });
       onImportComplete();
     } catch (err) {
@@ -272,10 +282,7 @@ export default function ImportTab({ onImportComplete }: ImportTabProps) {
       });
       if (!response.ok) throw new Error('Import failed');
       const res = await response.json();
-      const detail = res.created !== undefined && res.merged !== undefined
-        ? ` (${res.created} new, ${res.merged} merged into existing records)`
-        : '';
-      setResult({ success: true, message: `Successfully imported ${res.total || importPayload.length} companies from CSV${detail}.` });
+      setResult({ success: !res.partial && !res.failed, message: formatImportSummary(res, 'companies from CSV', importPayload.length) });
       setShowMapping(false);
       onImportComplete();
     } catch (err) {

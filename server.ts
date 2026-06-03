@@ -113,7 +113,7 @@ function maskSecret(value: string | null | undefined): string {
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 
 // =========================================================================
 // Session authentication — HMAC-signed httpOnly cookie
@@ -410,8 +410,16 @@ function transliterateGerman(value: string) {
     .replace(/Ü/g, 'ue');
 }
 
+function transliterateGermanForMatch(value: string) {
+  return transliterateGerman(value)
+    .replace(/ß/g, 'ss')
+    .replace(/[äÄ]/g, 'ae')
+    .replace(/[öÖ]/g, 'oe')
+    .replace(/[üÜ]/g, 'ue');
+}
+
 function normalizeCompanyNameForMatch(value: unknown) {
-  const transliterated = transliterateGerman(normalizeRequiredString(value));
+  const transliterated = transliterateGermanForMatch(normalizeRequiredString(value));
   const normalizedValue = transliterated
     .toLowerCase()
     .replace(/&/g, ' and ')
@@ -846,6 +854,66 @@ Only mark LIKELY_NOT_TARGET if confidence >= 75 and the evidence is clear. When 
     console.warn('Pre-classify failed, falling through to deep qualify:', err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+function localPreClassifyLead(company: { company_name: string; industry?: string | null; company_type?: string | null }) {
+  const text = [
+    company.company_name,
+    company.industry || '',
+    company.company_type || '',
+  ].join(' ').toLowerCase();
+  const compact = text.replace(/[\s._-]+/g, ' ');
+  const isManufacturerLike = /\b(manufacturer|manufacturing|producer|produktion|oem)\b/i.test(compact);
+
+  const checks: Array<{ category: string; confidence: number; pattern: RegExp; reason: string; skipIfManufacturer?: boolean }> = [
+    {
+      category: 'COMPETITOR',
+      confidence: 90,
+      pattern: /\b(kugellagerfabrik|waelzlagertechnik|wälzlagertechnik|bearing manufacturer|precision bearings)\b/i,
+      reason: 'Name strongly indicates an in-house bearing manufacturer or bearing factory.',
+    },
+    {
+      category: 'SALES_BRANCH',
+      confidence: 84,
+      pattern: /\b(vertriebs\s*gmbh|vertriebsgesellschaft|sales office|sales branch)\b/i,
+      reason: 'Name indicates a sales or distribution branch with no local design authority.',
+    },
+    {
+      category: 'WHOLESALER_TRADER',
+      confidence: 82,
+      pattern: /\b(großhandel|grosshandel|versandhandel|handelsgesellschaft|mail order|wholesale|retail)\b/i,
+      reason: 'Name or type indicates a pure wholesaler, retailer, or mail-order trader.',
+      skipIfManufacturer: true,
+    },
+    {
+      category: 'SERVICE_MRO',
+      confidence: 80,
+      pattern: /\b(dienstleistungen|services\s*gmbh|service\s*gmbh|logistik|mro|repair shop)\b/i,
+      reason: 'Name or type indicates a service, logistics, or MRO-only business.',
+      skipIfManufacturer: true,
+    },
+    {
+      category: 'EPC_INTEGRATOR',
+      confidence: 80,
+      pattern: /\b(epc|systemintegrator|system integrator|projektentwickler|gebäudetechnik|gebaeudetechnik|installation|installer)\b/i,
+      reason: 'Name or type indicates an EPC, system integrator, or installer using third-party components.',
+      skipIfManufacturer: true,
+    },
+  ];
+
+  for (const check of checks) {
+    if (check.skipIfManufacturer && isManufacturerLike) continue;
+    if (check.pattern.test(compact)) {
+      return {
+        verdict: 'LIKELY_NOT_TARGET',
+        category: check.category,
+        confidence: check.confidence,
+        reason: check.reason,
+      };
+    }
+  }
+
+  return null;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -1531,12 +1599,12 @@ app.get('/api/companies/paged', (req, res) => {
       params.push(Number(q.max_score));
     }
     if (q.date_from) {
-      where.push('c.updated_at >= ?');
+      where.push('date(c.updated_at) >= date(?)');
       params.push(q.date_from);
     }
     if (q.date_to) {
-      where.push('c.updated_at <= ?');
-      params.push(`${q.date_to}T23:59:59`);
+      where.push('date(c.updated_at) <= date(?)');
+      params.push(q.date_to);
     }
 
     switch (q.ai_qual) {
@@ -2972,6 +3040,36 @@ app.post('/api/companies/:id/ai-qualify', async (req, res) => {
 
     // Two-pass: cheap pre-classifier first. If it strongly says NOT_A_TARGET, skip the deep prompt.
     if (!skipPrefilter) {
+      const localPreCheck = localPreClassifyLead(company);
+      if (localPreCheck && localPreCheck.verdict === 'LIKELY_NOT_TARGET' && (localPreCheck.confidence || 0) >= 75) {
+        const reason = localPreCheck.reason || 'Local pre-filter identified this as not a target';
+        db.prepare(`
+          UPDATE companies
+          SET lead_score = 0,
+              technical_fit = 'NOT_FIT',
+              qualification_notes = ?,
+              lead_status = 'DISQUALIFIED',
+              lead_priority = 'NOT_A_TARGET',
+              ai_confidence = ?,
+              ai_qualified_at = CURRENT_TIMESTAMP,
+              disqualification_reason = ?,
+              disqualification_category = ?,
+              disqualified_by = 'SinterIQ Local Prefilter',
+              disqualified_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(
+          `[Local pre-filter ${localPreCheck.confidence}% confidence] ${reason}`,
+          normalizeNullableNumber(localPreCheck.confidence),
+          reason,
+          localPreCheck.category || 'LOW_FIT',
+          companyId,
+        );
+        const updated = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as Record<string, unknown>;
+        console.log(`AI Qualify (local SHORT-CIRCUIT) ${company.company_name}: ${localPreCheck.category} @ ${localPreCheck.confidence}%`);
+        return res.json({ ...updated, prefiltered: true, local_prefiltered: true });
+      }
+
       const previewContext = await fetchWebsiteContext(company.website, { paths: [''], perPageCap: 800, totalCap: 800 });
       const preCheck = await preClassifyLead(company, previewContext);
       if (preCheck && preCheck.verdict === 'LIKELY_NOT_TARGET' && (preCheck.confidence || 0) >= 75) {
@@ -3333,13 +3431,230 @@ app.put('/api/companies/:id/social-profiles', (req, res) => {
   }
 });
 
+type ImportCompanyMatch = {
+  company_name: string;
+  id: number;
+  matchedBy: 'website' | 'name' | 'fuzzy_name';
+  source: 'database' | 'upload';
+};
+
+function buildCompanyMatchCache() {
+  const rows = db.prepare(`
+    SELECT id, company_name, company_name_key, website_key
+    FROM companies
+    WHERE company_name_key IS NOT NULL OR website_key IS NOT NULL
+  `).all() as Array<{ id: number; company_name: string; company_name_key: string | null; website_key: string | null }>;
+
+  const websiteMap = new Map<string, ImportCompanyMatch>();
+  const nameMap = new Map<string, ImportCompanyMatch>();
+  const candidates: Array<{ company_name: string; company_name_key: string; id: number; source: 'database' | 'upload' }> = [];
+
+  const add = (row: { company_name: string; company_name_key?: string | null; id: number; source?: 'database' | 'upload'; website_key?: string | null }) => {
+    const source = row.source || 'database';
+    if (row.website_key && !websiteMap.has(row.website_key)) {
+      websiteMap.set(row.website_key, { id: row.id, company_name: row.company_name, matchedBy: 'website', source });
+    }
+    if (row.company_name_key) {
+      if (!nameMap.has(row.company_name_key)) {
+        nameMap.set(row.company_name_key, { id: row.id, company_name: row.company_name, matchedBy: 'name', source });
+      }
+      candidates.push({ id: row.id, company_name: row.company_name, company_name_key: row.company_name_key, source });
+    }
+  };
+
+  for (const row of rows) add(row);
+
+  const find = (name: unknown, website: unknown): ImportCompanyMatch | null => {
+    const normalizedWebsiteHost = normalizeWebsiteHost(website);
+    const normalizedName = normalizeCompanyNameForMatch(name);
+
+    if (normalizedWebsiteHost) {
+      const websiteMatch = websiteMap.get(normalizedWebsiteHost);
+      if (websiteMatch) return websiteMatch;
+    }
+    if (!normalizedName) return null;
+
+    const exactNameMatch = nameMap.get(normalizedName);
+    if (exactNameMatch) return exactNameMatch;
+
+    const threshold = normalizedName.length < 8 ? FUZZY_THRESHOLD_SHORT : FUZZY_THRESHOLD_LONG;
+    const compactInput = normalizedName.replace(/\s+/g, '');
+    const compactInputStripped = stripCompactLegalSuffix(compactInput);
+
+    let bestMatch: ImportCompanyMatch & { similarity: number } | null = null;
+    for (const c of candidates) {
+      const compactCandidate = c.company_name_key.replace(/\s+/g, '');
+      const compactCandidateStripped = stripCompactLegalSuffix(compactCandidate);
+      const sim = Math.max(
+        nameSimilarity(normalizedName, c.company_name_key),
+        nameSimilarity(compactInput, compactCandidate),
+        nameSimilarity(compactInputStripped, compactCandidateStripped),
+        nameSimilarity(compactInputStripped, compactCandidate),
+        nameSimilarity(compactInput, compactCandidateStripped),
+      );
+      if (sim >= threshold && (!bestMatch || sim > bestMatch.similarity)) {
+        bestMatch = {
+          id: c.id,
+          company_name: c.company_name,
+          matchedBy: 'fuzzy_name',
+          source: c.source,
+          similarity: sim,
+        };
+      }
+    }
+    return bestMatch;
+  };
+
+  return { add, find };
+}
+
+function stripCompactLegalSuffix(value: string) {
+  return ['gmbh', 'mbh', 'ag', 'kg', 'co', 'ltd', 'inc', 'llc'].reduce((acc, suffix) => {
+    if (acc.endsWith(suffix) && acc.length > suffix.length + 2) return acc.slice(0, -suffix.length);
+    return acc;
+  }, value);
+}
+
+function importString(data: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = data[key];
+    if (value !== null && value !== undefined && String(value).trim() && String(value).trim().toUpperCase() !== 'N/A') {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+function parseImportInteger(value: unknown) {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) return null;
+  const parsed = Number(normalized.replace(/[^\d.-]/g, ''));
+  return Number.isFinite(parsed) ? Math.round(parsed) : null;
+}
+
+function parseImportRevenue(value: unknown) {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) return null;
+  const text = normalized.replace(/[€$£,\s]/g, '').toLowerCase();
+  const match = text.match(/([\d.]+)(bn|b|mio|million|m|k)?/);
+  if (!match) return null;
+  let amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  const suffix = match[2] || '';
+  if (suffix === 'bn' || suffix === 'b') amount *= 1_000_000_000;
+  else if (suffix === 'mio' || suffix === 'million' || suffix === 'm') amount *= 1_000_000;
+  else if (suffix === 'k') amount *= 1_000;
+  return amount;
+}
+
+function inferRegion(country: string) {
+  const value = country.trim().toLowerCase();
+  if (['uae', 'united arab emirates', 'ae', 'saudi arabia', 'qatar', 'oman', 'bahrain', 'kuwait'].includes(value)) return 'GCC';
+  if (['de', 'germany', 'deutschland', 'austria', 'switzerland', 'ch', 'at'].includes(value)) return 'DACH';
+  if (['united kingdom', 'uk', 'ireland', 'gb'].includes(value)) return 'UK_IE';
+  return 'Unknown';
+}
+
+function extractCityFromAddress(address: string) {
+  const parts = address.split(',').map((part) => part.trim()).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 2] : '';
+}
+
+function normalizeImportedContacts(data: Record<string, unknown>) {
+  const contacts: Array<{ email: string; full_name: string; job_title: string; linkedin_url: string; phone_direct: string }> = [];
+  const rawContacts = Array.isArray((data as any)._contacts) ? (data as any)._contacts : [];
+
+  for (const contact of rawContacts) {
+    if (!contact || typeof contact !== 'object') continue;
+    const fullName = normalizeOptionalString((contact as any).full_name);
+    if (!fullName) continue;
+    contacts.push({
+      full_name: fullName,
+      job_title: normalizeOptionalString((contact as any).job_title) || '',
+      email: normalizeOptionalString((contact as any).email) || '',
+      phone_direct: normalizeOptionalString((contact as any).phone_direct) || '',
+      linkedin_url: normalizeOptionalString((contact as any).linkedin_url) || '',
+    });
+  }
+
+  const firstName = importString(data, ['First Name']);
+  const lastName = importString(data, ['Last Name']);
+  const flatName = importString(data, ['Contact Name', 'Contact Full Name', 'Full Name', 'Name']) || `${firstName} ${lastName}`.trim();
+  if (flatName) {
+    contacts.push({
+      full_name: flatName,
+      job_title: importString(data, ['Contact Job Title', 'Job Title', 'Title', 'Position']),
+      email: importString(data, ['Contact Email', 'Email', 'Email Address']),
+      phone_direct: importString(data, ['Phone (Main)', 'Contact Phone', 'Phone', 'Telephone']),
+      linkedin_url: importString(data, ['Contact, Phone, LinkedIn,', 'LinkedIn URL', 'Person Linkedin Url', 'Profile URL']),
+    });
+  }
+
+  const seen = new Set<string>();
+  return contacts.filter((contact) => {
+    const key = contactIdentityKey(contact);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function contactIdentityKey(contact: { email?: string; full_name?: string; job_title?: string; linkedin_url?: string }) {
+  const email = normalizeOptionalString(contact.email)?.toLowerCase();
+  if (email) return `email:${email}`;
+  const linkedin = normalizeOptionalString(contact.linkedin_url)?.toLowerCase().replace(/\/+$/, '');
+  if (linkedin) return `linkedin:${linkedin}`;
+  const name = normalizeCompanyNameForMatch(contact.full_name);
+  if (!name) return '';
+  return `name:${name}|${normalizeComparableValue(contact.job_title)}`;
+}
+
+function normalizeImportCompany(data: Record<string, unknown>) {
+  const companyName = importString(data, ['Company Name', 'Trade Name', 'Company', 'Account Name']);
+  const country = importString(data, ['Country/Territory', 'Country', 'Geography', 'Company HQ Country']) || 'Unknown';
+  const address = importString(data, ['Address', 'Street Address', 'Company Address']);
+  const city = importString(data, ['City', 'Company HQ City']) || extractCityFromAddress(address);
+  const region = importString(data, ['Region']) || inferRegion(country);
+  const industry = importString(data, ['Primary Industry', 'Industry']) || 'Unknown';
+  const companyType = importString(data, ['Type of Activity', 'Company Type', 'Type', 'Business Role']) || 'Unknown';
+  const website = importString(data, ['Web Address', 'Website', 'Company Website', 'URL']);
+  const notes = importString(data, ['Notes', 'Qualification Notes']);
+
+  return {
+    address,
+    city,
+    companyName,
+    companyType,
+    contacts: normalizeImportedContacts(data),
+    corporateParent: importString(data, ['Global Ultimate Parent', 'Corporate Family', 'Corporate Parent', 'Parent Company']),
+    country,
+    dunsNumber: importString(data, ['D-U-N-S Number', 'DUNS', 'Duns Number']),
+    employeeCount: parseImportInteger(importString(data, ['Number of Employees (Single Site)', 'Employee Count', 'Employees', 'Company Headcount', '# Employees'])),
+    industry,
+    notes,
+    region,
+    revenue: parseImportRevenue(importString(data, ['Revenue', 'Sales', 'Annual Revenue'])),
+    website,
+  };
+}
+
 app.post('/api/companies/import', (req, res) => {
   try {
-    const { companies } = req.body;
+    const companies = Array.isArray(req.body?.companies) ? req.body.companies : null;
+    if (!companies) {
+      return res.status(400).json({ error: 'companies must be an array' });
+    }
+    if (companies.length > 10000) {
+      return res.status(400).json({ error: 'Import limit is 10,000 rows per upload' });
+    }
     
     const insertCompany = db.prepare(`
-      INSERT INTO companies (company_name, country, city, region, industry, company_type, employee_count, revenue_eur, website, corporate_parent, source, lead_status, qualification_notes, company_name_key, website_key, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO companies (
+        company_name, country, address, city, region, industry, company_type,
+        employee_count, revenue_eur, website, duns_number, corporate_parent,
+        source, lead_status, qualification_notes, company_name_key, website_key, created_by
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const insertContact = db.prepare(`
@@ -3347,108 +3662,168 @@ app.post('/api/companies/import', (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const updateExistingCompany = db.prepare(`
+      UPDATE companies SET
+        employee_count = COALESCE(?, employee_count),
+        revenue_eur = COALESCE(?, revenue_eur),
+        website = COALESCE(NULLIF(?, ''), website),
+        website_key = COALESCE(NULLIF(?, ''), website_key),
+        duns_number = COALESCE(NULLIF(?, ''), duns_number),
+        corporate_parent = COALESCE(NULLIF(?, ''), corporate_parent),
+        address = COALESCE(NULLIF(?, ''), address),
+        city = COALESCE(NULLIF(?, ''), city),
+        region = COALESCE(NULLIF(?, ''), region),
+        industry = CASE WHEN COALESCE(industry, '') IN ('', 'Unknown') THEN COALESCE(NULLIF(?, ''), industry) ELSE industry END,
+        company_type = CASE WHEN COALESCE(company_type, '') IN ('', 'Unknown') THEN COALESCE(NULLIF(?, ''), company_type) ELSE company_type END,
+        qualification_notes = CASE
+          WHEN COALESCE(qualification_notes, '') = '' THEN COALESCE(NULLIF(?, ''), qualification_notes)
+          ELSE qualification_notes
+        END,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+
+    const selectContactKeys = db.prepare('SELECT full_name, job_title, email, linkedin_url FROM contacts WHERE company_id = ?');
+    const contactKeysByCompany = new Map<number, Set<string>>();
+    const getContactKeys = (companyId: number) => {
+      let keys = contactKeysByCompany.get(companyId);
+      if (!keys) {
+        keys = new Set(
+          (selectContactKeys.all(companyId) as Array<{ email: string; full_name: string; job_title: string; linkedin_url: string }>)
+            .map(contactIdentityKey)
+            .filter(Boolean),
+        );
+        contactKeysByCompany.set(companyId, keys);
+      }
+      return keys;
+    };
+
+    const matchCache = buildCompanyMatchCache();
+    const source = normalizeOptionalString(req.body?.source) || 'DNB_HOOVERS';
+    const importer = getRequestUser(req);
     const results: any[] = [];
+    const errors: Array<{ error: string; row: number }> = [];
+    let skipped = 0;
+    let contactsCreated = 0;
 
     db.transaction(() => {
-      for (const data of companies) {
-        if (!data['Company Name']) continue;
-
-        // Parse revenue (e.g., "25.31M" -> 25310000)
-        let revenue = null;
-        if (data.Revenue) {
-          const match = String(data.Revenue).match(/([\d.]+)([MBK]?)/i);
-          if (match) {
-            let val = parseFloat(match[1]);
-            if (match[2]?.toUpperCase() === 'M') val *= 1000000;
-            if (match[2]?.toUpperCase() === 'B') val *= 1000000000;
-            if (match[2]?.toUpperCase() === 'K') val *= 1000;
-            revenue = val;
+      for (let index = 0; index < companies.length; index++) {
+        try {
+          const rawRow = companies[index];
+          if (!rawRow || typeof rawRow !== 'object') {
+            skipped++;
+            continue;
           }
-        }
 
-        // Extract city from address if possible
-        let city = '';
-        if (data.Address) {
-          const parts = data.Address.split(',');
-          if (parts.length > 1) {
-            city = parts[parts.length - 2].trim();
+          const data = normalizeImportCompany(rawRow as Record<string, unknown>);
+          if (!data.companyName) {
+            skipped++;
+            continue;
           }
-        }
 
-        // Duplicate check by normalized name or website
-        const compName = data['Company Name'].trim();
-        const compWebsite = (data['Website'] || '').trim();
-        const existing = findExistingCompanyByMatch(compName, compWebsite);
+          const existing = matchCache.find(data.companyName, data.website);
+          let companyId: number;
+          if (existing) {
+            companyId = existing.id;
+            updateExistingCompany.run(
+              data.employeeCount,
+              data.revenue,
+              data.website,
+              normalizeWebsiteHost(data.website),
+              data.dunsNumber,
+              data.corporateParent,
+              data.address,
+              data.city,
+              data.region,
+              data.industry,
+              data.companyType,
+              data.notes,
+              companyId,
+            );
+            results.push({
+              id: companyId,
+              name: data.companyName,
+              action: 'merged',
+              matched_by: existing.matchedBy,
+              matched_existing: existing.company_name,
+              within_upload: existing.source === 'upload',
+            });
+          } else {
+            const companyNameKey = normalizeCompanyNameForMatch(data.companyName);
+            const websiteKey = normalizeWebsiteHost(data.website);
+            const info = insertCompany.run(
+              data.companyName,
+              data.country,
+              data.address,
+              data.city,
+              data.region,
+              data.industry,
+              data.companyType,
+              data.employeeCount,
+              data.revenue,
+              data.website,
+              data.dunsNumber,
+              data.corporateParent,
+              source,
+              'RAW',
+              data.notes,
+              companyNameKey,
+              websiteKey,
+              importer,
+            );
+            companyId = Number(info.lastInsertRowid);
+            matchCache.add({
+              id: companyId,
+              company_name: data.companyName,
+              company_name_key: companyNameKey,
+              website_key: websiteKey,
+              source: 'upload',
+            });
+            results.push({ id: companyId, name: data.companyName, action: 'created' });
+          }
 
-        const importer = getRequestUser(req);
-
-        let companyId: number;
-        if (existing) {
-          // Update existing instead of creating duplicate. Refresh dedup keys
-          // in case the imported website fills in a previously-missing key.
-          companyId = existing.id;
-          db.prepare(`
-            UPDATE companies SET employee_count = COALESCE(?, employee_count), revenue_eur = COALESCE(?, revenue_eur),
-            website = COALESCE(NULLIF(?, ''), website), corporate_parent = COALESCE(NULLIF(?, ''), corporate_parent),
-            city = COALESCE(NULLIF(?, ''), city),
-            website_key = COALESCE(NULLIF(?, ''), website_key),
-            updated_at = CURRENT_TIMESTAMP WHERE id = ?
-          `).run(
-            parseInt(data['Employee Count']) || null,
-            revenue,
-            compWebsite,
-            data['Corporate Family'] || '',
-            city,
-            normalizeWebsiteHost(compWebsite),
-            companyId,
-          );
-          results.push({ id: companyId, name: compName, action: 'merged', matched_existing: existing.company_name, matched_by: existing.matchedBy });
-        } else {
-          const info = insertCompany.run(
-            compName,
-            data['Country'] || 'Unknown',
-            city,
-            data['Country'] === 'UAE' ? 'GCC' : 'Unknown',
-            data['Industry'] || 'Unknown',
-            data['Type of Activity'] || 'Unknown',
-            parseInt(data['Employee Count']) || null,
-            revenue,
-            compWebsite,
-            data['Corporate Family'] || '',
-            'DNB_HOOVERS',
-            'RAW',
-            data['Notes'] || '',
-            normalizeCompanyNameForMatch(compName),
-            normalizeWebsiteHost(compWebsite),
-            importer,
-          );
-          companyId = info.lastInsertRowid as number;
-          results.push({ id: companyId, name: compName, action: 'created' });
-        }
-
-        if (data['Contact Name'] && data['Contact Name'] !== 'N/A') {
-          insertContact.run(
-            companyId,
-            data['Contact Name'],
-            data['Contact Job Title'] || '',
-            data['Contact Email'] && data['Contact Email'] !== 'N/A' ? data['Contact Email'] : '',
-            data['Phone (Main)'] && data['Phone (Main)'] !== 'N/A' ? data['Phone (Main)'] : '',
-            data['Contact, Phone, LinkedIn,'] && data['Contact, Phone, LinkedIn,'] !== 'N/A' ? data['Contact, Phone, LinkedIn,'] : '',
-            data['Notes'] || ''
-          );
+          const contactKeys = getContactKeys(companyId);
+          for (const contact of data.contacts) {
+            const key = contactIdentityKey(contact);
+            if (!key || contactKeys.has(key)) continue;
+            insertContact.run(
+              companyId,
+              contact.full_name,
+              contact.job_title,
+              contact.email,
+              contact.phone_direct,
+              contact.linkedin_url,
+              data.notes,
+            );
+            contactKeys.add(key);
+            contactsCreated++;
+          }
+        } catch (error) {
+          errors.push({
+            row: index + 1,
+            error: error instanceof Error ? error.message : 'Unknown import error',
+          });
         }
       }
     })();
 
     const created = results.filter((r) => r.action === 'created').length;
     const merged = results.filter((r) => r.action === 'merged').length;
+    const duplicateRows = results.filter((r) => r.within_upload).length;
     res.json({
-      success: true,
-      total: results.length,
+      success: errors.length === 0,
+      partial: errors.length > 0,
+      total: companies.length,
+      processed: results.length,
       created,
       merged,
-      imported: results.length, // backward compat
-      companies: results,
+      skipped,
+      duplicate_rows: duplicateRows,
+      contacts_created: contactsCreated,
+      failed: errors.length,
+      errors: errors.slice(0, 25),
+      imported: results.length,
+      companies: results.slice(0, 500),
     });
   } catch (error) {
     console.error('Import error:', error);
