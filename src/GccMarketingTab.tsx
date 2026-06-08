@@ -16,6 +16,8 @@ import { Company } from './appTypes';
 import { showToast } from './Toast';
 import { industryOptions } from './companyData';
 import { formatCompactEur } from './formatters';
+import { downloadCsv } from './utils/csvExport';
+import KpiCard from './components/KpiCard';
 
 const GCC_COUNTRY_CODES = new Set(['AE', 'SA', 'QA', 'OM', 'BH', 'KW']);
 const GCC_COUNTRY_NAMES: Record<string, string> = {
@@ -141,17 +143,7 @@ export default function GccMarketingTab({ companies, onCompanyClick }: Props) {
       c.created_by || '',
       c.updated_at || '',
     ]);
-    const bom = '﻿';
-    const csv = bom + [headers, ...rows]
-      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `SinterIQ_GCC_Marketing_${new Date().toISOString().split('T')[0]}_${filtered.length}leads.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(headers, rows, `SinterIQ_GCC_Marketing_${new Date().toISOString().split('T')[0]}_${filtered.length}leads`);
     showToast('success', 'Export ready', `${filtered.length} GCC leads exported`);
   };
 
@@ -386,24 +378,6 @@ export default function GccMarketingTab({ companies, onCompanyClick }: Props) {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function KpiCard({ label, value, icon, tone }: { label: string; value: number; icon: React.ReactNode; tone: 'slate' | 'emerald' | 'violet' | 'sky' }) {
-  const tones: Record<string, string> = {
-    slate: 'bg-slate-50 text-slate-700 border-slate-200',
-    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    violet: 'bg-violet-50 text-violet-700 border-violet-200',
-    sky: 'bg-sky-50 text-sky-700 border-sky-200',
-  };
-  return (
-    <div className={`border rounded-xl p-3 ${tones[tone]}`}>
-      <div className="flex items-center gap-2 text-xs font-medium opacity-80">
-        {icon}
-        {label}
-      </div>
-      <div className="text-2xl font-bold mt-1">{value}</div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Bot, Save, Settings2, ExternalLink, CheckCircle2, Globe } from 'lucide-react';
 import { LlmSettings } from './appTypes';
+import { showConfirm } from './ConfirmDialog';
 
 const defaultSettings: LlmSettings = {
   provider_type: 'gemini',
@@ -841,7 +842,7 @@ export default function SettingsTab() {
   };
 
   const handleClearApiKey = async () => {
-    if (!confirm('Delete the saved API key? AI qualification will stop working until you enter a new one.')) return;
+    if (!(await showConfirm({ title: 'Delete the saved API key?', message: 'AI qualification will stop working until you enter a new one.', confirmText: 'Delete key', tone: 'danger' }))) return;
     setSaving(true);
     setError('');
     setSuccess('');

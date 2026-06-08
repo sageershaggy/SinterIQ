@@ -13,8 +13,14 @@ import {
 import { Company } from './appTypes';
 import { showToast } from './Toast';
 import { disqualificationCategoryOptions } from './companyData';
+import { downloadCsv } from './utils/csvExport';
+import { showConfirm } from './ConfirmDialog';
+import KpiCard from './components/KpiCard';
 
 type SourceFilter = 'ALL' | 'HUMAN' | 'AI';
+
+// Sentinel for the country filter: matches leads that have no country recorded.
+const NO_COUNTRY = '__NO_COUNTRY__';
 
 interface Props {
   companies: Company[];
@@ -38,7 +44,8 @@ function categoryLabel(value?: string | null) {
 }
 
 export default function NotATargetTab({ companies, onCompanyClick, onRestore }: Props) {
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('ALL');
+  // Default to the AI view: this list is primarily the imports the AI disqualified.
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('AI');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [countryFilter, setCountryFilter] = useState('');
   const [search, setSearch] = useState('');
@@ -54,7 +61,13 @@ export default function NotATargetTab({ companies, onCompanyClick, onRestore }: 
       const src = getSource(c);
       if (sourceFilter !== 'ALL' && src !== sourceFilter) return false;
       if (categoryFilter && c.disqualification_category !== categoryFilter) return false;
-      if (countryFilter && c.country !== countryFilter) return false;
+      if (countryFilter) {
+        if (countryFilter === NO_COUNTRY) {
+          if (c.country) return false;
+        } else if (c.country !== countryFilter) {
+          return false;
+        }
+      }
       if (!q) return true;
       const haystack = [c.company_name, c.country, c.city, c.industry, c.disqualification_reason, c.qualification_notes]
         .filter(Boolean).join(' ').toLowerCase();
@@ -84,8 +97,10 @@ export default function NotATargetTab({ companies, onCompanyClick, onRestore }: 
     [notTargets]
   );
 
+  const noCountryCount = useMemo(() => notTargets.filter((c) => !c.country).length, [notTargets]);
+
   const handleRestore = async (id: number) => {
-    if (!confirm('Restore this lead? Status will revert to Enriched and the disqualification reason will be cleared.')) return;
+    if (!(await showConfirm({ title: 'Restore this lead?', message: 'Status will revert to Enriched and the disqualification reason will be cleared.', confirmText: 'Restore' }))) return;
     setRestoringId(id);
     try {
       await onRestore(id);
@@ -118,16 +133,7 @@ export default function NotATargetTab({ companies, onCompanyClick, onRestore }: 
       (c.qualification_notes || '').replace(/[\r\n]+/g, ' '),
       c.website || '',
     ]);
-    const csv = '﻿' + [headers, ...rows]
-      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `SinterIQ_NotATarget_${new Date().toISOString().split('T')[0]}_${filtered.length}leads.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(headers, rows, `SinterIQ_NotATarget_${new Date().toISOString().split('T')[0]}_${filtered.length}leads`);
     showToast('success', 'Export ready', `${filtered.length} not-a-target leads exported`);
   };
 
@@ -198,7 +204,7 @@ export default function NotATargetTab({ companies, onCompanyClick, onRestore }: 
             </option>
           ))}
         </select>
-        {availableCountries.length > 1 && (
+        {(availableCountries.length > 0 || noCountryCount > 0) && (
           <select
             value={countryFilter}
             onChange={(e) => setCountryFilter(e.target.value)}
@@ -206,8 +212,11 @@ export default function NotATargetTab({ companies, onCompanyClick, onRestore }: 
           >
             <option value="">All countries</option>
             {availableCountries.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c} value={c}>{c}{stats.byCountry[c] ? ` (${stats.byCountry[c]})` : ''}</option>
             ))}
+            {noCountryCount > 0 && (
+              <option value={NO_COUNTRY}>No country ({noCountryCount})</option>
+            )}
           </select>
         )}
       </div>
@@ -297,19 +306,3 @@ export default function NotATargetTab({ companies, onCompanyClick, onRestore }: 
   );
 }
 
-function KpiCard({ label, value, icon, tone }: { label: string; value: number; icon: React.ReactNode; tone: 'slate' | 'rose' | 'violet' }) {
-  const tones: Record<string, string> = {
-    slate: 'bg-slate-50 text-slate-700 border-slate-200',
-    rose: 'bg-rose-50 text-rose-700 border-rose-200',
-    violet: 'bg-violet-50 text-violet-700 border-violet-200',
-  };
-  return (
-    <div className={`border rounded-xl p-3 ${tones[tone]}`}>
-      <div className="flex items-center gap-2 text-xs font-medium opacity-80">
-        {icon}
-        {label}
-      </div>
-      <div className="text-2xl font-bold mt-1">{value}</div>
-    </div>
-  );
-}

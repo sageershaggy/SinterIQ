@@ -101,7 +101,7 @@ export default function DisqualifyModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+    <div role="dialog" aria-modal="true" aria-label="Disqualify lead" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg">
         <div className="flex items-start justify-between p-5 border-b border-slate-100">
           <div className="flex items-start gap-3">
@@ -115,7 +115,7 @@ export default function DisqualifyModal({
               )}
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
+          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-600 p-1">
             <X className="w-4 h-4" />
           </button>
         </div>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Euro, Calendar, CheckCircle2, AlertCircle, Plus } from 'lucide-react';
+import { showToast } from './Toast';
 
 export default function CommissionsTab() {
   const [orders, setOrders] = useState<any[]>([]);
@@ -61,7 +62,7 @@ export default function CommissionsTab() {
       fetchData();
     } catch (err) {
       console.error(err);
-      alert('Failed to add order');
+      showToast('error', 'Failed to add order');
     }
   };
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, lazy, Suspense, useCallback } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -32,16 +32,22 @@ import * as XLSX from 'xlsx';
 import { AppUser, Company } from './appTypes';
 import { showToast } from './Toast';
 import CompanyCreateModal, { CompanyFormData, emptyCompanyForm } from './CompanyCreateModal';
-import CompanyDetail from './CompanyDetail';
 import FollowUpsTab from './FollowUpsTab';
-import ImportTab from './ImportTab';
-import KanbanBoard from './KanbanBoard';
-import ResearchTab from './ResearchTab';
-import SettingsTab from './SettingsTab';
-import CommissionAdmin from './CommissionAdmin';
-import GccMarketingTab from './GccMarketingTab';
-import NotATargetTab from './NotATargetTab';
-import ReviewQueueTab from './ReviewQueueTab';
+
+// Heavy, route-specific tabs are code-split so the initial Dashboard bundle
+// stays small. Each loads on demand the first time its tab is opened.
+const CompanyDetail = lazy(() => import('./CompanyDetail'));
+const ImportTab = lazy(() => import('./ImportTab'));
+const KanbanBoard = lazy(() => import('./KanbanBoard'));
+const ResearchTab = lazy(() => import('./ResearchTab'));
+const SettingsTab = lazy(() => import('./SettingsTab'));
+const CommissionAdmin = lazy(() => import('./CommissionAdmin'));
+const GccMarketingTab = lazy(() => import('./GccMarketingTab'));
+const NotATargetTab = lazy(() => import('./NotATargetTab'));
+const ReviewQueueTab = lazy(() => import('./ReviewQueueTab'));
+import { downloadCsv } from './utils/csvExport';
+import { getCurrentUserName, getCurrentUserRole, isAdminUser } from './utils/user';
+import { showConfirm } from './ConfirmDialog';
 import DisqualifyModal from './DisqualifyModal';
 import { companyTypeOptions, industryOptions, internalUsers as defaultInternalUsers, leadStatusOptions } from './companyData';
 import { formatCompactEur, getDateOnly, isPastDate } from './formatters';
@@ -126,11 +132,9 @@ export default function AppRoot() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
 
-  // RBAC: determine current user role from localStorage
-  const currentUserName = (() => {
-    try { const s = localStorage.getItem('sinteriq_user'); return s ? JSON.parse(s)?.name : ''; } catch { return ''; }
-  })();
-  const isAdmin = currentUserName?.toLowerCase().includes('sageer') || currentUserName?.toLowerCase().includes('admin');
+  // RBAC: determine current user from localStorage (mirrors server-side check)
+  const currentUserName = getCurrentUserName('');
+  const isAdmin = isAdminUser();
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [initialTab, setInitialTab] = useState('overview');
   const [qualifyingId, setQualifyingId] = useState<number | null>(null);
@@ -220,15 +224,7 @@ export default function AppRoot() {
       c.human_reviewed?'Yes':'No',
       c.tracking_level||'', c.tracking_status||'', c.next_tracking_date||'', c.contact_count??''
     ]);
-    const bom = '\uFEFF';
-    const csv = bom + [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filename}_${data.length}companies.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(headers, rows, `${filename}_${data.length}companies`);
     showToast('success', 'Export ready', `${data.length} companies exported`);
   };
 
@@ -288,6 +284,7 @@ export default function AppRoot() {
         await Promise.all([loadCompanies(), loadFollowUps(), loadUsers(), loadRecentActivities()]);
       } catch (error) {
         console.error('Failed to load app data:', error);
+        showToast('error', 'Failed to load data', 'Could not reach the server. Check your connection and refresh.');
       } finally {
         setLoading(false);
       }
@@ -420,13 +417,15 @@ export default function AppRoot() {
     }
   };
 
-  const openCompany = (id: number, tab = 'overview', returnTab = activeTab) => {
+  // Memoized so the many tabs that receive it don't re-render on unrelated
+  // state changes (e.g. bulk-qualify progress ticks).
+  const openCompany = useCallback((id: number, tab = 'overview', returnTab = activeTab) => {
     setInitialTab(tab);
     setSelectedCompanyId(id);
     setActiveTab(returnTab);
     setSearchQuery('');
     setShowSearchDropdown(false);
-  };
+  }, [activeTab]);
 
   const handleDataChanged = async () => {
     await Promise.all([loadCompanies(), loadFollowUps(), loadRecentActivities()]);
@@ -444,7 +443,7 @@ export default function AppRoot() {
       if (payload?.skipped) {
         setQualifyingId(null);
         const reason = payload.skipReason || 'Recently qualified.';
-        if (confirm(`${reason}\n\nRe-run AI qualification anyway? (uses API credits)`)) {
+        if (await showConfirm({ title: 'Re-run AI qualification?', message: `${reason}\n\nThis uses API credits.`, confirmText: 'Re-run' })) {
           void handleAIQualify(id, true);
         } else {
           showToast('info', 'Using cached qualification', reason);
@@ -492,10 +491,7 @@ export default function AppRoot() {
     if (!disqualifyTarget) return;
     setDisqualifying(true);
     try {
-      const by = (() => {
-        try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').name || 'Unknown'; }
-        catch { return 'Unknown'; }
-      })();
+      const by = getCurrentUserName();
       const response = await fetch(`/api/companies/${disqualifyTarget.id}/disqualify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -533,7 +529,7 @@ export default function AppRoot() {
 
 
   const handleDeleteCompany = async (id: number) => {
-    if (!confirm('Delete this company and all its contacts, activities, and notes? This cannot be undone.')) return;
+    if (!(await showConfirm({ title: 'Delete company?', message: 'This permanently deletes the company and all its contacts, activities, and notes. This cannot be undone.', confirmText: 'Delete', tone: 'danger' }))) return;
     setDeletingId(id);
     try {
       const res = await fetch(`/api/companies/${id}`, { method: 'DELETE' });
@@ -550,11 +546,11 @@ export default function AppRoot() {
 
   const handleBulkAIQualify = async () => {
     const selectedRawLeads = selectedIds.size > 0
-      ? filteredCompanies.filter((c: any) => selectedIds.has(c.id) && c.lead_status === 'RAW')
+      ? filteredCompanies.filter((c) => selectedIds.has(c.id) && c.lead_status === 'RAW')
       : [];
     const rawLeads = selectedIds.size > 0
       ? selectedRawLeads
-      : filteredCompanies.filter((c: any) => c.lead_status === 'RAW' && !c.ai_qualified_at);
+      : filteredCompanies.filter((c) => c.lead_status === 'RAW' && !c.ai_qualified_at);
     if (rawLeads.length === 0) {
       showToast('info', 'No RAW leads', selectedIds.size > 0 ? 'Selected rows do not include RAW leads.' : 'No unqualified RAW leads found in the current view.');
       return;
@@ -565,7 +561,7 @@ export default function AppRoot() {
       ? `\n\nCost guard: only the first ${BULK_AI_LIMIT} leads will run now. Narrow the filter or select specific rows for the next batch.`
       : '';
     const scopeNote = selectedIds.size > 0 ? 'selected RAW leads' : 'RAW leads in the current filter';
-    if (!confirm(`Run AI qualification on ${leadsToRun.length} ${scopeNote}?\n\nThis uses API credits. SinterIQ will run the local and cheap pre-classifiers first, then deep AI only when needed.${limitNote}`)) return;
+    if (!(await showConfirm({ title: 'Run AI qualification?', message: `Run AI qualification on ${leadsToRun.length} ${scopeNote}?\n\nThis uses API credits. SinterIQ runs the local and cheap pre-classifiers first, then deep AI only when needed.${limitNote}`, confirmText: 'Run' }))) return;
     setBulkQualifying(true);
     bulkQualifyCancelRef.current = false;
     setBulkQualifyProgress({ done: 0, total: leadsToRun.length });
@@ -589,7 +585,7 @@ export default function AppRoot() {
           if (payload?.skipped) {
             skippedCount++;
           } else {
-            setCompanies((prev: any[]) => prev.map((c: any) => (c.id === lead.id ? { ...c, ...payload } : c)));
+            setCompanies((prev) => prev.map((c) => (c.id === lead.id ? { ...c, ...payload } : c)));
             successCount++;
           }
         } catch {
@@ -613,7 +609,7 @@ export default function AppRoot() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Delete ${selectedIds.size} selected companies and all their contacts, activities, and notes? This cannot be undone.`)) return;
+    if (!(await showConfirm({ title: `Delete ${selectedIds.size} companies?`, message: 'This permanently deletes the selected companies and all their contacts, activities, and notes. This cannot be undone.', confirmText: 'Delete', tone: 'danger' }))) return;
     setBulkDeleting(true);
     try {
       const ids = Array.from(selectedIds);
@@ -665,9 +661,12 @@ export default function AppRoot() {
       });
       const payload = await response.json().catch(() => null);
       if (response.status === 409 && payload?.duplicate_id) {
-        const goToExisting = confirm(
-          `${payload.error}\n\nClick OK to open the existing company, or Cancel to go back.`
-        );
+        const goToExisting = await showConfirm({
+          title: 'Company already exists',
+          message: `${payload.error}\n\nOpen the existing company?`,
+          confirmText: 'Open existing',
+          cancelText: 'Go back',
+        });
         if (goToExisting) {
           setShowCompanyForm(false);
           openCompany(payload.duplicate_id);
@@ -1040,12 +1039,14 @@ export default function AppRoot() {
                   <div className="border-t border-slate-100 my-1" />
                 </>
               )}
-              <button
-                onClick={() => { void handleExportCustomerTracker(); }}
-                className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
-              >
-                Export All ({companies.length} companies)
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => { void handleExportCustomerTracker(); }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 text-slate-700"
+                >
+                  Export All ({companies.length} companies)
+                </button>
+              )}
               <button
                 onClick={() => {
                   if (qualifiedExportCompanies.length === 0) { showToast('info', 'No qualified leads to export'); return; }
@@ -1266,6 +1267,7 @@ export default function AppRoot() {
                         disabled={deletingId === company.id}
                         className="inline-flex items-center p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
                         title="Delete company"
+                        aria-label={`Delete ${company.company_name}`}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1394,15 +1396,15 @@ export default function AppRoot() {
               <div className="sinter-brand-mark w-7 h-7 rounded-full flex items-center justify-center text-xs text-white font-medium shrink-0">
                 <img src="/branding/sintertechnik-mark-192.jpg" alt="" className="sinter-mark-image" />
                 <span className="sr-only">
-                {(() => { try { const u = JSON.parse(localStorage.getItem('sinteriq_user') || '{}'); return u.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2) || '?'; } catch { return '?'; } })()}
+                {getCurrentUserName('?').split(' ').map((n) => n[0]).join('').slice(0, 2) || '?'}
                 </span>
               </div>
               <div className="min-w-0">
                 <div className="text-xs text-white font-medium truncate">
-                  {(() => { try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').name || 'User'; } catch { return 'User'; } })()}
+                  {getCurrentUserName('User')}
                 </div>
                 <div className="text-[10px] text-slate-500 truncate">
-                  {(() => { try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').role || ''; } catch { return ''; } })()}
+                  {getCurrentUserRole()}
                 </div>
               </div>
             </div>
@@ -1444,6 +1446,7 @@ export default function AppRoot() {
               <button
                 onClick={() => { setSearchQuery(''); setSearchResults([]); setShowSearchDropdown(false); }}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                aria-label="Clear search"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -1475,6 +1478,7 @@ export default function AppRoot() {
         </header>
 
         <div className="sinter-content flex-1 overflow-auto p-6">
+          <Suspense fallback={<div className="flex items-center justify-center py-20" role="status" aria-label="Loading view"><div className="w-8 h-8 border-2 border-slate-300 border-t-blue-600 rounded-full animate-spin" /></div>}>
           {selectedCompanyId ? (
             <CompanyDetail
               companyId={selectedCompanyId}
@@ -1502,6 +1506,7 @@ export default function AppRoot() {
               companies={companies}
               onCompanyClick={openCompany}
               onCompanyUpdated={(updated) => setCompanies((prev) => prev.map((c) => c.id === updated.id ? { ...c, ...updated } : c))}
+              onCompanyDeleted={(id) => setCompanies((prev) => prev.filter((c) => c.id !== id))}
             />
           ) : activeTab === 'research' ? (
             <ResearchTab users={userOptions} onCompanyClick={openCompany} />
@@ -1514,6 +1519,7 @@ export default function AppRoot() {
           ) : (
             renderCompanies()
           )}
+          </Suspense>
         </div>
       </main>
 

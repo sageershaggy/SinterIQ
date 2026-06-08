@@ -11,6 +11,7 @@ import {
   Search,
   Shield,
   Sparkles,
+  Trash2,
   User,
 } from 'lucide-react';
 
@@ -19,11 +20,17 @@ import { showToast } from './Toast';
 import { leadPriorityOptions } from './companyData';
 import DisqualifyModal from './DisqualifyModal';
 import { getDateOnly } from './formatters';
+import { downloadCsv } from './utils/csvExport';
+import { getCurrentUserName } from './utils/user';
+import { showConfirm } from './ConfirmDialog';
+import { leadPriorityBadgeClass } from './utils/statusColors';
+import KpiCard from './components/KpiCard';
 
 interface Props {
   companies: Company[];
   onCompanyClick: (id: number) => void;
   onCompanyUpdated: (updated: Company) => void;
+  onCompanyDeleted: (id: number) => void;
 }
 
 type ConfidenceBand = 'ALL' | 'LOW' | 'MEDIUM' | 'UNKNOWN';
@@ -55,7 +62,11 @@ function isAiDisqualifiedPendingReview(c: Company): boolean {
   if (c.lead_status !== 'DISQUALIFIED') return false;
   if (!c.ai_qualified_at) return false;
   const by = (c.disqualified_by || '').toLowerCase();
-  return !by || by.includes('ai') || by.includes('prefilter');
+  const isAi = !by || by.includes('ai') || by.includes('prefilter');
+  if (!isAi) return false;
+  // Only surface AI disqualifications for human review when the AI was NOT confident.
+  // High-confidence AI/prefilter rejections (>=70%) go straight to Not a Target instead.
+  return c.ai_confidence === null || c.ai_confidence === undefined || c.ai_confidence < LOW_CONFIDENCE_THRESHOLD;
 }
 
 function needsReview(c: Company): boolean {
@@ -82,7 +93,7 @@ function confidenceBand(c: Company): ConfidenceBand {
   return 'MEDIUM';
 }
 
-export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpdated }: Props) {
+export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpdated, onCompanyDeleted }: Props) {
   const persistedState = useMemo(loadReviewQueueState, []);
   const [statusTab, setStatusTab] = useState<StatusTab>(persistedState.statusTab || 'PENDING');
   const [bandFilter, setBandFilter] = useState<ConfidenceBand>(persistedState.bandFilter || 'ALL');
@@ -92,6 +103,7 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
   const [disqualifyTarget, setDisqualifyTarget] = useState<{ id: number; name: string } | null>(null);
   const [disqualifying, setDisqualifying] = useState(false);
   const [marking, setMarking] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [expandedNoteId, setExpandedNoteId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<number, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -160,10 +172,7 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
     };
   }, [pendingPool, qualifiedPool, nonQualifiedPool]);
 
-  const currentUser = (() => {
-    try { return JSON.parse(localStorage.getItem('sinteriq_user') || '{}').name || 'Unknown'; }
-    catch { return 'Unknown'; }
-  })();
+  const currentUser = getCurrentUserName();
 
   const handleMarkReviewed = async (id: number, notes?: string) => {
     setMarking(id);
@@ -205,7 +214,7 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
 
   const handleBulkMarkReviewed = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Mark ${selectedIds.size} leads as reviewed?`)) return;
+    if (!(await showConfirm({ title: `Mark ${selectedIds.size} leads as reviewed?`, confirmText: 'Mark reviewed' }))) return;
     setBulkMarking(true);
     try {
       const ids = Array.from(selectedIds);
@@ -271,6 +280,25 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
     }
   };
 
+  const handleDelete = async (id: number, name: string) => {
+    if (!(await showConfirm({ title: 'Delete lead?', message: `Delete ${name} and all its contacts, activities, and notes? This cannot be undone.`, confirmText: 'Delete', tone: 'danger' }))) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/companies/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || 'Failed to delete');
+      }
+      onCompanyDeleted(id);
+      setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+      showToast('success', 'Company deleted', name);
+    } catch (err) {
+      showToast('error', 'Delete failed', err instanceof Error ? err.message : '');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const handleDisqualifySubmit = async ({ reason, category }: { reason: string; category: string }) => {
     if (!disqualifyTarget) return;
     setDisqualifying(true);
@@ -316,19 +344,9 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
       (c.qualification_notes || '').replace(/\s+/g, ' ').trim(),
       (c.opportunity_notes || '').replace(/\s+/g, ' ').trim(),
     ]);
-    const bom = '﻿';
-    const csv = bom + [headers, ...rows]
-      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const today = new Date().toISOString().split('T')[0];
     const rangeTag = dateFrom || dateTo ? `_${dateFrom || 'start'}_to_${dateTo || today}` : '';
-    a.download = `SinterIQ_ReviewQueue${rangeTag}_${filtered.length}leads.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(headers, rows, `SinterIQ_ReviewQueue${rangeTag}_${filtered.length}leads`);
     showToast('success', 'Export ready', `${filtered.length} leads exported`);
   };
 
@@ -572,12 +590,7 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
                         </span>
                       )}
                       {c.lead_priority && (
-                        <span className={`px-2 py-0.5 text-[11px] rounded border ${
-                          c.lead_priority === 'HIGH_PRIORITY' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          : c.lead_priority === 'STRONG' ? 'bg-sky-50 text-sky-700 border-sky-200'
-                          : c.lead_priority === 'LOW_PRIORITY' ? 'bg-slate-50 text-slate-600 border-slate-200'
-                          : 'bg-rose-50 text-rose-700 border-rose-200'
-                        }`}>
+                        <span className={`px-2 py-0.5 text-[11px] rounded border ${leadPriorityBadgeClass(c.lead_priority)}`}>
                           {priorityLabel}
                         </span>
                       )}
@@ -694,6 +707,15 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
                       </button>
                     )}
                     <button
+                      onClick={() => void handleDelete(c.id, c.company_name)}
+                      disabled={deletingId === c.id}
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-red-300 hover:bg-red-100 disabled:opacity-50 text-red-700 text-xs font-medium rounded-md transition-colors"
+                      title="Permanently delete this lead and all its contacts, activities, and notes"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {deletingId === c.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                    <button
                       onClick={() => onCompanyClick(c.id)}
                       className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-slate-400 hover:bg-slate-50 text-[11px] font-medium rounded-md transition-colors"
                     >
@@ -735,39 +757,3 @@ export default function ReviewQueueTab({ companies, onCompanyClick, onCompanyUpd
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  icon,
-  tone,
-  active,
-  onClick,
-}: {
-  label: string;
-  value: number;
-  icon: React.ReactNode;
-  tone: 'slate' | 'rose' | 'amber';
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  const tones: Record<string, { base: string; activeRing: string }> = {
-    slate: { base: 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-400', activeRing: 'ring-2 ring-slate-400 border-slate-400' },
-    rose: { base: 'bg-rose-50 text-rose-700 border-rose-200 hover:border-rose-400', activeRing: 'ring-2 ring-rose-400 border-rose-400' },
-    amber: { base: 'bg-amber-50 text-amber-700 border-amber-200 hover:border-amber-400', activeRing: 'ring-2 ring-amber-400 border-amber-400' },
-  };
-  const t = tones[tone];
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={!onClick}
-      className={`text-left border rounded-xl p-3 transition-all ${t.base} ${active ? t.activeRing : ''} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
-    >
-      <div className="flex items-center gap-2 text-xs font-medium opacity-80">
-        {icon}
-        {label}
-      </div>
-      <div className="text-2xl font-bold mt-1">{value}</div>
-    </button>
-  );
-}

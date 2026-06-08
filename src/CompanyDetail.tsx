@@ -14,6 +14,7 @@ import { formatCompactEur, formatEur, parseStringArray } from './formatters';
 import ErrorBoundary from './ErrorBoundary';
 import DisqualifyModal from './DisqualifyModal';
 import { showToast } from './Toast';
+import { showConfirm } from './ConfirmDialog';
 
 interface Contact {
   id: number;
@@ -268,7 +269,7 @@ export default function CompanyDetail({
       await onDataChanged?.();
     } catch (err) {
       console.error(err);
-      alert('Failed to save contact');
+      showToast('error', 'Failed to save contact');
     }
   };
 
@@ -295,7 +296,7 @@ export default function CompanyDetail({
   };
 
   const handleDeleteContact = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this contact?')) return;
+    if (!(await showConfirm({ title: 'Delete contact?', confirmText: 'Delete', tone: 'danger' }))) return;
     try {
       await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
       await fetchData();
@@ -323,7 +324,7 @@ export default function CompanyDetail({
       await onDataChanged?.();
     } catch (err) {
       console.error(err);
-      alert('Failed to log activity');
+      showToast('error', 'Failed to log activity');
     }
   };
 
@@ -349,7 +350,7 @@ export default function CompanyDetail({
       await onDataChanged?.();
     } catch (err) {
       console.error(err);
-      alert('Failed to save order');
+      showToast('error', 'Failed to save order');
     }
   };
 
@@ -366,7 +367,7 @@ export default function CompanyDetail({
       await onDataChanged?.();
     } catch (err) {
       console.error(err);
-      alert('Failed to update company');
+      showToast('error', 'Failed to update company');
     }
   };
 
@@ -398,7 +399,7 @@ export default function CompanyDetail({
   };
 
   const handleRestore = async () => {
-    if (!confirm('Restore this lead? Status will revert to Enriched and the disqualification reason will be cleared.')) return;
+    if (!(await showConfirm({ title: 'Restore this lead?', message: 'Status will revert to Enriched and the disqualification reason will be cleared.', confirmText: 'Restore' }))) return;
     setRestoring(true);
     try {
       const res = await fetch(`/api/companies/${companyId}/restore`, {
@@ -431,7 +432,7 @@ export default function CompanyDetail({
       if (payload?.skipped) {
         setQualifying(false);
         const reason = payload.skipReason || 'Recently qualified.';
-        if (confirm(`${reason}\n\nRe-run AI qualification anyway? (uses API credits)`)) {
+        if (await showConfirm({ title: 'Re-run AI qualification?', message: `${reason}\n\nThis uses API credits.`, confirmText: 'Re-run' })) {
           void handleAIQualify(true);
         } else {
           showToast('info', 'Using cached qualification', reason);
@@ -477,7 +478,7 @@ export default function CompanyDetail({
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to add note');
+      showToast('error', 'Failed to add note');
     } finally {
       setSubmittingNote(false);
     }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import AppRoot from './AppRoot.tsx';
 import LoginScreen from './LoginScreen.tsx';
 import ToastContainer from './Toast.tsx';
+import ConfirmHost from './ConfirmDialog.tsx';
 import './index.css';
 
 // Install a global fetch wrapper that:
@@ -111,6 +112,7 @@ function App() {
       <>
         <LoginScreen onLogin={(name) => setCurrentUser(name)} />
         <ToastContainer />
+        <ConfirmHost />
       </>
     );
   }
@@ -119,6 +121,7 @@ function App() {
     <>
       <AppRoot />
       <ToastContainer />
+      <ConfirmHost />
     </>
   );
 }
