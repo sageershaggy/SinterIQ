@@ -3,33 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SinterIQ | Sintertechnik Lead Intelligence</title>
+    <meta name="theme-color" content="#172c27" />
+    <title>Innovista Research AI</title>
     <meta
       name="description"
-      content="SinterIQ lead intelligence for Sintertechnik GmbH HiTech Solutions."
+      content="Project-based research, training analysis and evidence-led lead qualification."
     />
-    <link rel="icon" href="/branding/sintertechnik-favicon-32.jpg" sizes="32x32" />
-    <link rel="apple-touch-icon" href="/branding/sintertechnik-mark-192.jpg" />
-    <script>
-      // Prevent polyfills from overwriting fetch and throwing "Cannot set property fetch of #<Window> which has only a getter"
-      if (typeof window !== 'undefined' && window.fetch) {
-        try {
-          const originalFetch = window.fetch;
-          Object.defineProperty(window, 'fetch', {
-            get: function() { return originalFetch; },
-            set: function() { /* ignore attempts to overwrite fetch */ },
-            configurable: true,
-            enumerable: true
-          });
-        } catch (e) {
-          console.warn('Could not protect window.fetch:', e);
-        }
-      }
-    </script>
+    <link rel="icon" type="image/svg+xml" href="/branding/innovista.svg" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

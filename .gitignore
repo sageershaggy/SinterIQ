@@ -10,3 +10,13 @@ coverage/
 .sinteriq-encryption-key
 .sinteriq-auth-secret
 .tmp_docx/
+data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+.innovista-encryption-key
+.tmp-*/
+*.tmp.json
+test-results/
+playwright-report/
