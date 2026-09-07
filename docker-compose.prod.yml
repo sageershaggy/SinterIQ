@@ -1,0 +1,101 @@
+# ============================================================
+# SINTERIQ / Innovista Research AI — production compose for the shared
+# Hostinger VPS (srv1601542, Alpine).
+#
+# Fully ISOLATED, same contract as pomotoro: own bridge network
+# (sinteriq_net), own named volume, own localhost-only port. Shares nothing
+# with pomotoro / tawazun / sentry / jenkins.
+#
+# The HOST nginx (already on :80/:443) reverse-proxies
+# sinteriq.zengineeringapp.com -> 127.0.0.1:${APP_PORT} (this container).
+# So this stack publishes ONLY 127.0.0.1:${APP_PORT} and brings no TLS of its own.
+#
+# ---- Why there is no `db` service ----
+# This app's database is EMBEDDED SQLite (better-sqlite3): data/innovista.db
+# plus data/.innovista-encryption-key, which encrypts stored provider keys.
+# The `sinteriq_data` volume IS the database. Back the DB and the key up
+# TOGETHER — losing the key makes stored provider credentials unreadable.
+#
+# Jenkins deploys this via the mounted docker.sock:
+#   docker compose -p sinteriq -f docker-compose.prod.yml --env-file <env> pull
+#   docker compose -p sinteriq -f docker-compose.prod.yml --env-file <env> up -d
+# ============================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  app:
+    image: ${REGISTRY}/${IMAGE_OWNER}/${IMAGE_REPO}:app-${IMAGE_TAG}
+    container_name: sinteriq-app
+    # server/documents.ts forks a worker process per upload; a real init
+    # reaps them instead of leaving zombies under PID 1.
+    init: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      INNOVISTA_DATA_DIR: /app/data
+
+      # Exact public HTTPS origin. The app REFUSES to start in production
+      # without an https:// origin, and rejects any other Host header.
+      INNOVISTA_ORIGIN: ${INNOVISTA_ORIGIN}
+
+      # Exactly one trusted reverse proxy in front (the host nginx).
+      INNOVISTA_TRUST_PROXY: "1"
+
+      # One-time token for creating the first administrator from the browser.
+      # Unset/rotate it once the admin account exists.
+      INNOVISTA_SETUP_TOKEN: ${INNOVISTA_SETUP_TOKEN}
+
+      # Optional 32-byte master key (hex or base64). If set, it is used instead
+      # of data/.innovista-encryption-key — keep it stable across deploys or
+      # previously stored provider keys stop decrypting.
+      INNOVISTA_ENCRYPTION_KEY: ${INNOVISTA_ENCRYPTION_KEY:-}
+
+      # Legacy SinterIQ key, only needed to migrate old encrypted provider keys.
+      SINTERIQ_ENCRYPTION_KEY: ${SINTERIQ_ENCRYPTION_KEY:-}
+
+      # AI providers — SERVER-SIDE ONLY, never build args, never VITE_*.
+      # These can also be set from Workspace settings and stored encrypted.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+    volumes:
+      # THE DATABASE. innovista.db (+ -wal/-shm) and .innovista-encryption-key.
+      - sinteriq_data:/app/data
+
+      # ---- OPTIONAL: one-time SinterIQ -> Innovista legacy migration ----
+      # Disabled by default. server.ts looks for ./sintertechnik.db in the
+      # working directory and SKIPS the import when the file is absent, so
+      # uncommenting the line below is what enables the legacy import.
+      #
+      # The import runs ONLY on first database initialization. Enabling it
+      # against an already-initialized sinteriq_data volume imports nothing —
+      # you would have to remove the volume first.
+      #
+      # Before uncommenting, the file MUST already exist at
+      # LEGACY_DB_HOST_PATH: Docker turns a missing bind source into a
+      # DIRECTORY, and the app then crashes trying to open it as a database.
+      # See docs/DEPLOYMENT.md step 2. Read-only: never modified.
+      # - ${LEGACY_DB_HOST_PATH}:/app/sintertechnik.db:ro
+    ports:
+      # Bound to localhost ONLY — the host nginx proxies the public domain here.
+      - "127.0.0.1:${APP_PORT}:3000"
+    networks: [sinteriq_net]
+    logging: *default-logging
+    restart: unless-stopped
+
+networks:
+  sinteriq_net:
+    name: sinteriq_net
+    driver: bridge
+
+volumes:
+  sinteriq_data:
+    name: sinteriq_data

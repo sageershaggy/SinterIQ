@@ -65,6 +65,8 @@ Use OS permissions and encrypted storage/backups for company data and documents.
 
 Website requests reject private/reserved networks, validate redirects and pin validated DNS addresses. Provider endpoints must use public HTTPS and cannot redirect requests containing credentials. AI requests have timeouts and concurrency/rate limits. Public pages only are supported; paste text when a page is blocked, requires JavaScript or needs authentication.
 
+[The deployment runbook](docs/DEPLOYMENT.md) covers the containerized deployment: the Docker image, the isolated Compose stack, the host nginx vhost and TLS, the Jenkins pipeline, first-administrator setup and volume backups.
+
 See [the upgrade review](docs/upgrade-review.md) for findings, remediation, migration details and operating limits. Removing the old database from tracking does not erase previous Git history or distributed copies.
 
 ## Development and validation

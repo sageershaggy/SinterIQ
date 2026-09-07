@@ -1,0 +1,66 @@
+# ============================================================
+# Build context for the SinterIQ / Innovista Research AI image.
+#
+# The image ships: dist/ (built bundle), server.ts, server/, shared/,
+# scripts/ and production node_modules. Everything else is noise or secret.
+# ============================================================
+
+# Rebuilt inside the image
+node_modules
+dist
+build
+coverage
+
+# Version control & CI
+.git
+.gitignore
+.github
+.prettierrc.json
+.prettierignore
+
+# Secrets and runtime state — NEVER bake these into a layer.
+# Provider keys reach the container through compose `environment` only.
+.env
+.env.*
+!.env.example
+*.local
+
+# Live data, databases and encryption keys (data/ is a named volume;
+# sintertechnik.db is bind-mounted read-only at deploy time).
+data
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+.innovista-encryption-key
+.sinteriq-encryption-key
+.sinteriq-auth-secret
+
+# Tests and generated fixtures (vite build does not need them)
+tests
+test-results
+playwright-report
+.tmp-*
+.tmp_docx
+*.tmp.json
+
+# Docs. server/database.ts seeds the starter training library by reading
+# ../docs/sintertechnik-training.md on first run (unguarded readFileSync),
+# so that one file MUST stay in the image or a fresh DB crash-loops on boot.
+docs/**
+!docs/sintertechnik-training.md
+
+# Docker / deploy files themselves
+Dockerfile
+.dockerignore
+docker-compose*.yml
+Jenkinsfile
+deploy
+
+# Logs, editor and OS cruft
+*.log
+npm-debug.log*
+.chrome-debug
+.vscode
+.idea
+.DS_Store
