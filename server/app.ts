@@ -118,6 +118,71 @@ function serializeLead(row: Lead, project: Project): Lead {
     next_step: stale ? 'NONE' : nextStepFor(row.status, row.score),
   };
 }
+export const leadQuerySchema = z.object({
+  search: text(200).default(''),
+  status: z
+    .enum([
+      'ALL',
+      'REVIEW_QUEUE',
+      'UNREVIEWED',
+      'QUALIFIED',
+      'NOT_A_TARGET',
+      'NEEDS_REVIEW',
+      'STALE',
+      'CALL_READY',
+      'SEND_EMAIL',
+      'REVIEW_WITH_CLIENT',
+    ])
+    .default('ALL'),
+});
+/** One filter definition, shared by the lead list and the CSV export so both agree. */
+function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>) {
+  let where = 'project_id=?';
+  const params: (string | number)[] = [project.id];
+  if (input.search) {
+    where +=
+      " AND (name LIKE ? ESCAPE '\\' OR industry LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\')";
+    const q = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
+    params.push(q, q, q);
+  }
+  const current = [project.active_version || 0, project.trained_revision || 0, project.revision];
+  if (input.status === 'REVIEW_QUEUE') {
+    where +=
+      " AND (status IN ('UNREVIEWED','NEEDS_REVIEW') OR (latest_run_id IS NOT NULL AND (training_version IS NOT ? OR qualified_revision IS NOT revision OR ? IS NOT ?)))";
+    params.push(...current);
+  } else if (input.status === 'STALE') {
+    where +=
+      ' AND latest_run_id IS NOT NULL AND (training_version IS NOT ? OR qualified_revision IS NOT revision OR ? IS NOT ?)';
+    params.push(...current);
+  } else if (
+    input.status === 'CALL_READY' ||
+    input.status === 'SEND_EMAIL' ||
+    input.status === 'REVIEW_WITH_CLIENT'
+  ) {
+    // Mirrors nextStepFor: outreach bands only describe results from the current training.
+    const band =
+      input.status === 'CALL_READY'
+        ? " AND status='QUALIFIED' AND score>=" + nextStepBands.call
+        : input.status === 'SEND_EMAIL'
+          ? " AND status='QUALIFIED' AND score>=" +
+            nextStepBands.email +
+            ' AND score<' +
+            nextStepBands.call
+          : " AND (status='NEEDS_REVIEW' OR (status='QUALIFIED' AND score>=" +
+            nextStepBands.review +
+            ' AND score<' +
+            nextStepBands.email +
+            '))';
+    where +=
+      band +
+      ' AND latest_run_id IS NOT NULL AND training_version IS ? AND qualified_revision IS revision AND ? IS ?';
+    params.push(...current);
+  } else if (input.status !== 'ALL') {
+    where += ' AND status=?';
+    params.push(input.status);
+  }
+  return { where, params };
+}
 function getLead(db: DB, project: Project, id: number) {
   const row = db.prepare('SELECT * FROM leads WHERE id=? AND project_id=?').get(id, project.id) as
     Lead | undefined;
@@ -605,70 +670,13 @@ export function createApp(options: {
 
   app.get('/api/projects/:projectId/leads', (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const input = z
-      .object({
-        search: text(200).default(''),
-        status: z
-          .enum([
-            'ALL',
-            'REVIEW_QUEUE',
-            'UNREVIEWED',
-            'QUALIFIED',
-            'NOT_A_TARGET',
-            'NEEDS_REVIEW',
-            'STALE',
-            'CALL_READY',
-            'SEND_EMAIL',
-            'REVIEW_WITH_CLIENT',
-          ])
-          .default('ALL'),
+    const input = leadQuerySchema
+      .extend({
         page: z.coerce.number().int().min(1).max(100000).default(1),
         page_size: z.coerce.number().int().min(1).max(100).default(50),
       })
       .parse(req.query);
-    let where = 'project_id=?';
-    const params: (string | number)[] = [project.id];
-    if (input.search) {
-      where +=
-        " AND (name LIKE ? ESCAPE '\\' OR industry LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\')";
-      const q = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
-      params.push(q, q, q);
-    }
-    if (input.status === 'REVIEW_QUEUE') {
-      where +=
-        " AND (status IN ('UNREVIEWED','NEEDS_REVIEW') OR (latest_run_id IS NOT NULL AND (training_version IS NOT ? OR qualified_revision IS NOT revision OR ? IS NOT ?)))";
-      params.push(project.active_version || 0, project.trained_revision || 0, project.revision);
-    } else if (input.status === 'STALE') {
-      where +=
-        ' AND latest_run_id IS NOT NULL AND (training_version IS NOT ? OR qualified_revision IS NOT revision OR ? IS NOT ?)';
-      params.push(project.active_version || 0, project.trained_revision || 0, project.revision);
-    } else if (
-      input.status === 'CALL_READY' ||
-      input.status === 'SEND_EMAIL' ||
-      input.status === 'REVIEW_WITH_CLIENT'
-    ) {
-      // Mirrors nextStepFor: outreach bands only describe results from the current training.
-      const fresh =
-        ' AND latest_run_id IS NOT NULL AND training_version IS ? AND qualified_revision IS revision AND ? IS ?';
-      const band =
-        input.status === 'CALL_READY'
-          ? " AND status='QUALIFIED' AND score>=" + nextStepBands.call
-          : input.status === 'SEND_EMAIL'
-            ? " AND status='QUALIFIED' AND score>=" +
-              nextStepBands.email +
-              ' AND score<' +
-              nextStepBands.call
-            : " AND (status='NEEDS_REVIEW' OR (status='QUALIFIED' AND score>=" +
-              nextStepBands.review +
-              ' AND score<' +
-              nextStepBands.email +
-              '))';
-      where += band + fresh;
-      params.push(project.active_version || 0, project.trained_revision || 0, project.revision);
-    } else if (input.status !== 'ALL') {
-      where += ' AND status=?';
-      params.push(input.status);
-    }
+    const { where, params } = leadFilter(project, input);
     const { count } = db
       .prepare('SELECT COUNT(*) count FROM leads WHERE ' + where)
       .get(...params) as { count: number };
@@ -707,8 +715,10 @@ export function createApp(options: {
       const project = getProject(db, positiveId(req.params.projectId), req.user);
       if (!req.file || !/\.csv$/i.test(req.file.originalname))
         throw new HttpError(400, 'Select a UTF-8 CSV file.');
-      if (req.file.size > 1_000_000)
-        throw new HttpError(413, 'CSV files must be smaller than 1 MB.');
+      if (req.file.size > 4_000_000)
+        throw new HttpError(413, 'CSV files must be smaller than 4 MB.');
+      // 'update' refreshes the leads that already exist instead of skipping them.
+      const onDuplicate = req.body.on_duplicate === 'update' ? 'update' : 'skip';
       let records: Record<string, string>[];
       try {
         records = parse(new TextDecoder('utf-8', { fatal: true }).decode(req.file.buffer), {
@@ -725,8 +735,8 @@ export function createApp(options: {
           'The CSV is malformed. Use headers: name, website, country, industry, notes.',
         );
       }
-      if (!records.length || records.length > 500)
-        throw new HttpError(400, 'Import between 1 and 500 leads per CSV.');
+      if (!records.length || records.length > 5000)
+        throw new HttpError(400, 'Import between 1 and 5,000 leads per CSV.');
       const leads = records.map((row, i) => {
         let website = row.website || row.company_website || '';
         if (website && !/^https?:\/\//i.test(website)) website = 'https://' + website;
@@ -743,21 +753,66 @@ export function createApp(options: {
         return parsed.data;
       });
       const results = db.transaction(() => {
-        let created = 0;
+        let created = 0,
+          updated = 0;
         const duplicates: string[] = [];
         for (const lead of leads) {
           const result = insertLead(db, project.id, lead);
-          if (result.duplicate) duplicates.push(lead.name);
-          else created++;
+          if (!result.duplicate) {
+            created++;
+            continue;
+          }
+          if (onDuplicate !== 'update') {
+            duplicates.push(lead.name);
+            continue;
+          }
+          // Only fill in values the CSV actually carries, so a sparse row never blanks a lead.
+          const current = db
+            .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
+            .get(result.duplicate.id, project.id) as Lead;
+          const merged = {
+            website: lead.website || current.website,
+            country: lead.country || current.country,
+            industry: lead.industry || current.industry,
+            notes: lead.notes || current.notes,
+          };
+          const changedFields =
+            merged.website !== current.website ||
+            merged.country !== current.country ||
+            merged.industry !== current.industry ||
+            merged.notes !== current.notes;
+          if (!changedFields) {
+            duplicates.push(lead.name);
+            continue;
+          }
+          db.prepare(
+            'UPDATE leads SET website=?,website_key=?,country=?,industry=?,notes=?,revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+          ).run(
+            merged.website,
+            websiteKey(merged.website),
+            merged.country,
+            merged.industry,
+            merged.notes,
+            now(),
+            result.duplicate.id,
+            project.id,
+          );
+          updated++;
         }
         audit(
           db,
           project.id,
           req.user.name,
           'leads.imported',
-          created + ' created; ' + duplicates.length + ' duplicates skipped.',
+          created +
+            ' created; ' +
+            updated +
+            ' updated; ' +
+            duplicates.length +
+            ' unchanged duplicates skipped.',
         );
         return {
+          updated,
           total: leads.length,
           created,
           skipped: duplicates.length,
@@ -769,9 +824,12 @@ export function createApp(options: {
   );
   app.get('/api/projects/:projectId/leads/export', (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
+    // Export follows the same filter as the table, so "export what I am looking at" holds.
+    const input = leadQuerySchema.parse(req.query);
+    const { where, params } = leadFilter(project, input);
     const rows = db
-      .prepare('SELECT * FROM leads WHERE project_id=? ORDER BY name')
-      .all(project.id) as Lead[];
+      .prepare('SELECT * FROM leads WHERE ' + where + ' ORDER BY name')
+      .all(...params) as Lead[];
     const cell = (value: unknown) => {
       let v = String(value ?? '');
       if (/^[\s]*[=+@-]|^[\t\r\n]/.test(v)) v = "'" + v;
@@ -842,7 +900,10 @@ export function createApp(options: {
     ]
       .map((row) => row.map(cell).join(','))
       .join('\r\n');
-    res.setHeader('Content-Disposition', 'attachment; filename="innovista-qualification.csv"');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="innovista-' + input.status.toLowerCase() + '-leads.csv"',
+    );
     res.type('text/csv').send('\uFEFF' + csv);
   });
   app.get('/api/projects/:projectId/leads/:leadId', (req, res) => {
@@ -1122,6 +1183,73 @@ export function createApp(options: {
         )
         .all(project.id),
     );
+  });
+  /**
+   * Removing a lead removes its research with it: runs, reviews, feedback and any
+   * preserved reference records. Training versions are unaffected.
+   */
+  function removeLeads(project: Project, ids: number[], actor: string) {
+    return db.transaction(() => {
+      const found = db
+        .prepare(
+          'SELECT id,name FROM leads WHERE project_id=? AND id IN (' +
+            ids.map(() => '?').join(',') +
+            ')',
+        )
+        .all(project.id, ...ids) as Array<{ id: number; name: string }>;
+      for (const lead of found) {
+        db.prepare(
+          'DELETE FROM reviews WHERE run_id IN (SELECT id FROM qualification_runs WHERE lead_id=? AND project_id=?)',
+        ).run(lead.id, project.id);
+        db.prepare('DELETE FROM lead_feedback WHERE lead_id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
+        // Detach the lead's last run before deleting the runs it points at.
+        db.prepare('UPDATE leads SET latest_run_id=NULL WHERE id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
+        db.prepare('DELETE FROM qualification_runs WHERE lead_id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
+        db.prepare('DELETE FROM preserved_research WHERE lead_id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
+        db.prepare('DELETE FROM leads WHERE id=? AND project_id=?').run(lead.id, project.id);
+      }
+      audit(
+        db,
+        project.id,
+        actor,
+        'leads.deleted',
+        found.length +
+          ' lead(s) removed: ' +
+          found
+            .map((l) => l.name)
+            .join(', ')
+            .slice(0, 500),
+      );
+      return found.length;
+    })();
+  }
+  app.delete('/api/projects/:projectId/leads/:leadId', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    removeLeads(project, [lead.id], req.user.name);
+    res.json({ deleted: 1 });
+  });
+  app.post('/api/projects/:projectId/leads/delete', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const input = z
+      .object({ ids: z.array(z.number().int().positive()).min(1).max(500) })
+      .strict()
+      .parse(req.body);
+    const deleted = removeLeads(project, [...new Set(input.ids)], req.user.name);
+    if (!deleted) throw new HttpError(404, 'No matching leads in this project.');
+    res.json({ deleted });
   });
   // Erasure for a contact captured from a public website.
   app.delete('/api/projects/:projectId/leads/:leadId/contact', (req, res) => {
