@@ -1253,3 +1253,93 @@ test('export follows the active filter and import can update existing leads', as
     f.dispose();
   }
 });
+test('qualified leads are assigned for calling and reach the review queue with call notes', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const caller = await f.post('/users', {
+      name: 'Calling Researcher',
+      username: 'calling-researcher',
+      password: 'A-long-caller-password-2026',
+      role: 'researcher',
+    });
+    assert.equal(caller.status, 201);
+    const created = await f.post(base + '/leads', {
+      name: 'Assignable Pumps Ltd',
+      website: 'https://assignable.com',
+      city: 'Stuttgart',
+      country: 'DE',
+      employee_count: '150',
+      contact_name: 'Manual Contact',
+      contact_role: 'Purchasing',
+      contact_email: 'purchasing@assignable.com',
+      contact_phone: '+49 711 900900',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    // The richer lead record round-trips.
+    assert.equal(created.body.city, 'Stuttgart');
+    assert.equal(created.body.employee_count, '150');
+    assert.equal(created.body.contact_email, 'purchasing@assignable.com');
+    assert.equal(created.body.contact_phone, '+49 711 900900');
+    const leadBase = base + '/leads/' + created.body.id;
+    assert.equal((await f.post(leadBase + '/qualify', {})).status, 200);
+    // Assignment is refused until the researcher can actually reach the project.
+    const premature = await f.put(leadBase + '/assignment', { account_id: caller.body.id });
+    assert.equal(premature.status, 400);
+    assert.match(premature.body.error, /not assigned to this project/);
+    assert.equal(
+      (await f.put('/users/' + caller.body.id + '/projects', { project_ids: [project.id] })).status,
+      200,
+    );
+    const assigned = await f.put(leadBase + '/assignment', { account_id: caller.body.id });
+    assert.equal(assigned.status, 200, JSON.stringify(assigned.body));
+    assert.equal(assigned.body.assigned_to, caller.body.id);
+    // Assigned leads show up in the review queue, which is where calling happens.
+    const queue = await f.agent.get('/api' + base + '/leads?status=REVIEW_QUEUE');
+    assert.ok(queue.body.leads.some((l: { id: number }) => l.id === created.body.id));
+    const assignedOnly = await f.agent.get('/api' + base + '/leads?status=ASSIGNED');
+    assert.equal(assignedOnly.body.total, 1);
+    assert.equal(assignedOnly.body.leads[0].assigned_to_name, 'Calling Researcher');
+    // The caller sees it under "assigned to me"; the administrator does not.
+    const callerAgent = request.agent(f.app);
+    const login = await callerAgent
+      .post('/api/auth/login')
+      .set('X-Requested-With', 'Innovista')
+      .send({ username: 'calling-researcher', password: 'A-long-caller-password-2026' });
+    assert.equal(login.status, 200);
+    assert.equal((await callerAgent.get('/api' + base + '/leads?assigned_to=me')).body.total, 1);
+    assert.equal((await f.agent.get('/api' + base + '/leads?assigned_to=me')).body.total, 0);
+    // Logging a call records the outcome without touching the decision.
+    const short = await f.post(leadBase + '/calls', { outcome: 'CONNECTED', notes: 'no' });
+    assert.equal(short.status, 400);
+    const call = await callerAgent
+      .post('/api' + leadBase + '/calls')
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', login.body.csrf_token)
+      .send({
+        outcome: 'CALLBACK',
+        notes: 'Spoke to reception; call the engineer back on Monday.',
+      });
+    assert.equal(call.status, 201, JSON.stringify(call.body));
+    const detail = (await f.agent.get('/api' + leadBase)).body;
+    assert.equal(detail.status, 'QUALIFIED');
+    assert.equal(detail.calls.length, 1);
+    assert.equal(detail.calls[0].outcome, 'CALLBACK');
+    assert.equal(detail.calls[0].created_by, 'Calling Researcher');
+    assert.equal(detail.assigned_to_name, 'Calling Researcher');
+    assert.equal(detail.runs[0].result.decision, 'QUALIFIED');
+    // Calls and the assignee reach the export.
+    const exported = await f.agent.get('/api' + base + '/leads/export?status=ASSIGNED');
+    assert.ok(exported.text.includes('Calling Researcher'));
+    assert.ok(exported.text.includes('CALLBACK'));
+    assert.ok(exported.text.includes('Stuttgart'));
+    // Unassigning returns the lead to the pool.
+    assert.equal((await f.put(leadBase + '/assignment', { account_id: null })).status, 200);
+    assert.equal((await f.agent.get('/api' + base + '/leads?status=ASSIGNED')).body.total, 0);
+    assert.equal((await f.agent.get('/api' + base + '/leads?status=UNASSIGNED')).body.total, 1);
+  } finally {
+    f.dispose();
+  }
+});

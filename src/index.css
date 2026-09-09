@@ -3839,3 +3839,159 @@ label {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* Assignment for calling */
+.assignee-cell {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  margin: -5px -8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  color: inherit;
+}
+.assignee-cell:hover:not(:disabled) {
+  border-color: var(--line);
+  background: #fff;
+}
+.assignee-cell span {
+  display: flex;
+  flex-direction: column;
+}
+.assignee-cell small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.assignee-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--pale);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.assignee-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+}
+.assignee-option:hover:not(:disabled) {
+  border-color: var(--green);
+  background: var(--pale);
+}
+.assignee-option span {
+  display: flex;
+  flex-direction: column;
+}
+.assignee-option small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Calling */
+.call-contact {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcf9;
+}
+.call-contact strong {
+  display: block;
+  font-size: 15px;
+}
+.call-contact small {
+  color: var(--muted);
+}
+.call-contact-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-end;
+  font-size: 13px;
+}
+.call-contact-channels a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--green);
+  font-weight: 550;
+}
+.call-contact-channels a:hover {
+  text-decoration: underline;
+}
+.detail-contact {
+  gap: 14px;
+}
+.detail-contact a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--green);
+  font-weight: 550;
+}
+.detail-contact a:hover {
+  text-decoration: underline;
+}
+.detail-contact span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.call-connected,
+.call-meeting_booked {
+  background: #e7f4e3;
+  border-color: #bcdcb2;
+  color: #2c5c34;
+}
+.call-callback {
+  background: #fdf4e3;
+  border-color: #ecd6a6;
+  color: #7a5a1d;
+}
+.call-not_interested,
+.call-wrong_contact {
+  background: #fbeceb;
+  border-color: #eec4c0;
+  color: #8d372f;
+}
+.form-fieldset {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px 16px;
+  margin: 0;
+}
+.form-fieldset legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.form-fieldset > small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}

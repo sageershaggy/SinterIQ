@@ -26,6 +26,8 @@ import {
   Phone,
   Mail,
   MessageSquareWarning,
+  UserPlus,
+  PhoneCall,
 } from 'lucide-react';
 import { nextStepBands } from '../shared/types';
 import type {
@@ -36,6 +38,9 @@ import type {
   CriterionResult,
   NextStep,
   LeadFeedback,
+  CallLog,
+  CallOutcome,
+  User,
 } from '../shared/types';
 import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
@@ -71,7 +76,9 @@ export default function Leads({
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
   const [exportOpen, setExportOpen] = useState(false),
-    [confirmDelete, setConfirmDelete] = useState<number[] | null>(null);
+    [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
+    [assigning, setAssigning] = useState<number[] | null>(null),
+    [assignees, setAssignees] = useState<User[]>([]);
   const ready = project.active_version && project.revision === project.trained_revision;
   const reload = () => {
     setRefresh((n) => n + 1);
@@ -90,6 +97,11 @@ export default function Leads({
     }, 250);
     return () => clearTimeout(timer);
   }, [search]);
+  useEffect(() => {
+    api<User[]>(base + '/assignees')
+      .then(setAssignees)
+      .catch(() => setAssignees([]));
+  }, [base]);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -143,6 +155,35 @@ export default function Leads({
       setConfirmDelete(null);
       reload();
       notify(ids.length + ' lead' + (ids.length === 1 ? '' : 's') + ' deleted.');
+    } catch (e) {
+      if (mounted.current) setError((e as Error).message);
+    } finally {
+      if (mounted.current) setBusy('');
+    }
+  }
+  async function assignLeads(ids: number[], accountId: number | null) {
+    setBusy('Assigning…');
+    setError('');
+    try {
+      if (ids.length === 1)
+        await api(base + '/leads/' + ids[0] + '/assignment', {
+          method: 'PUT',
+          body: json({ account_id: accountId }),
+        });
+      else
+        await api(base + '/leads/assign', {
+          method: 'POST',
+          body: json({ ids, account_id: accountId }),
+        });
+      if (!mounted.current) return;
+      setAssigning(null);
+      setSelected([]);
+      reload();
+      notify(
+        accountId === null
+          ? ids.length + ' lead(s) returned to the pool.'
+          : ids.length + ' lead(s) assigned for calling.',
+      );
     } catch (e) {
       if (mounted.current) setError((e as Error).message);
     } finally {
@@ -325,6 +366,14 @@ export default function Leads({
               )}
             </button>
             <button
+              className="button secondary"
+              disabled={!!busy}
+              onClick={() => setAssigning(selected)}
+            >
+              <UserPlus size={15} />
+              Assign for calling
+            </button>
+            <button
               className="button danger"
               disabled={!!busy}
               onClick={() => setConfirmDelete(selected)}
@@ -383,6 +432,7 @@ export default function Leads({
                   <th>Industry / location</th>
                   <th>Fit score</th>
                   <th>Next step</th>
+                  <th>Assigned to</th>
                   <th>Qualification</th>
                   <th>
                     <span className="visually-hidden">Open</span>
@@ -451,6 +501,33 @@ export default function Leads({
                     </td>
                     <td>
                       <NextStepBadge step={lead.next_step} />
+                    </td>
+                    <td>
+                      <button
+                        className="assignee-cell"
+                        disabled={!!busy}
+                        onClick={() => setAssigning([lead.id])}
+                        title="Assign this lead for calling"
+                      >
+                        {lead.assigned_to_name ? (
+                          <>
+                            <span className="assignee-avatar">{lead.assigned_to_name[0]}</span>
+                            <span>
+                              {lead.assigned_to_name}
+                              {(lead.call_count || 0) > 0 && (
+                                <small>
+                                  {lead.call_count} call{lead.call_count === 1 ? '' : 's'} logged
+                                </small>
+                              )}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={14} />
+                            <span className="muted">Assign</span>
+                          </>
+                        )}
+                      </button>
                     </td>
                     <td>
                       <Badge value={lead.stale ? 'stale' : lead.status}>
@@ -539,6 +616,57 @@ export default function Leads({
           </div>
         </div>
       </section>
+      {assigning && (
+        <Modal
+          title={
+            assigning.length === 1 ? 'Assign this lead for calling' : 'Assign leads for calling'
+          }
+          onClose={() => setAssigning(null)}
+        >
+          <div className="form-stack">
+            <p className="muted">
+              The person you pick sees these {assigning.length === 1 ? 'lead' : 'leads'} under
+              &ldquo;Assigned to me&rdquo; in the Review queue, where they log each call. Only
+              people with access to {project.name} can be assigned.
+            </p>
+            {assignees.length === 0 ? (
+              <Alert>No one has access to this project yet. Assign it in Workspace settings.</Alert>
+            ) : (
+              <div className="assignment-list">
+                {assignees.map((person) => (
+                  <button
+                    key={person.id}
+                    className="assignee-option"
+                    disabled={!!busy}
+                    onClick={() => void assignLeads(assigning, person.id)}
+                  >
+                    <span className="assignee-avatar">{person.name[0]}</span>
+                    <span>
+                      <strong>{person.name}</strong>
+                      <small>
+                        @{person.username} ·{' '}
+                        {person.role === 'admin' ? 'Administrator' : 'Researcher'}
+                      </small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="form-actions">
+              <button className="button secondary" onClick={() => setAssigning(null)}>
+                Cancel
+              </button>
+              <button
+                className="text-button"
+                disabled={!!busy}
+                onClick={() => void assignLeads(assigning, null)}
+              >
+                Clear assignment
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {confirmDelete && (
         <Modal title="Delete leads" onClose={() => setConfirmDelete(null)}>
           <p>
@@ -663,10 +791,57 @@ function LeadForm({
             <input name="country" defaultValue={lead?.country} maxLength={120} />
           </label>
           <label>
+            City
+            <input name="city" defaultValue={lead?.city} maxLength={120} />
+          </label>
+        </div>
+        <div className="form-grid">
+          <label>
             Industry
             <input name="industry" defaultValue={lead?.industry} maxLength={200} />
           </label>
+          <label>
+            Employees
+            <input
+              name="employee_count"
+              defaultValue={lead?.employee_count}
+              maxLength={60}
+              placeholder="e.g. 150 or 50–200"
+            />
+          </label>
         </div>
+        <fieldset className="form-fieldset">
+          <legend>Contact person</legend>
+          <div className="form-grid">
+            <label>
+              Name
+              <input name="contact_name" defaultValue={lead?.contact_name} maxLength={200} />
+            </label>
+            <label>
+              Job title
+              <input name="contact_role" defaultValue={lead?.contact_role} maxLength={200} />
+            </label>
+          </div>
+          <div className="form-grid">
+            <label>
+              Email
+              <input
+                name="contact_email"
+                type="email"
+                defaultValue={lead?.contact_email}
+                maxLength={200}
+              />
+            </label>
+            <label>
+              Phone
+              <input name="contact_phone" defaultValue={lead?.contact_phone} maxLength={40} />
+            </label>
+          </div>
+          <small>
+            Research fills these in from the company website when it publishes them. Anything you
+            enter here is kept as-is.
+          </small>
+        </fieldset>
         <label>
           Research context
           <textarea
@@ -718,7 +893,9 @@ function ImportModal({
         </p>
         <div className="csv-example">
           <strong>CSV column headers</strong>
-          <code>name,website,country,industry,notes</code>
+          <code>
+            name,website,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes
+          </code>
           <small>Only name is required. The company_name column is also accepted.</small>
         </div>
         <a className="text-button" href="/branding/leads-template.csv" download>
@@ -843,7 +1020,9 @@ function LeadDetail({
   const [runId, setRunId] = useState<number | null>(null),
     [decision, setDecision] = useState<Decision>('NEEDS_REVIEW'),
     [reviewNotes, setReviewNotes] = useState('');
-  const [tab, setTab] = useState<'reasoning' | 'evidence' | 'history' | 'feedback'>('reasoning');
+  const [tab, setTab] = useState<'reasoning' | 'evidence' | 'history' | 'feedback' | 'calls'>(
+    'reasoning',
+  );
   const ready = project.active_version && project.revision === project.trained_revision;
   useEffect(() => {
     let cancelled = false;
@@ -936,14 +1115,43 @@ function LeadDetail({
               <div>
                 <div className="detail-meta">
                   <ExternalLink url={lead.website} />
-                  <span>{lead.country || 'Location unknown'}</span>
+                  <span>
+                    {[lead.city, lead.country].filter(Boolean).join(', ') || 'Location unknown'}
+                  </span>
                   <span>{lead.industry || 'Industry unknown'}</span>
+                  {lead.employee_count && <span>{lead.employee_count} employees</span>}
                 </div>
+                {(lead.contact_name || lead.contact_phone || lead.contact_email) && (
+                  <div className="detail-meta detail-contact">
+                    {lead.contact_name && (
+                      <span>
+                        <Users size={13} />
+                        {lead.contact_name}
+                        {lead.contact_role ? ' · ' + lead.contact_role : ''}
+                      </span>
+                    )}
+                    {lead.contact_phone && (
+                      <a href={'tel:' + lead.contact_phone.replace(/[^+\d]/g, '')}>
+                        <Phone size={13} />
+                        {lead.contact_phone}
+                      </a>
+                    )}
+                    {lead.contact_email && (
+                      <a href={'mailto:' + lead.contact_email}>
+                        <Mail size={13} />
+                        {lead.contact_email}
+                      </a>
+                    )}
+                  </div>
+                )}
                 <div className="detail-badges">
                   <Badge value={lead.stale ? 'stale' : lead.status}>
                     {lead.stale ? 'Requalification needed' : label(lead.status)}
                   </Badge>
                   {lead.reviewed && <Badge value="ready">Human reviewed</Badge>}
+                  {lead.assigned_to_name && (
+                    <Badge value="ready">Calling: {lead.assigned_to_name}</Badge>
+                  )}
                 </div>
               </div>
               <button className="button secondary" onClick={() => setEditing(true)} disabled={busy}>
@@ -1010,6 +1218,11 @@ function LeadDetail({
                         id: 'feedback',
                         title: 'Training feedback',
                         icon: MessageSquareWarning,
+                      },
+                      {
+                        id: 'calls',
+                        title: 'Calls',
+                        icon: PhoneCall,
                       },
                     ] as const
                   ).map((item) => (
@@ -1194,6 +1407,18 @@ function LeadDetail({
                       <p className="muted">No human reviews yet.</p>
                     )}
                   </div>
+                )}
+                {tab === 'calls' && (
+                  <CallsTab
+                    base={base}
+                    lead={lead}
+                    calls={lead.calls || []}
+                    onSaved={() => {
+                      setRefresh((n) => n + 1);
+                      onChange();
+                      notify('Call logged.');
+                    }}
+                  />
                 )}
                 {tab === 'feedback' && (
                   <FeedbackTab
@@ -1453,8 +1678,138 @@ function statusFilters(queue: boolean) {
       label:
         'Review with the client (' + nextStepBands.review + '–' + (nextStepBands.email - 1) + ')',
     },
+    { value: 'ASSIGNED', label: 'Assigned for calling' },
+    { value: 'UNASSIGNED', label: 'Qualified, not yet assigned' },
     { value: 'NEEDS_REVIEW', label: 'Needs review' },
     { value: 'NOT_A_TARGET', label: 'Not a target' },
     { value: 'STALE', label: 'Training or lead changed' },
   ];
+}
+
+const callOutcomes: Array<{ value: CallOutcome; label: string }> = [
+  { value: 'CONNECTED', label: 'Connected' },
+  { value: 'NO_ANSWER', label: 'No answer' },
+  { value: 'CALLBACK', label: 'Call back later' },
+  { value: 'MEETING_BOOKED', label: 'Meeting booked' },
+  { value: 'NOT_INTERESTED', label: 'Not interested' },
+  { value: 'WRONG_CONTACT', label: 'Wrong contact' },
+];
+/**
+ * Call log for an assigned lead. Logging a call records what happened; it never
+ * changes the qualification, the fit score or the decision.
+ */
+function CallsTab({
+  base,
+  lead,
+  calls,
+  onSaved,
+}: {
+  base: string;
+  lead: Lead;
+  calls: CallLog[];
+  onSaved: () => void;
+}) {
+  const [outcome, setOutcome] = useState<CallOutcome>('CONNECTED');
+  const [notes, setNotes] = useState('');
+  const [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  return (
+    <div className="feedback-tab">
+      <div className="call-contact">
+        <div>
+          <span className="eyebrow">WHO TO CALL</span>
+          <strong>{lead.contact_name || 'No contact person recorded'}</strong>
+          {lead.contact_role && <small>{lead.contact_role}</small>}
+        </div>
+        <div className="call-contact-channels">
+          {lead.contact_phone ? (
+            <a href={'tel:' + lead.contact_phone.replace(/[^+d]/g, '')}>
+              <Phone size={14} />
+              {lead.contact_phone}
+            </a>
+          ) : (
+            <span className="muted">No phone number</span>
+          )}
+          {lead.contact_email ? (
+            <a href={'mailto:' + lead.contact_email}>
+              <Mail size={14} />
+              {lead.contact_email}
+            </a>
+          ) : (
+            <span className="muted">No email address</span>
+          )}
+        </div>
+      </div>
+      <p className="muted">
+        {lead.assigned_to_name
+          ? 'Assigned to ' + lead.assigned_to_name + '.'
+          : 'This lead is not assigned to anyone yet.'}{' '}
+        Logging a call records what happened; it never changes the qualification or the decision.
+      </p>
+      {error && <Alert>{error}</Alert>}
+      <form
+        className="form-stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError('');
+          try {
+            await api(base + '/calls', { method: 'POST', body: json({ outcome, notes }) });
+            setNotes('');
+            onSaved();
+          } catch (err) {
+            setError((err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label>
+          How did the call go?
+          <select value={outcome} onChange={(e) => setOutcome(e.target.value as CallOutcome)}>
+            {callOutcomes.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Call notes
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={4}
+            minLength={5}
+            maxLength={4000}
+            required
+            placeholder="Who you spoke to, what they said, and what happens next."
+          />
+        </label>
+        <div className="form-actions">
+          <button className="button primary" disabled={busy}>
+            {busy ? <Spinner text="Saving…" /> : 'Log this call'}
+          </button>
+        </div>
+      </form>
+      <h3>Call history</h3>
+      {calls.length ? (
+        calls.map((call) => (
+          <div className="human-review-history" key={call.id}>
+            <div>
+              <span className={'next-step call-' + call.outcome.toLowerCase()}>
+                {callOutcomes.find((o) => o.value === call.outcome)?.label || call.outcome}
+              </span>
+              <small>
+                {call.created_by} · {date(call.created_at)}
+              </small>
+            </div>
+            <p>{call.notes}</p>
+          </div>
+        ))
+      ) : (
+        <p className="muted">No calls logged yet.</p>
+      )}
+    </div>
+  );
 }
