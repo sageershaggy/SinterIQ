@@ -108,11 +108,24 @@ export function openDatabase(dataDir: string, legacyPath?: string) {
       created_by TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS lead_feedback_project ON lead_feedback(project_id, applied_version);
+    CREATE TABLE IF NOT EXISTS call_logs (
+      id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+      lead_id INTEGER NOT NULL REFERENCES leads(id),
+      outcome TEXT NOT NULL CHECK(outcome IN ('CONNECTED','NO_ANSWER','CALLBACK','NOT_INTERESTED','WRONG_CONTACT','MEETING_BOOKED')),
+      notes TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS call_logs_lead ON call_logs(lead_id);
   `);
-  // Additive columns for installations created before contact capture existed.
+  // Additive columns for installations created before contact capture and calling existed.
   for (const [table, column, definition] of [
     ['leads', 'contact_name', "TEXT NOT NULL DEFAULT ''"],
     ['leads', 'contact_role', "TEXT NOT NULL DEFAULT ''"],
+    ['leads', 'city', "TEXT NOT NULL DEFAULT ''"],
+    ['leads', 'employee_count', "TEXT NOT NULL DEFAULT ''"],
+    ['leads', 'contact_email', "TEXT NOT NULL DEFAULT ''"],
+    ['leads', 'contact_phone', "TEXT NOT NULL DEFAULT ''"],
+    ['leads', 'assigned_to', 'INTEGER REFERENCES accounts(id)'],
+    ['leads', 'assigned_at', 'TEXT'],
   ] as const)
     if (
       !(

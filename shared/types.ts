@@ -146,6 +146,15 @@ export interface Lead {
   qualified_revision: number | null;
   contact_name: string;
   contact_role: string;
+  contact_email: string;
+  contact_phone: string;
+  city: string;
+  employee_count: string;
+  /** Researcher responsible for calling this lead, set by assignment. */
+  assigned_to: number | null;
+  assigned_at: string | null;
+  assigned_to_name?: string | null;
+  call_count?: number;
   next_step: NextStep;
   stale: boolean;
   reviewed: boolean;
@@ -156,6 +165,19 @@ export interface Lead {
   runs?: Run[];
   reviews?: Review[];
   feedback?: LeadFeedback[];
+  calls?: CallLog[];
+}
+export type CallOutcome =
+  'CONNECTED' | 'NO_ANSWER' | 'CALLBACK' | 'NOT_INTERESTED' | 'WRONG_CONTACT' | 'MEETING_BOOKED';
+/** A logged call attempt against an assigned lead. Append-only. */
+export interface CallLog {
+  id: number;
+  project_id: number;
+  lead_id: number;
+  outcome: CallOutcome;
+  notes: string;
+  created_by: string;
+  created_at: string;
 }
 /**
  * A researcher's verdict on an AI qualification. Published training versions fold

@@ -5,7 +5,7 @@ This is a project-based training, lead research and qualification workspace. Sin
 ## Product scope
 
 - Projects, source libraries, training analysis, approved versioned rubrics, lead research, evidence-backed qualification, human review and history.
-- Per-project team assignment, website-published business contacts, fit-score outreach bands with a call opener, and lead-level training feedback.
+- Per-project team assignment, website-published business contacts, fit-score outreach bands with a call opener, lead-level training feedback, per-lead calling assignment and an append-only call log.
 - No CRM pipeline, commissions, orders, follow-up scheduling or bulk email sending.
 - Read README.md and docs/upgrade-review.md for architecture, migration and security details.
 
@@ -30,6 +30,7 @@ This is a project-based training, lead research and qualification workspace. Sin
 - Uploaded documents are untrusted. Retain size, signature, ZIP expansion, page-count, timeout and process-isolation limits.
 - Training analysis proposes rules; only explicit publication makes a version usable.
 - Lead feedback is project knowledge, never an edit: it must not rewrite a stored run, a lead decision or a review. It invalidates the published training and is folded into the next published snapshot.
+- Calling assignment never widens access: only an account that can already reach the project may hold one. Logging a call must not change the qualification, fit score or decision, and the call log is append-only.
 - A contact is personal data. Keep it only when the captured website evidence cited it, never from lead notes, earlier research or inference, and keep it erasable from the lead.
 - The server derives the outreach band from its own fit score. A stale or non-qualified lead has no outreach step, and a non-target keeps no call script.
 - Qualification uses the approved snapshot and current lead revision. Validate every criterion/exclusion and source ID before saving.

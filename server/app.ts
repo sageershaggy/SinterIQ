@@ -25,6 +25,7 @@ import {
   rubricSchema,
   decisionSchema,
   feedbackSchema,
+  callSchema,
   requiredText,
   text,
   webUrl,
@@ -132,28 +133,41 @@ export const leadQuerySchema = z.object({
       'CALL_READY',
       'SEND_EMAIL',
       'REVIEW_WITH_CLIENT',
+      'ASSIGNED',
+      'UNASSIGNED',
     ])
     .default('ALL'),
+  assigned_to: z.enum(['any', 'me']).default('any'),
 });
-/** One filter definition, shared by the lead list and the CSV export so both agree. */
-function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>) {
-  let where = 'project_id=?';
+/**
+ * One filter definition, shared by the lead list and the CSV export so both agree.
+ * Columns are qualified with `l.` so callers can join the assignee and call count.
+ */
+function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, viewerId: number) {
+  let where = 'l.project_id=?';
   const params: (string | number)[] = [project.id];
   if (input.search) {
     where +=
-      " AND (name LIKE ? ESCAPE '\\' OR industry LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\')";
+      " AND (l.name LIKE ? ESCAPE '\\' OR l.industry LIKE ? ESCAPE '\\' OR l.country LIKE ? ESCAPE '\\' OR l.city LIKE ? ESCAPE '\\' OR l.contact_name LIKE ? ESCAPE '\\')";
     const q = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
-    params.push(q, q, q);
+    params.push(q, q, q, q, q);
   }
   const current = [project.active_version || 0, project.trained_revision || 0, project.revision];
+  const stale =
+    '(l.training_version IS NOT ? OR l.qualified_revision IS NOT l.revision OR ? IS NOT ?)';
   if (input.status === 'REVIEW_QUEUE') {
     where +=
-      " AND (status IN ('UNREVIEWED','NEEDS_REVIEW') OR (latest_run_id IS NOT NULL AND (training_version IS NOT ? OR qualified_revision IS NOT revision OR ? IS NOT ?)))";
+      " AND (l.status IN ('UNREVIEWED','NEEDS_REVIEW') OR l.assigned_to IS NOT NULL OR (l.latest_run_id IS NOT NULL AND " +
+      stale +
+      '))';
     params.push(...current);
   } else if (input.status === 'STALE') {
-    where +=
-      ' AND latest_run_id IS NOT NULL AND (training_version IS NOT ? OR qualified_revision IS NOT revision OR ? IS NOT ?)';
+    where += ' AND l.latest_run_id IS NOT NULL AND ' + stale;
     params.push(...current);
+  } else if (input.status === 'ASSIGNED') {
+    where += ' AND l.assigned_to IS NOT NULL';
+  } else if (input.status === 'UNASSIGNED') {
+    where += " AND l.assigned_to IS NULL AND l.status='QUALIFIED'";
   } else if (
     input.status === 'CALL_READY' ||
     input.status === 'SEND_EMAIL' ||
@@ -162,24 +176,28 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>) {
     // Mirrors nextStepFor: outreach bands only describe results from the current training.
     const band =
       input.status === 'CALL_READY'
-        ? " AND status='QUALIFIED' AND score>=" + nextStepBands.call
+        ? " AND l.status='QUALIFIED' AND l.score>=" + nextStepBands.call
         : input.status === 'SEND_EMAIL'
-          ? " AND status='QUALIFIED' AND score>=" +
+          ? " AND l.status='QUALIFIED' AND l.score>=" +
             nextStepBands.email +
-            ' AND score<' +
+            ' AND l.score<' +
             nextStepBands.call
-          : " AND (status='NEEDS_REVIEW' OR (status='QUALIFIED' AND score>=" +
+          : " AND (l.status='NEEDS_REVIEW' OR (l.status='QUALIFIED' AND l.score>=" +
             nextStepBands.review +
-            ' AND score<' +
+            ' AND l.score<' +
             nextStepBands.email +
             '))';
     where +=
       band +
-      ' AND latest_run_id IS NOT NULL AND training_version IS ? AND qualified_revision IS revision AND ? IS ?';
+      ' AND l.latest_run_id IS NOT NULL AND l.training_version IS ? AND l.qualified_revision IS l.revision AND ? IS ?';
     params.push(...current);
   } else if (input.status !== 'ALL') {
-    where += ' AND status=?';
+    where += ' AND l.status=?';
     params.push(input.status);
+  }
+  if (input.assigned_to === 'me') {
+    where += ' AND l.assigned_to=?';
+    params.push(viewerId);
   }
   return { where, params };
 }
@@ -201,7 +219,7 @@ function insertLead(db: DB, projectId: number, lead: z.infer<typeof leadSchema>)
   const id = Number(
     db
       .prepare(
-        'INSERT INTO leads (project_id,name,name_key,website,website_key,country,industry,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO leads (project_id,name,name_key,website,website_key,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       )
       .run(
         projectId,
@@ -210,7 +228,13 @@ function insertLead(db: DB, projectId: number, lead: z.infer<typeof leadSchema>)
         lead.website,
         wKey,
         lead.country,
+        lead.city,
         lead.industry,
+        lead.employee_count,
+        lead.contact_name,
+        lead.contact_role,
+        lead.contact_email,
+        lead.contact_phone,
         lead.notes,
         now(),
         now(),
@@ -676,15 +700,16 @@ export function createApp(options: {
         page_size: z.coerce.number().int().min(1).max(100).default(50),
       })
       .parse(req.query);
-    const { where, params } = leadFilter(project, input);
+    const { where, params } = leadFilter(project, input, req.user.id);
     const { count } = db
-      .prepare('SELECT COUNT(*) count FROM leads WHERE ' + where)
+      .prepare('SELECT COUNT(*) count FROM leads l WHERE ' + where)
       .get(...params) as { count: number };
     const rows = db
       .prepare(
-        'SELECT id,project_id,name,website,country,industry,notes,revision,status,score,confidence,latest_run_id,training_version,qualified_revision,contact_name,contact_role,reviewed,created_at,updated_at FROM leads WHERE ' +
+        'SELECT l.*,a.name assigned_to_name,(SELECT COUNT(*) FROM call_logs c WHERE c.lead_id=l.id) call_count' +
+          ' FROM leads l LEFT JOIN accounts a ON a.id=l.assigned_to WHERE ' +
           where +
-          ' ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?',
+          ' ORDER BY l.updated_at DESC,l.id DESC LIMIT ? OFFSET ?',
       )
       .all(...params, input.page_size, (input.page - 1) * input.page_size) as Lead[];
     res.json({
@@ -744,7 +769,13 @@ export function createApp(options: {
           name: row.name || row.company_name || '',
           website,
           country: row.country || '',
+          city: row.city || '',
           industry: row.industry || '',
+          employee_count: row.employee_count || row.employees || '',
+          contact_name: row.contact_name || row.contact_person || '',
+          contact_role: row.contact_role || row.job_title || '',
+          contact_email: row.contact_email || row.email || '',
+          contact_phone: row.contact_phone || row.phone || '',
           notes: row.notes || row.description || '',
         });
         if (!parsed.success)
@@ -826,9 +857,13 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     // Export follows the same filter as the table, so "export what I am looking at" holds.
     const input = leadQuerySchema.parse(req.query);
-    const { where, params } = leadFilter(project, input);
+    const { where, params } = leadFilter(project, input, req.user.id);
     const rows = db
-      .prepare('SELECT * FROM leads WHERE ' + where + ' ORDER BY name')
+      .prepare(
+        'SELECT l.*,a.name assigned_to_name FROM leads l LEFT JOIN accounts a ON a.id=l.assigned_to WHERE ' +
+          where +
+          ' ORDER BY l.name',
+      )
       .all(...params) as Lead[];
     const cell = (value: unknown) => {
       let v = String(value ?? '');
@@ -841,8 +876,16 @@ export function createApp(options: {
         'website',
         'contact_name',
         'contact_role',
+        'contact_email',
+        'contact_phone',
         'country',
+        'city',
         'industry',
+        'employee_count',
+        'assigned_to',
+        'calls_logged',
+        'last_call_outcome',
+        'last_call_notes',
         'decision',
         'score',
         'confidence',
@@ -874,13 +917,31 @@ export function createApp(options: {
           : undefined;
         const result = run ? JSON.parse(run.result_json) : undefined;
         const serialized = serializeLead(row, project);
+        const calls = {
+          total: (
+            db.prepare('SELECT COUNT(*) n FROM call_logs WHERE lead_id=?').get(row.id) as {
+              n: number;
+            }
+          ).n,
+          last: db
+            .prepare('SELECT outcome,notes FROM call_logs WHERE lead_id=? ORDER BY id DESC LIMIT 1')
+            .get(row.id) as { outcome: string; notes: string } | undefined,
+        };
         return [
           row.name,
           row.website,
           row.contact_name,
           row.contact_role,
+          row.contact_email,
+          row.contact_phone,
           row.country,
+          row.city,
           row.industry,
+          row.employee_count,
+          row.assigned_to_name || '',
+          calls.total,
+          calls.last?.outcome || '',
+          calls.last?.notes || '',
           row.status,
           row.score,
           row.confidence,
@@ -935,6 +996,17 @@ export function createApp(options: {
           'SELECT f.*,l.name lead_name FROM lead_feedback f JOIN leads l ON l.id=f.lead_id WHERE f.lead_id=? AND f.project_id=? ORDER BY f.id DESC',
         )
         .all(lead.id, project.id),
+      calls: db
+        .prepare(
+          'SELECT * FROM call_logs WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
+        )
+        .all(lead.id, project.id),
+      assigned_to_name: lead.assigned_to
+        ? ((
+            db.prepare('SELECT name FROM accounts WHERE id=?').get(lead.assigned_to) as
+              { name: string } | undefined
+          )?.name ?? null)
+        : null,
     });
   });
   app.put('/api/projects/:projectId/leads/:leadId', (req, res) => {
@@ -952,14 +1024,20 @@ export function createApp(options: {
     if (duplicate)
       throw new HttpError(409, 'A lead with that name or website already exists in this project.');
     db.prepare(
-      'UPDATE leads SET name=?,name_key=?,website=?,website_key=?,country=?,industry=?,notes=?,revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+      'UPDATE leads SET name=?,name_key=?,website=?,website_key=?,country=?,city=?,industry=?,employee_count=?,contact_name=?,contact_role=?,contact_email=?,contact_phone=?,notes=?,revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
     ).run(
       input.name,
       nameKey(input.name),
       input.website,
       websiteKey(input.website),
       input.country,
+      input.city,
       input.industry,
+      input.employee_count,
+      input.contact_name,
+      input.contact_role,
+      input.contact_email,
+      input.contact_phone,
       input.notes,
       now(),
       lead.id,
@@ -1185,6 +1263,100 @@ export function createApp(options: {
     );
   });
   /**
+   * Assignment hands a lead to one researcher for calling. Only accounts that can already
+   * reach the project may be assigned, so assignment never widens access.
+   */
+  function assign(project: Project, ids: number[], accountId: number | null, actor: string) {
+    if (accountId !== null) {
+      const account = db
+        .prepare('SELECT id,name,role,active FROM accounts WHERE id=?')
+        .get(accountId) as
+        { id: number; name: string; role: User['role']; active: number } | undefined;
+      if (!account || !account.active) throw new HttpError(404, 'That team member was not found.');
+      if (!canReach(db, { ...account, username: '' } as User, project.id))
+        throw new HttpError(
+          400,
+          account.name + ' is not assigned to this project. Grant project access first.',
+        );
+    }
+    return db.transaction(() => {
+      const found = db
+        .prepare(
+          'SELECT id FROM leads WHERE project_id=? AND id IN (' +
+            ids.map(() => '?').join(',') +
+            ')',
+        )
+        .all(project.id, ...ids) as Array<{ id: number }>;
+      const update = db.prepare(
+        'UPDATE leads SET assigned_to=?,assigned_at=?,updated_at=? WHERE id=? AND project_id=?',
+      );
+      for (const lead of found)
+        update.run(accountId, accountId === null ? null : now(), now(), lead.id, project.id);
+      audit(
+        db,
+        project.id,
+        actor,
+        accountId === null ? 'leads.unassigned' : 'leads.assigned',
+        found.length + ' lead(s)' + (accountId === null ? ' returned to the pool.' : ' assigned.'),
+      );
+      return found.length;
+    })();
+  }
+  app.put('/api/projects/:projectId/leads/:leadId/assignment', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const input = z
+      .object({ account_id: z.number().int().positive().nullable() })
+      .strict()
+      .parse(req.body);
+    assign(project, [lead.id], input.account_id, req.user.name);
+    res.json(getLead(db, project, lead.id));
+  });
+  app.post('/api/projects/:projectId/leads/assign', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const input = z
+      .object({
+        ids: z.array(z.number().int().positive()).min(1).max(500),
+        account_id: z.number().int().positive().nullable(),
+      })
+      .strict()
+      .parse(req.body);
+    const count = assign(project, [...new Set(input.ids)], input.account_id, req.user.name);
+    if (!count) throw new HttpError(404, 'No matching leads in this project.');
+    res.json({ assigned: count });
+  });
+  /** Researchers who may hold an assignment in this project. */
+  app.get('/api/projects/:projectId/assignees', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    res.json(
+      db
+        .prepare(
+          "SELECT DISTINCT a.id,a.name,a.username,a.role FROM accounts a LEFT JOIN project_members m ON m.account_id=a.id AND m.project_id=? WHERE a.active=1 AND (a.role='admin' OR m.project_id IS NOT NULL) ORDER BY a.name",
+        )
+        .all(project.id),
+    );
+  });
+  /** Append-only call log. Calling never changes the qualification or the decision. */
+  app.post('/api/projects/:projectId/leads/:leadId/calls', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const input = callSchema.parse(req.body);
+    const id = Number(
+      db
+        .prepare(
+          'INSERT INTO call_logs (project_id,lead_id,outcome,notes,created_by,created_at) VALUES (?,?,?,?,?,?)',
+        )
+        .run(project.id, lead.id, input.outcome, input.notes, req.user.name, now()).lastInsertRowid,
+    );
+    db.prepare('UPDATE leads SET updated_at=? WHERE id=? AND project_id=?').run(
+      now(),
+      lead.id,
+      project.id,
+    );
+    audit(db, project.id, req.user.name, 'lead.call_logged', lead.name + ': ' + input.outcome);
+    res.status(201).json({ id });
+  });
+  /**
    * Removing a lead removes its research with it: runs, reviews, feedback and any
    * preserved reference records. Training versions are unaffected.
    */
@@ -1202,6 +1374,10 @@ export function createApp(options: {
           'DELETE FROM reviews WHERE run_id IN (SELECT id FROM qualification_runs WHERE lead_id=? AND project_id=?)',
         ).run(lead.id, project.id);
         db.prepare('DELETE FROM lead_feedback WHERE lead_id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
+        db.prepare('DELETE FROM call_logs WHERE lead_id=? AND project_id=?').run(
           lead.id,
           project.id,
         );

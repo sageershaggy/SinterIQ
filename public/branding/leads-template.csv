@@ -1,1 +1,2 @@
-name,website,country,industry,notes
+name,website,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes
+Example Pumps Ltd,https://example.com,DE,Stuttgart,Pump manufacturing,150,Alex Muster,Head of Engineering,alex@example.com,+49 711 000000,Known hygienic pump applications

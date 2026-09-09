@@ -34,13 +34,40 @@ export const rubricSchema = z
     questions: z.array(requiredText(800)).max(20).default([]),
   })
   .strict();
+export const emailAddress = text(200).refine(
+  (value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value),
+  'Enter a valid email address.',
+);
+export const phoneNumber = text(40).refine(
+  (value) => !value || /^[+(]?\d[\d\s()./+-]{4,}$/.test(value),
+  'Enter a valid phone number.',
+);
 export const leadSchema = z
   .object({
     name: requiredText(200),
     website: webUrl.default(''),
     country: text(120).default(''),
+    city: text(120).default(''),
     industry: text(200).default(''),
+    employee_count: text(60).default(''),
+    contact_name: text(200).default(''),
+    contact_role: text(200).default(''),
+    contact_email: emailAddress.default(''),
+    contact_phone: phoneNumber.default(''),
     notes: text(10000).default(''),
+  })
+  .strict();
+export const callSchema = z
+  .object({
+    outcome: z.enum([
+      'CONNECTED',
+      'NO_ANSWER',
+      'CALLBACK',
+      'NOT_INTERESTED',
+      'WRONG_CONTACT',
+      'MEETING_BOOKED',
+    ]),
+    notes: requiredText(4000).min(5),
   })
   .strict();
 export const decisionSchema = z.enum(['QUALIFIED', 'NOT_A_TARGET', 'NEEDS_REVIEW']);
