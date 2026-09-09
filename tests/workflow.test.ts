@@ -1122,3 +1122,134 @@ test('lead feedback becomes project training without rewriting the original resu
     f.dispose();
   }
 });
+test('leads can be deleted individually and in bulk, taking their research with them', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const keep = await f.post(base + '/leads', { name: 'Keep Ltd', website: 'https://keep.com' });
+    const one = await f.post(base + '/leads', { name: 'Solo Ltd', website: 'https://solo.com' });
+    const a = await f.post(base + '/leads', { name: 'Bulk A Ltd', website: 'https://bulka.com' });
+    const b = await f.post(base + '/leads', { name: 'Bulk B Ltd', website: 'https://bulkb.com' });
+    // Give one lead a full research trail so deletion has dependent rows to clear.
+    const run = await f.post(base + '/leads/' + one.body.id + '/qualify', {});
+    assert.equal(run.status, 200);
+    assert.equal(
+      (
+        await f.post(base + '/leads/' + one.body.id + '/review', {
+          run_id: run.body.run_id,
+          decision: 'QUALIFIED',
+          notes: 'Confirmed against the captured website evidence.',
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await f.post(base + '/leads/' + one.body.id + '/feedback', {
+          run_id: run.body.run_id,
+          verdict: 'CORRECT',
+          notes: 'The reasoning matched what we expected for this company.',
+        })
+      ).status,
+      201,
+    );
+    const single = await f.agent
+      .delete('/api' + base + '/leads/' + one.body.id)
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', f.csrf);
+    assert.equal(single.status, 200, JSON.stringify(single.body));
+    assert.equal((await f.agent.get('/api' + base + '/leads/' + one.body.id)).status, 404);
+    // The research trail goes with it; the training version does not.
+    assert.equal(
+      (
+        f.db
+          .prepare('SELECT COUNT(*) n FROM qualification_runs WHERE lead_id=?')
+          .get(one.body.id) as { n: number }
+      ).n,
+      0,
+    );
+    assert.equal(
+      (
+        f.db.prepare('SELECT COUNT(*) n FROM lead_feedback WHERE lead_id=?').get(one.body.id) as {
+          n: number;
+        }
+      ).n,
+      0,
+    );
+    assert.equal(
+      (
+        f.db
+          .prepare('SELECT COUNT(*) n FROM training_versions WHERE project_id=?')
+          .get(project.id) as { n: number }
+      ).n,
+      1,
+    );
+    const bulk = await f.post(base + '/leads/delete', { ids: [a.body.id, b.body.id] });
+    assert.equal(bulk.status, 200, JSON.stringify(bulk.body));
+    assert.equal(bulk.body.deleted, 2);
+    const left = await f.agent.get('/api' + base + '/leads');
+    assert.equal(left.body.total, 1);
+    assert.equal(left.body.leads[0].id, keep.body.id);
+    // A lead in another project can never be deleted through this one.
+    const foreign = await f.post('/projects/1/leads/delete', { ids: [keep.body.id] });
+    assert.equal(foreign.status, 404);
+    assert.equal((await f.agent.get('/api' + base + '/leads')).body.total, 1);
+  } finally {
+    f.dispose();
+  }
+});
+test('export follows the active filter and import can update existing leads', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const csv = (rows: string) => Buffer.from('name,website,country,industry\n' + rows);
+    const upload = (body: Buffer, mode?: string) => {
+      const request = f.agent
+        .post('/api' + base + '/leads/import')
+        .set('X-Requested-With', 'Innovista')
+        .set('X-CSRF-Token', f.csrf);
+      if (mode) request.field('on_duplicate', mode);
+      return request.attach('file', body, 'leads.csv');
+    };
+    const first = await upload(csv('Acme Pumps Ltd,https://acme-pumps.com,DE,\n'));
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.deepEqual([first.body.created, first.body.updated, first.body.skipped], [1, 0, 0]);
+    // Re-importing the same file changes nothing and is reported, not silently dropped.
+    const again = await upload(csv('Acme Pumps Ltd,https://acme-pumps.com,DE,\n'));
+    assert.deepEqual([again.body.created, again.body.updated, again.body.skipped], [0, 0, 1]);
+    assert.deepEqual(again.body.duplicates, ['Acme Pumps Ltd']);
+    // With update mode the same row fills in the missing industry instead of being skipped.
+    const merged = await upload(
+      csv('Acme Pumps Ltd,https://acme-pumps.com,DE,Pump manufacturing\n'),
+      'update',
+    );
+    assert.deepEqual([merged.body.created, merged.body.updated, merged.body.skipped], [0, 1, 0]);
+    const listed = await f.agent.get('/api' + base + '/leads?search=Acme');
+    assert.equal(listed.body.leads[0].industry, 'Pump manufacturing');
+    assert.equal(listed.body.leads[0].country, 'DE');
+    // Qualify one lead so the status filters have something to separate.
+    const target = listed.body.leads[0];
+    assert.equal((await f.post(base + '/leads/' + target.id + '/qualify', {})).status, 200);
+    await f.post(base + '/leads', { name: 'Untouched Ltd', website: 'https://untouched-co.com' });
+    const all = await f.agent.get('/api' + base + '/leads/export');
+    assert.ok(all.text.includes('Acme Pumps Ltd'));
+    assert.ok(all.text.includes('Untouched Ltd'));
+    const qualified = await f.agent.get('/api' + base + '/leads/export?status=QUALIFIED');
+    assert.ok(qualified.text.includes('Acme Pumps Ltd'));
+    assert.ok(!qualified.text.includes('Untouched Ltd'));
+    assert.match(qualified.headers['content-disposition'], /qualified-leads\.csv/);
+    const unreviewed = await f.agent.get('/api' + base + '/leads/export?status=UNREVIEWED');
+    assert.ok(unreviewed.text.includes('Untouched Ltd'));
+    assert.ok(!unreviewed.text.includes('Acme Pumps Ltd'));
+    // A search term narrows the export the same way it narrows the table.
+    const searched = await f.agent.get('/api' + base + '/leads/export?search=Untouched');
+    assert.ok(searched.text.includes('Untouched Ltd'));
+    assert.ok(!searched.text.includes('Acme Pumps Ltd'));
+  } finally {
+    f.dispose();
+  }
+});

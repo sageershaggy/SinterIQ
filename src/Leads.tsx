@@ -21,6 +21,8 @@ import {
   Upload,
   Users,
   Pencil,
+  Trash2,
+  ChevronDown,
   Phone,
   Mail,
   MessageSquareWarning,
@@ -68,6 +70,8 @@ export default function Leads({
     [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
+  const [exportOpen, setExportOpen] = useState(false),
+    [confirmDelete, setConfirmDelete] = useState<number[] | null>(null);
   const ready = project.active_version && project.revision === project.trained_revision;
   const reload = () => {
     setRefresh((n) => n + 1);
@@ -114,6 +118,37 @@ export default function Leads({
       cancelled = true;
     };
   }, [project.id, project.active_version, project.revision, refresh, page, query, status]);
+  async function qualifyOne(lead: Lead) {
+    setBusy('lead-' + lead.id);
+    setError('');
+    try {
+      await api(base + '/leads/' + lead.id + '/qualify', { method: 'POST', body: json({}) });
+      if (!mounted.current) return;
+      reload();
+      notify(lead.name + ' researched. Open it to see the evidence.');
+    } catch (e) {
+      if (mounted.current) setError((e as Error).message);
+    } finally {
+      if (mounted.current) setBusy('');
+    }
+  }
+  async function deleteLeads(ids: number[]) {
+    setBusy('Deleting…');
+    setError('');
+    try {
+      if (ids.length === 1) await api(base + '/leads/' + ids[0], { method: 'DELETE' });
+      else await api(base + '/leads/delete', { method: 'POST', body: json({ ids }) });
+      if (!mounted.current) return;
+      setSelected([]);
+      setConfirmDelete(null);
+      reload();
+      notify(ids.length + ' lead' + (ids.length === 1 ? '' : 's') + ' deleted.');
+    } catch (e) {
+      if (mounted.current) setError((e as Error).message);
+    } finally {
+      if (mounted.current) setBusy('');
+    }
+  }
   async function bulkQualify() {
     setError('');
     let completed = 0;
@@ -211,36 +246,70 @@ export default function Leads({
               placeholder="Search company, industry or country…"
             />
           </div>
-          <div className="table-filter">
+          <label className="table-filter">
             <Filter size={15} />
+            <span className="visually-hidden">Filter leads by status</span>
             <select
-              aria-label="Filter leads by status"
               value={status}
               onChange={(e) => {
                 setStatus(e.target.value);
                 setPage(1);
               }}
             >
-              <option value="ALL">All leads</option>
-              {queue && <option value="REVIEW_QUEUE">All awaiting research</option>}
-              <option value="UNREVIEWED">Unreviewed</option>
-              <option value="QUALIFIED">Qualified</option>
-              <option value="CALL_READY">Call ready ({nextStepBands.call}–100)</option>
-              <option value="SEND_EMAIL">
-                Send an email ({nextStepBands.email}–{nextStepBands.call - 1})
-              </option>
-              <option value="REVIEW_WITH_CLIENT">
-                Review with the client ({nextStepBands.review}–{nextStepBands.email - 1})
-              </option>
-              <option value="NEEDS_REVIEW">Needs review</option>
-              <option value="NOT_A_TARGET">Not a target</option>
-              <option value="STALE">Training or lead changed</option>
+              {statusFilters(queue).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
+            <ChevronDown size={15} className="filter-caret" />
+          </label>
+          <div className="export-menu">
+            <button
+              className="button secondary"
+              aria-expanded={exportOpen}
+              aria-haspopup="true"
+              onClick={() => setExportOpen((open) => !open)}
+            >
+              <ArrowDownToLine size={15} />
+              Export
+              <ChevronDown size={14} />
+            </button>
+            {exportOpen && (
+              <div className="export-dropdown" role="menu">
+                <a
+                  role="menuitem"
+                  href={
+                    '/api' +
+                    base +
+                    '/leads/export?' +
+                    new URLSearchParams({ status, search: query })
+                  }
+                  onClick={() => setExportOpen(false)}
+                >
+                  <strong>This view</strong>
+                  <small>
+                    {statusFilters(queue).find((o) => o.value === status)?.label}
+                    {query ? ' · matching “' + query + '”' : ''} · {total} lead
+                    {total === 1 ? '' : 's'}
+                  </small>
+                </a>
+                <div className="export-divider" />
+                {statusFilters(queue)
+                  .filter((option) => option.value !== status)
+                  .map((option) => (
+                    <a
+                      key={option.value}
+                      role="menuitem"
+                      href={'/api' + base + '/leads/export?status=' + option.value}
+                      onClick={() => setExportOpen(false)}
+                    >
+                      {option.label}
+                    </a>
+                  ))}
+              </div>
+            )}
           </div>
-          <a className="button secondary export-button" href={'/api' + base + '/leads/export'}>
-            <ArrowDownToLine size={15} />
-            Export
-          </a>
         </div>
         {selected.length > 0 && (
           <div className="selection-bar">
@@ -254,6 +323,14 @@ export default function Leads({
                   Qualify selected
                 </>
               )}
+            </button>
+            <button
+              className="button danger"
+              disabled={!!busy}
+              onClick={() => setConfirmDelete(selected)}
+            >
+              <Trash2 size={15} />
+              Delete selected
             </button>
             <button className="text-button" disabled={!!busy} onClick={() => setSelected([])}>
               Clear selection
@@ -389,13 +466,45 @@ export default function Leads({
                       </small>
                     </td>
                     <td>
-                      <button
-                        className="icon-button"
-                        onClick={() => setDetail(lead.id)}
-                        aria-label={'View reasoning for ' + lead.name}
-                      >
-                        <ArrowUpRight size={19} />
-                      </button>
+                      <div className="row-actions">
+                        <button
+                          className="button small primary"
+                          disabled={!ready || !!busy}
+                          title={
+                            ready
+                              ? 'Research this lead with AI against training v' +
+                                project.active_version
+                              : 'Publish your training before qualifying leads'
+                          }
+                          onClick={() => void qualifyOne(lead)}
+                        >
+                          {busy === 'lead-' + lead.id ? (
+                            <Spinner text="" />
+                          ) : (
+                            <>
+                              <Sparkles size={14} />
+                              {lead.latest_run_id ? 'Re-run' : 'Qualify'}
+                            </>
+                          )}
+                        </button>
+                        <button
+                          className="icon-button"
+                          onClick={() => setDetail(lead.id)}
+                          aria-label={'View reasoning for ' + lead.name}
+                          title="Open lead"
+                        >
+                          <ArrowUpRight size={18} />
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          disabled={!!busy}
+                          onClick={() => setConfirmDelete([lead.id])}
+                          aria-label={'Delete ' + lead.name}
+                          title="Delete lead"
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -430,6 +539,34 @@ export default function Leads({
           </div>
         </div>
       </section>
+      {confirmDelete && (
+        <Modal title="Delete leads" onClose={() => setConfirmDelete(null)}>
+          <p>
+            Deleting {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'} also removes
+            their qualification runs, human reviews and training feedback. Published training
+            versions are unaffected. This cannot be undone.
+          </p>
+          <div className="form-actions">
+            <button className="button secondary" onClick={() => setConfirmDelete(null)}>
+              Cancel
+            </button>
+            <button
+              className="button danger"
+              disabled={!!busy}
+              onClick={() => void deleteLeads(confirmDelete)}
+            >
+              {busy ? (
+                <Spinner text="Deleting…" />
+              ) : (
+                <>
+                  <Trash2 size={15} />
+                  Delete {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'}
+                </>
+              )}
+            </button>
+          </div>
+        </Modal>
+      )}
       {create && (
         <LeadForm
           projectId={project.id}
@@ -565,8 +702,10 @@ function ImportModal({
   const [file, setFile] = useState<File | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const [onDuplicate, setOnDuplicate] = useState<'skip' | 'update'>('skip');
   const [result, setResult] = useState<{
     created: number;
+    updated: number;
     skipped: number;
     duplicates: string[];
   } | null>(null);
@@ -574,8 +713,8 @@ function ImportModal({
     <Modal title="Import research leads" onClose={onClose}>
       <div className="form-stack">
         <p className="muted">
-          Import up to 500 leads from a UTF-8 CSV. Duplicate names or website domains in this
-          project are skipped.
+          Import up to 5,000 leads from a UTF-8 CSV. A lead already in this project is matched on
+          company name or website domain.
         </p>
         <div className="csv-example">
           <strong>CSV column headers</strong>
@@ -589,7 +728,7 @@ function ImportModal({
         <label className="upload-zone">
           <Upload size={27} />
           <strong>{file?.name || 'Choose a CSV file'}</strong>
-          <small>Up to 1 MB · 500 rows</small>
+          <small>Up to 4 MB · 5,000 rows</small>
           <input
             type="file"
             accept=".csv"
@@ -600,16 +739,31 @@ function ImportModal({
             }}
           />
         </label>
+        <label>
+          When a lead is already in this project
+          <select
+            value={onDuplicate}
+            disabled={busy}
+            onChange={(e) => setOnDuplicate(e.target.value as 'skip' | 'update')}
+          >
+            <option value="skip">Skip it and keep what is already there</option>
+            <option value="update">Update it with the details in this file</option>
+          </select>
+          <small>
+            Updating fills blank fields and refreshes changed ones, then marks the lead for
+            requalification. It never blanks a value the CSV leaves empty.
+          </small>
+        </label>
         {error && <Alert>{error}</Alert>}
         {result && (
           <div className="import-result">
             <CheckCircle2 size={19} />
             <strong>
-              {result.created} created · {result.skipped} duplicates skipped
+              {result.created} created · {result.updated} updated · {result.skipped} unchanged
             </strong>
             {result.duplicates.length > 0 && (
               <details>
-                <summary>Skipped companies</summary>
+                <summary>Companies left unchanged</summary>
                 <ul>
                   {result.duplicates.map((name, i) => (
                     <li key={i}>{name}</li>
@@ -632,8 +786,10 @@ function ImportModal({
               try {
                 const data = new FormData();
                 data.set('file', file!);
+                data.set('on_duplicate', onDuplicate);
                 const result = await api<{
                   created: number;
+                  updated: number;
                   skipped: number;
                   duplicates: string[];
                 }>('/projects/' + projectId + '/leads/import', {
@@ -642,7 +798,12 @@ function ImportModal({
                 });
                 setResult(result);
                 onImported(
-                  result.created + ' leads imported; ' + result.skipped + ' duplicates skipped.',
+                  result.created +
+                    ' created, ' +
+                    result.updated +
+                    ' updated, ' +
+                    result.skipped +
+                    ' unchanged.',
                 );
               } catch (e) {
                 setError((e as Error).message);
@@ -1273,4 +1434,27 @@ function FeedbackTab({
       )}
     </div>
   );
+}
+
+/** Status filters shared by the table dropdown and the export menu. */
+function statusFilters(queue: boolean) {
+  return [
+    { value: 'ALL', label: 'All leads' },
+    ...(queue ? [{ value: 'REVIEW_QUEUE', label: 'All awaiting research' }] : []),
+    { value: 'UNREVIEWED', label: 'Unreviewed' },
+    { value: 'QUALIFIED', label: 'Qualified' },
+    { value: 'CALL_READY', label: 'Call ready (' + nextStepBands.call + '–100)' },
+    {
+      value: 'SEND_EMAIL',
+      label: 'Send an email (' + nextStepBands.email + '–' + (nextStepBands.call - 1) + ')',
+    },
+    {
+      value: 'REVIEW_WITH_CLIENT',
+      label:
+        'Review with the client (' + nextStepBands.review + '–' + (nextStepBands.email - 1) + ')',
+    },
+    { value: 'NEEDS_REVIEW', label: 'Needs review' },
+    { value: 'NOT_A_TARGET', label: 'Not a target' },
+    { value: 'STALE', label: 'Training or lead changed' },
+  ];
 }
