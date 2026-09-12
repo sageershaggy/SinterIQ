@@ -149,11 +149,15 @@ const generated: Generate = async (_config, system, input) => {
     },
   };
 };
-function fixture(call: Generate = generated) {
+function fixture(
+  call: Generate = generated,
+  mail?: (config: unknown, message: SentMail) => Promise<void>,
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'innovista-test-'));
   const { app, db } = createApp({
     dataDir: dir,
     generate: call,
+    sendMail: mail as never,
     fetchWebsite: async (url) => ({
       url,
       content:
@@ -1604,6 +1608,159 @@ test('an unusable website is dropped with a warning instead of losing the compan
     ]);
     assert.match(warned[0].reason, /Imported without a website/);
     assert.match(warned[0].reason, /Add the real website/);
+  } finally {
+    f.dispose();
+  }
+});
+
+interface SentMail {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  replyTo: string;
+}
+test('email sending is gated, header-safe, escaped and logged whether it succeeds or fails', async () => {
+  const sent: SentMail[] = [];
+  let refuse = false;
+  const f = fixture(generated, async (_config, message) => {
+    if (refuse) throw new Error('relay refused');
+    sent.push(message);
+  });
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const created = await f.post(base + '/leads', {
+      name: 'Mailable Pumps Ltd',
+      website: 'https://mailable.com',
+      contact_name: 'Dana Prakash',
+      contact_email: 'dana@mailable.com',
+    });
+    const leadBase = base + '/leads/' + created.body.id;
+    // Nothing can be sent before a mailbox exists.
+    const early = await f.post(leadBase + '/email', {
+      to: 'dana@mailable.com',
+      subject: 'Hello there',
+      body: 'This body is comfortably longer than the minimum length.',
+    });
+    assert.equal(early.status, 409);
+    assert.match(early.body.error, /No workspace mailbox is configured/);
+    // A private or loopback mail host is refused, like any other outbound target.
+    for (const host of ['localhost', '127.0.0.1', '10.0.0.5', 'mail.internal']) {
+      const bad = await f.put('/settings/email', {
+        host,
+        port: 587,
+        from_email: 'research@innovista.example',
+        password: 'mailbox-password',
+      });
+      assert.equal(bad.status, 400, host + ' should be refused');
+    }
+    // Port 25 is relay, not submission.
+    assert.equal(
+      (
+        await f.put('/settings/email', {
+          host: '8.8.8.8',
+          port: 25,
+          from_email: 'research@innovista.example',
+          password: 'mailbox-password',
+        })
+      ).status,
+      400,
+    );
+    const saved = await f.put('/settings/email', {
+      host: '8.8.8.8',
+      port: 587,
+      username: 'research@innovista.example',
+      password: 'mailbox-password',
+      from_name: 'Innovista Research',
+      from_email: 'research@innovista.example',
+      signature: 'Innovista Research AI',
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    // The password never comes back out.
+    assert.equal(saved.body.has_password, true);
+    assert.equal(saved.body.configured, true);
+    assert.ok(!JSON.stringify(saved.body).includes('mailbox-password'));
+    assert.ok(!(await f.agent.get('/api/settings/email')).text.includes('mailbox-password'));
+    // A researcher cannot read or change the mailbox.
+    const account = await f.post('/users', {
+      name: 'Plain Researcher',
+      username: 'plain-researcher',
+      password: 'A-long-researcher-password-2026',
+      role: 'researcher',
+    });
+    await f.put('/users/' + account.body.id + '/projects', { project_ids: [project.id] });
+    const researcher = request.agent(f.app);
+    const login = await researcher
+      .post('/api/auth/login')
+      .set('X-Requested-With', 'Innovista')
+      .send({ username: 'plain-researcher', password: 'A-long-researcher-password-2026' });
+    assert.equal(login.status, 200);
+    assert.equal((await researcher.get('/api/settings/email')).status, 403);
+    // The draft is built from the qualification.
+    assert.equal((await f.post(leadBase + '/qualify', {})).status, 200);
+    const draft = await f.agent.get('/api' + leadBase + '/email/draft');
+    assert.equal(draft.status, 200);
+    assert.equal(draft.body.to, 'dana@mailable.com');
+    assert.match(draft.body.body, /Dana/);
+    assert.match(draft.body.subject, /Mailable Pumps Ltd/);
+    // Header injection via the subject or the recipient is refused or stripped.
+    const injected = await f.post(leadBase + '/email', {
+      to: 'dana@mailable.com\nBcc: attacker@evil.example',
+      subject: 'Hello there',
+      body: 'This body is comfortably longer than the minimum length.',
+    });
+    assert.equal(injected.status, 400);
+    const ok = await f.post(leadBase + '/email', {
+      to: 'dana@mailable.com',
+      subject: 'Quick question\r\nBcc: attacker@evil.example',
+      body: 'Hi Dana,\n\nWe build <b>ceramic</b> bearings & wanted to ask about your pumps.',
+    });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal(sent.length, 1);
+    // The CRLF is collapsed, so no extra header survives.
+    assert.ok(!sent[0].subject.includes('\n'));
+    assert.ok(!sent[0].subject.includes('\r'));
+    assert.match(sent[0].subject, /^Quick question Bcc: attacker@evil.example$/);
+    // Body content is HTML-escaped, and the identity plus opt-out are present.
+    assert.ok(sent[0].html.includes('&lt;b&gt;ceramic&lt;/b&gt;'));
+    assert.ok(!sent[0].html.includes('<b>ceramic</b>'));
+    assert.ok(sent[0].html.includes('&amp;'));
+    assert.match(sent[0].html, /research@innovista.example/);
+    assert.match(sent[0].html, /unsubscribe/i);
+    assert.equal(sent[0].replyTo, 'research@innovista.example');
+    // It is logged on the lead.
+    const after = (await f.agent.get('/api' + leadBase)).body;
+    assert.equal(after.emails.length, 1);
+    assert.equal(after.emails[0].status, 'SENT');
+    assert.equal(after.emails[0].to_email, 'dana@mailable.com');
+    // A refused message is recorded as FAILED rather than vanishing.
+    refuse = true;
+    const failed = await f.post(leadBase + '/email', {
+      to: 'dana@mailable.com',
+      subject: 'Second attempt',
+      body: 'This body is comfortably longer than the minimum length.',
+    });
+    assert.equal(failed.status, 502);
+    // The raw relay error is never returned.
+    assert.ok(!failed.text.includes('relay refused'));
+    const history = (await f.agent.get('/api' + leadBase)).body.emails;
+    assert.equal(history.length, 2);
+    assert.equal(history[0].status, 'FAILED');
+    // Deleting the lead takes its email history with it.
+    await f.agent
+      .delete('/api' + leadBase)
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', f.csrf);
+    assert.equal(
+      (
+        f.db
+          .prepare('SELECT COUNT(*) n FROM email_messages WHERE lead_id=?')
+          .get(created.body.id) as { n: number }
+      ).n,
+      0,
+    );
   } finally {
     f.dispose();
   }

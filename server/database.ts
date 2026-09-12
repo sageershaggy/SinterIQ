@@ -115,6 +115,14 @@ export function openDatabase(dataDir: string, legacyPath?: string) {
       notes TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS call_logs_lead ON call_logs(lead_id);
+    CREATE TABLE IF NOT EXISTS email_messages (
+      id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+      lead_id INTEGER NOT NULL REFERENCES leads(id),
+      to_email TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('SENT','FAILED')), error TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS email_messages_lead ON email_messages(lead_id);
   `);
   // Additive columns for installations created before contact capture and calling existed.
   for (const [table, column, definition] of [

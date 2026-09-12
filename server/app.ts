@@ -26,11 +26,23 @@ import {
   decisionSchema,
   feedbackSchema,
   callSchema,
+  emailSettingsSchema,
+  emailSendSchema,
   requiredText,
   text,
   webUrl,
 } from './validation';
 import { readImportRows, mapImportRows } from './import';
+import {
+  assertAddress,
+  assertMailHost,
+  draftFor,
+  getEmailConfig,
+  publicEmailSettings,
+  renderEmail,
+  sendMail,
+  type Send,
+} from './email';
 import { nextStepFor, nextStepBands } from '../shared/types';
 import type { Lead, Project, Source, TrainingSnapshot, Evidence, User } from '../shared/types';
 
@@ -275,12 +287,14 @@ export function createApp(options: {
   generate?: Generate;
   fetchWebsite?: typeof fetchWebsite;
   extractDocument?: typeof extractDocument;
+  sendMail?: Send;
 }) {
   const production = options.production || false;
   const { db, secrets } = openDatabase(options.dataDir, options.legacyPath);
   const callAi = options.generate || generate;
   const readWebsite = options.fetchWebsite || fetchWebsite;
   const readDocument = options.extractDocument || extractDocument;
+  const deliver = options.sendMail || sendMail;
   const app = express();
   app.disable('x-powered-by');
   if (production && !options.origin?.startsWith('https://'))
@@ -1031,6 +1045,11 @@ export function createApp(options: {
           'SELECT * FROM call_logs WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
         )
         .all(lead.id, project.id),
+      emails: db
+        .prepare(
+          'SELECT * FROM email_messages WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
+        )
+        .all(lead.id, project.id),
       assigned_to_name: lead.assigned_to
         ? ((
             db.prepare('SELECT name FROM accounts WHERE id=?').get(lead.assigned_to) as
@@ -1411,6 +1430,10 @@ export function createApp(options: {
           lead.id,
           project.id,
         );
+        db.prepare('DELETE FROM email_messages WHERE lead_id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
         // Detach the lead's last run before deleting the runs it points at.
         db.prepare('UPDATE leads SET latest_run_id=NULL WHERE id=? AND project_id=?').run(
           lead.id,
@@ -1540,6 +1563,135 @@ export function createApp(options: {
       audit(db, null, req.user.name, 'settings.updated', 'AI provider configuration updated.');
     })();
     res.json(publicSettings(getAiConfig(db, secrets)));
+  });
+  app.get('/api/settings/email', adminOnly, (_req, res) =>
+    res.json(publicEmailSettings(getEmailConfig(db, secrets))),
+  );
+  app.put('/api/settings/email', adminOnly, async (req, res) => {
+    const input = emailSettingsSchema.parse(req.body);
+    if (input.host) await assertMailHost(input.host, input.port);
+    if (input.from_email) assertAddress(input.from_email, 'The sender address');
+    if (input.reply_to) assertAddress(input.reply_to, 'The reply-to address');
+    if (input.host && !input.from_email)
+      throw new HttpError(400, 'A sender address is required — recipients must see who sent it.');
+    db.transaction(() => {
+      const save = db.prepare(
+        'INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+      );
+      save.run('smtp_host', input.host);
+      save.run('smtp_port', String(input.port));
+      save.run('smtp_secure', input.secure ? '1' : '0');
+      save.run('smtp_username', input.username);
+      save.run('smtp_from_name', input.from_name);
+      save.run('smtp_from_email', input.from_email);
+      save.run('smtp_reply_to', input.reply_to);
+      save.run('smtp_signature', input.signature);
+      if (input.clear_password) save.run('smtp_password', '');
+      else if (input.password) save.run('smtp_password', secrets.encrypt(input.password));
+      audit(db, null, req.user.name, 'settings.email_updated', 'Workspace mailbox updated.');
+    })();
+    res.json(publicEmailSettings(getEmailConfig(db, secrets)));
+  });
+  /** Sends to the configured sender address, so setup can be proven before any lead is mailed. */
+  app.post('/api/settings/email/test', adminOnly, expensiveLimit, async (req, res) => {
+    const config = getEmailConfig(db, secrets);
+    if (!config.configured)
+      throw new HttpError(409, 'Save the mailbox settings with a password first.');
+    await single('email-test', () =>
+      deliver(config, {
+        to: config.from_email,
+        subject: 'Innovista Research AI — mailbox test',
+        text: 'Your workspace mailbox is configured correctly.',
+        html: '<p>Your workspace mailbox is configured correctly.</p>',
+        replyTo: config.reply_to || config.from_email,
+      }),
+    );
+    audit(db, null, req.user.name, 'settings.email_tested', 'Test message sent.');
+    res.json({ ok: true, sent_to: config.from_email });
+  });
+  /** The draft a researcher edits before sending, built from the approved qualification. */
+  app.get('/api/projects/:projectId/leads/:leadId/email/draft', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const run = lead.latest_run_id
+      ? (db
+          .prepare('SELECT result_json FROM qualification_runs WHERE id=? AND project_id=?')
+          .get(lead.latest_run_id, project.id) as { result_json: string } | undefined)
+      : undefined;
+    const result = run ? JSON.parse(run.result_json) : undefined;
+    res.json({
+      ...draftFor(lead, result?.outreach?.why_qualified || '', result?.outreach?.call_script || ''),
+      to: lead.contact_email,
+      mailbox: publicEmailSettings(getEmailConfig(db, secrets)),
+    });
+  });
+  app.post('/api/projects/:projectId/leads/:leadId/email', expensiveLimit, async (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const input = emailSendSchema.parse(req.body);
+    const config = getEmailConfig(db, secrets);
+    if (!config.configured)
+      throw new HttpError(
+        409,
+        'No workspace mailbox is configured. An administrator sets it up in Workspace settings.',
+      );
+    // One header-safe recipient per request. Bulk sending is a separate, throttled path.
+    const to = assertAddress(input.to, 'The recipient address');
+    const subject = input.subject.replace(/[\r\n]+/g, ' ').trim();
+    const html = renderEmail({
+      body: input.body,
+      fromName: config.from_name,
+      fromEmail: config.from_email,
+      signature: config.signature,
+      leadName: lead.name,
+    });
+    const record = db.prepare(
+      'INSERT INTO email_messages (project_id,lead_id,to_email,subject,body,status,error,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+    );
+    try {
+      await single('email:' + lead.id, () =>
+        deliver(config, {
+          to,
+          subject,
+          text: input.body,
+          html,
+          replyTo: config.reply_to || config.from_email,
+        }),
+      );
+    } catch (error) {
+      // A refused message is still recorded, so the history stays truthful.
+      record.run(
+        project.id,
+        lead.id,
+        to,
+        subject,
+        input.body,
+        'FAILED',
+        'Delivery refused.',
+        req.user.name,
+        now(),
+      );
+      audit(db, project.id, req.user.name, 'lead.email_failed', lead.name + ' to ' + to);
+      // Never surface a transport error: it can carry credentials and message content.
+      // Sanitized here rather than in the transport, so this holds for every transport.
+      throw error instanceof HttpError
+        ? error
+        : new HttpError(
+            502,
+            'The mail server rejected the message. Check the mailbox settings and try again.',
+          );
+    }
+    const id = Number(
+      record.run(project.id, lead.id, to, subject, input.body, 'SENT', '', req.user.name, now())
+        .lastInsertRowid,
+    );
+    db.prepare('UPDATE leads SET updated_at=? WHERE id=? AND project_id=?').run(
+      now(),
+      lead.id,
+      project.id,
+    );
+    audit(db, project.id, req.user.name, 'lead.email_sent', lead.name + ' to ' + to);
+    res.status(201).json({ id });
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {

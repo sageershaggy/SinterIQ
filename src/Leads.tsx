@@ -40,6 +40,7 @@ import type {
   LeadFeedback,
   CallLog,
   CallOutcome,
+  EmailMessage,
   User,
 } from '../shared/types';
 import { api, date, json, label } from './api';
@@ -1135,9 +1136,9 @@ function LeadDetail({
   const [runId, setRunId] = useState<number | null>(null),
     [decision, setDecision] = useState<Decision>('NEEDS_REVIEW'),
     [reviewNotes, setReviewNotes] = useState('');
-  const [tab, setTab] = useState<'reasoning' | 'evidence' | 'history' | 'feedback' | 'calls'>(
-    'reasoning',
-  );
+  const [tab, setTab] = useState<
+    'reasoning' | 'evidence' | 'history' | 'feedback' | 'calls' | 'email'
+  >('reasoning');
   const ready = project.active_version && project.revision === project.trained_revision;
   useEffect(() => {
     let cancelled = false;
@@ -1339,6 +1340,11 @@ function LeadDetail({
                         title: 'Calls',
                         icon: PhoneCall,
                       },
+                      {
+                        id: 'email',
+                        title: 'Email',
+                        icon: Mail,
+                      },
                     ] as const
                   ).map((item) => (
                     <button
@@ -1522,6 +1528,18 @@ function LeadDetail({
                       <p className="muted">No human reviews yet.</p>
                     )}
                   </div>
+                )}
+                {tab === 'email' && (
+                  <EmailTab
+                    base={base}
+                    lead={lead}
+                    emails={lead.emails || []}
+                    onSent={() => {
+                      setRefresh((n) => n + 1);
+                      onChange();
+                      notify('Email sent and logged against this lead.');
+                    }}
+                  />
                 )}
                 {tab === 'calls' && (
                   <CallsTab
@@ -1925,6 +1943,160 @@ function CallsTab({
         ))
       ) : (
         <p className="muted">No calls logged yet.</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Compose and send one email to a lead. The draft comes from the approved qualification;
+ * the researcher edits it and sends deliberately. Every message is logged, sent or refused.
+ */
+function EmailTab({
+  base,
+  lead,
+  emails,
+  onSent,
+}: {
+  base: string;
+  lead: Lead;
+  emails: EmailMessage[];
+  onSent: () => void;
+}) {
+  const [to, setTo] = useState(lead.contact_email);
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [mailbox, setMailbox] = useState<{ configured: boolean; from_email: string } | null>(null);
+  const [error, setError] = useState(''),
+    [busy, setBusy] = useState(false),
+    [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    api<{
+      subject: string;
+      body: string;
+      to: string;
+      mailbox: { configured: boolean; from_email: string };
+    }>(base + '/email/draft')
+      .then((draft) => {
+        if (cancelled) return;
+        setSubject(draft.subject);
+        setBody(draft.body);
+        setTo(draft.to || lead.contact_email);
+        setMailbox(draft.mailbox);
+      })
+      .catch((e) => {
+        if (!cancelled) setError((e as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [base]);
+  if (loading) return <Spinner text="Preparing a draft…" />;
+  return (
+    <div className="feedback-tab">
+      {mailbox && !mailbox.configured && (
+        <Alert>
+          No workspace mailbox is configured yet. An administrator sets it up in Workspace settings,
+          then you can send from here.
+        </Alert>
+      )}
+      <p className="muted">
+        {mailbox?.configured ? 'Sent from ' + mailbox.from_email + '. ' : ''}
+        The draft below is built from this lead&apos;s qualification — edit it before sending. Every
+        message names the sender and carries an opt-out line, and is logged against this lead.
+      </p>
+      {error && <Alert>{error}</Alert>}
+      <form
+        className="form-stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError('');
+          try {
+            await api(base + '/email', { method: 'POST', body: json({ to, subject, body }) });
+            onSent();
+          } catch (err) {
+            setError((err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label>
+          To
+          <input
+            type="email"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            required
+            maxLength={200}
+            placeholder="No contact email on this lead yet"
+          />
+          {!lead.contact_email && (
+            <small>
+              This lead has no contact email. Add one in Edit context, or type an address here.
+            </small>
+          )}
+        </label>
+        <label>
+          Subject
+          <input
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            required
+            minLength={3}
+            maxLength={200}
+          />
+        </label>
+        <label>
+          Message
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={12}
+            required
+            minLength={20}
+            maxLength={20000}
+          />
+          <small>Blank lines become paragraphs. Your signature is appended automatically.</small>
+        </label>
+        <div className="form-actions">
+          <button className="button primary" disabled={busy || !mailbox?.configured}>
+            {busy ? (
+              <Spinner text="Sending…" />
+            ) : (
+              <>
+                <Mail size={15} />
+                Send email
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+      <h3>Email history</h3>
+      {emails.length ? (
+        emails.map((message) => (
+          <div className="human-review-history" key={message.id}>
+            <div>
+              <Badge value={message.status === 'SENT' ? 'QUALIFIED' : 'NEEDS_REVIEW'}>
+                {message.status === 'SENT' ? 'Sent' : 'Not delivered'}
+              </Badge>
+              <small>
+                {message.to_email} · {message.created_by} · {date(message.created_at)}
+              </small>
+            </div>
+            <p>
+              <strong>{message.subject}</strong>
+            </p>
+            <p className="preserve-text">{message.body}</p>
+          </div>
+        ))
+      ) : (
+        <p className="muted">No emails sent to this lead yet.</p>
       )}
     </div>
   );

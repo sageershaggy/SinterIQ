@@ -70,6 +70,27 @@ export const callSchema = z
     notes: requiredText(4000).min(5),
   })
   .strict();
+export const emailSettingsSchema = z
+  .object({
+    host: text(253).default(''),
+    port: z.coerce.number().int().min(1).max(65535).default(587),
+    secure: z.boolean().default(false),
+    username: text(200).default(''),
+    password: text(400).default(''),
+    clear_password: z.boolean().default(false),
+    from_name: text(120).default(''),
+    from_email: emailAddress.default(''),
+    reply_to: emailAddress.default(''),
+    signature: text(1000).default(''),
+  })
+  .strict();
+export const emailSendSchema = z
+  .object({
+    to: requiredText(200),
+    subject: requiredText(200).min(3),
+    body: requiredText(20000).min(20),
+  })
+  .strict();
 export const decisionSchema = z.enum(['QUALIFIED', 'NOT_A_TARGET', 'NEEDS_REVIEW']);
 const criterionSchema = z
   .object({

@@ -166,6 +166,7 @@ export interface Lead {
   reviews?: Review[];
   feedback?: LeadFeedback[];
   calls?: CallLog[];
+  emails?: EmailMessage[];
 }
 export type CallOutcome =
   'CONNECTED' | 'NO_ANSWER' | 'CALLBACK' | 'NOT_INTERESTED' | 'WRONG_CONTACT' | 'MEETING_BOOKED';
@@ -204,6 +205,32 @@ export interface PreservedRecord {
   legacy_id: number;
   data: Record<string, unknown>;
   imported_at: string;
+}
+/** Shared workspace mailbox. The password is never returned to the browser. */
+export interface EmailSettings {
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  from_name: string;
+  from_email: string;
+  reply_to: string;
+  signature: string;
+  configured: boolean;
+  has_password: boolean;
+}
+/** One outbound email, logged whether it was accepted or refused. */
+export interface EmailMessage {
+  id: number;
+  project_id: number;
+  lead_id: number;
+  to_email: string;
+  subject: string;
+  body: string;
+  status: 'SENT' | 'FAILED';
+  error: string;
+  created_by: string;
+  created_at: string;
 }
 export interface Settings {
   provider: 'gemini' | 'openai_compatible';

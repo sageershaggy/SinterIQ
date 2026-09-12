@@ -5,12 +5,20 @@ import {
   FolderPlus,
   KeyRound,
   LockKeyhole,
+  Mail,
+  Send,
   Plus,
   Save,
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import type { Account, Project, Settings as AiSettings, User } from '../shared/types';
+import type {
+  Account,
+  EmailSettings,
+  Project,
+  Settings as AiSettings,
+  User,
+} from '../shared/types';
 import { api, json, setSession, type Session } from './api';
 import { Alert, Badge, Modal, Spinner } from './ui';
 
@@ -25,6 +33,10 @@ export default function Settings({
   notify: (message: string) => void;
   onCreateProject: () => void;
 }) {
+  const [mailbox, setMailbox] = useState<EmailSettings | null>(null),
+    [mailPassword, setMailPassword] = useState(''),
+    [clearMailPassword, setClearMailPassword] = useState(false),
+    [mailTest, setMailTest] = useState('');
   const [settings, setSettings] = useState<AiSettings | null>(null),
     [key, setKey] = useState(''),
     [clearKey, setClearKey] = useState(false);
@@ -39,11 +51,13 @@ export default function Settings({
     Promise.all([
       user.role === 'admin' ? api<AiSettings>('/settings/llm') : Promise.resolve(null),
       user.role === 'admin' ? api<typeof accounts>('/users') : Promise.resolve([]),
+      user.role === 'admin' ? api<EmailSettings>('/settings/email') : Promise.resolve(null),
     ])
-      .then(([data, users]) => {
+      .then(([data, users, mail]) => {
         if (!cancelled) {
           setSettings(data);
           setAccounts(users);
+          setMailbox(mail);
         }
       })
       .catch((e) => {
@@ -114,6 +128,204 @@ export default function Settings({
                   Create research project
                 </button>
               </div>
+            </section>
+          )}
+          {user.role === 'admin' && mailbox && (
+            <section className="panel">
+              <div className="section-title">
+                <h2>
+                  <Mail size={20} />
+                  Workspace mailbox
+                </h2>
+                <Badge value={mailbox.configured ? 'ready' : 'draft'}>
+                  {mailbox.configured ? 'Ready to send' : 'Not configured'}
+                </Badge>
+              </div>
+              <p className="muted">
+                Outbound email is sent from this one mailbox. Researchers compose and send from a
+                lead; every message is logged against that lead. Use an SMTP submission port — 587
+                with STARTTLS, or 465 with TLS.
+              </p>
+              <form
+                className="form-stack"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy('mailbox');
+                  setError('');
+                  setMailTest('');
+                  try {
+                    const saved = await api<EmailSettings>('/settings/email', {
+                      method: 'PUT',
+                      body: json({
+                        host: mailbox.host,
+                        port: mailbox.port,
+                        secure: mailbox.secure,
+                        username: mailbox.username,
+                        password: mailPassword,
+                        clear_password: clearMailPassword,
+                        from_name: mailbox.from_name,
+                        from_email: mailbox.from_email,
+                        reply_to: mailbox.reply_to,
+                        signature: mailbox.signature,
+                      }),
+                    });
+                    setMailbox(saved);
+                    setMailPassword('');
+                    setClearMailPassword(false);
+                    notify('Workspace mailbox saved.');
+                  } catch (err) {
+                    setError((err as Error).message);
+                  } finally {
+                    setBusy('');
+                  }
+                }}
+              >
+                <div className="form-grid">
+                  <label>
+                    SMTP host
+                    <input
+                      value={mailbox.host}
+                      onChange={(e) => setMailbox({ ...mailbox, host: e.target.value })}
+                      maxLength={253}
+                      placeholder="smtp.yourprovider.com"
+                    />
+                  </label>
+                  <label>
+                    Port
+                    <select
+                      value={String(mailbox.port)}
+                      onChange={(e) =>
+                        setMailbox({
+                          ...mailbox,
+                          port: Number(e.target.value),
+                          secure: e.target.value === '465',
+                        })
+                      }
+                    >
+                      <option value="587">587 — STARTTLS</option>
+                      <option value="465">465 — TLS</option>
+                      <option value="2525">2525 — STARTTLS</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="form-grid">
+                  <label>
+                    Username
+                    <input
+                      value={mailbox.username}
+                      onChange={(e) => setMailbox({ ...mailbox, username: e.target.value })}
+                      maxLength={200}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label>
+                    Password
+                    <input
+                      type="password"
+                      value={mailPassword}
+                      onChange={(e) => setMailPassword(e.target.value)}
+                      maxLength={400}
+                      autoComplete="new-password"
+                      placeholder={
+                        mailbox.has_password ? 'Saved · leave blank to keep' : 'Mailbox password'
+                      }
+                    />
+                    <small>Encrypted at rest and never shown again.</small>
+                  </label>
+                </div>
+                <div className="form-grid">
+                  <label>
+                    Sender name
+                    <input
+                      value={mailbox.from_name}
+                      onChange={(e) => setMailbox({ ...mailbox, from_name: e.target.value })}
+                      maxLength={120}
+                      placeholder="Innovista Research"
+                    />
+                  </label>
+                  <label>
+                    Sender address
+                    <input
+                      type="email"
+                      value={mailbox.from_email}
+                      onChange={(e) => setMailbox({ ...mailbox, from_email: e.target.value })}
+                      maxLength={200}
+                      placeholder="research@yourcompany.com"
+                    />
+                  </label>
+                </div>
+                <label>
+                  Reply-to (optional)
+                  <input
+                    type="email"
+                    value={mailbox.reply_to}
+                    onChange={(e) => setMailbox({ ...mailbox, reply_to: e.target.value })}
+                    maxLength={200}
+                  />
+                  <small>Replies arrive in this mailbox, not in the app.</small>
+                </label>
+                <label>
+                  Signature
+                  <textarea
+                    rows={3}
+                    value={mailbox.signature}
+                    onChange={(e) => setMailbox({ ...mailbox, signature: e.target.value })}
+                    maxLength={1000}
+                    placeholder="Name, company, phone"
+                  />
+                </label>
+                {mailbox.has_password && (
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={clearMailPassword}
+                      onChange={(e) => setClearMailPassword(e.target.checked)}
+                    />
+                    Clear the saved password on save
+                  </label>
+                )}
+                <p className="fine-print">
+                  Every message names the sender and carries an opt-out line. Commercial email is
+                  regulated — GDPR and PECR in the EU, CAN-SPAM in the US — so send only where you
+                  have a lawful basis, and honour replies asking to stop.
+                </p>
+                {mailTest && <div className="import-result">{mailTest}</div>}
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={!!busy || !mailbox.configured}
+                    onClick={async () => {
+                      setBusy('mailtest');
+                      setError('');
+                      setMailTest('');
+                      try {
+                        const result = await api<{ sent_to: string }>('/settings/email/test', {
+                          method: 'POST',
+                          body: json({}),
+                        });
+                        setMailTest('Test message sent to ' + result.sent_to + '.');
+                      } catch (err) {
+                        setError((err as Error).message);
+                      } finally {
+                        setBusy('');
+                      }
+                    }}
+                  >
+                    {busy === 'mailtest' ? (
+                      <Spinner text="Sending…" />
+                    ) : (
+                      <>
+                        <Send size={15} />
+                        Send a test
+                      </>
+                    )}
+                  </button>
+                  <button className="button primary" disabled={busy === 'mailbox'}>
+                    {busy === 'mailbox' ? <Spinner text="Saving…" /> : 'Save mailbox'}
+                  </button>
+                </div>
+              </form>
             </section>
           )}
           <section className="panel" hidden={user.role !== 'admin'}>
