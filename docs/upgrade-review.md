@@ -60,7 +60,7 @@ Earlier company research and technical observations may be supplied to AI as his
 
 The original qualification instructions become a training document. The official Sintertechnik website is captured once on first launch; if unavailable, the project history records that it must be captured later. The starter rubric stays a draft until its open questions are resolved and a person approves it.
 
-Stored LLM settings are migrated. Encrypted legacy keys need the original `.sinteriq-encryption-key` or `SINTERIQ_ENCRYPTION_KEY`. If unavailable, the new app records a migration notice and requires the key to be re-entered. The old database is unchanged.
+Stored LLM settings are migrated. Encrypted legacy keys need the previous system’s original key file or environment variable, still read under their original names `.sinteriq-encryption-key` and `SINTERIQ_ENCRYPTION_KEY` so existing installations keep working. If unavailable, the new app records a migration notice and requires the key to be re-entered. The old database is unchanged.
 
 Migration is transactional and idempotent. Restarting never imports a company twice. Preserve the old database until the migration has been reviewed.
 
@@ -72,7 +72,7 @@ Browser validation uses a disposable database with clearly labeled QA companies 
 
 The product is a shared-team workspace with per-project assignment: a researcher reaches only the projects an administrator assigned to them, and administrators manage accounts, assignments and provider settings. Assignment is enforced on every project-scoped route, and an unassigned project answers 404 rather than 403 so membership cannot be probed by ID. It is an access boundary within one organization's workspace, not a tenancy boundary between independent client organizations sharing a deployment.
 
-Qualification also captures a business contact when — and only when — the captured website evidence itself published one; a name cited to lead notes, earlier research or nothing at all is discarded and recorded as a gap. Contacts are personal data: they are stored per lead, exported with the qualification, and erasable from the lead detail. Earlier research and contact channels migrated from SinterIQ are still excluded from AI requests.
+Qualification also captures a business contact when — and only when — the captured website evidence itself published one; a name cited to lead notes, earlier research or nothing at all is discarded and recorded as a gap. Contacts are personal data: they are stored per lead, exported with the qualification, and erasable from the lead detail. Earlier research and contact channels migrated from the previous system are still excluded from AI requests.
 
 The server derives the outreach band from its own fit score: 80–100 call-ready, 70–79 email, 50–69 review with the client, and nothing below 50. An unresolved decision is always a review regardless of score, and a superseded result advertises no outreach step. The generated call opener is a starting point grounded in the captured evidence; it is not a verified claim about the company, and the researcher checks it before contacting anyone.
 

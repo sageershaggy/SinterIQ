@@ -3,6 +3,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 export function secretStore(dataDir: string) {
+  // SINTERIQ_ENCRYPTION_KEY is the previous system's variable name. It is still read because
+  // existing environments already set it; renaming it would lose access to keys encrypted under it.
   const configured = process.env.INNOVISTA_ENCRYPTION_KEY || process.env.SINTERIQ_ENCRYPTION_KEY;
   const file = path.join(dataDir, '.innovista-encryption-key');
   let key: Buffer;
