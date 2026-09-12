@@ -30,6 +30,7 @@ import {
   text,
   webUrl,
 } from './validation';
+import { readImportRows, mapImportRows } from './import';
 import { nextStepFor, nextStepBands } from '../shared/types';
 import type { Lead, Project, Source, TrainingSnapshot, Evidence, User } from '../shared/types';
 
@@ -200,6 +201,29 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, vi
     params.push(viewerId);
   }
   return { where, params };
+}
+const fieldLabels: Record<string, string> = {
+  name: 'Company name',
+  website: 'Website',
+  country: 'Country',
+  city: 'City',
+  industry: 'Industry',
+  employee_count: 'Employees',
+  contact_name: 'Contact name',
+  contact_role: 'Job title',
+  contact_email: 'Contact email',
+  contact_phone: 'Contact phone',
+  notes: 'Notes',
+};
+/** Turns a validator issue into something a person reading a spreadsheet can act on. */
+function friendlyIssue(path: string, message: string) {
+  const label = fieldLabels[path] || 'This row';
+  if (/expected string to have >=1|too small/i.test(message)) return label + ' is empty.';
+  if (/at most|too big|>=?d+ characters/i.test(message)) return label + ' is too long.';
+  if (/email/i.test(message)) return label + ' is not a valid email address.';
+  if (/phone/i.test(message)) return label + ' is not a valid phone number.';
+  if (/http/i.test(message)) return label + ' must be a complete http(s) address.';
+  return label + ': ' + message;
 }
 function getLead(db: DB, project: Project, id: number) {
   const row = db.prepare('SELECT * FROM leads WHERE id=? AND project_id=?').get(id, project.id) as
@@ -736,53 +760,39 @@ export function createApp(options: {
     '/api/projects/:projectId/leads/import',
     fileLimit,
     upload.single('file'),
-    (req, res) => {
+    async (req, res) => {
       const project = getProject(db, positiveId(req.params.projectId), req.user);
-      if (!req.file || !/\.csv$/i.test(req.file.originalname))
-        throw new HttpError(400, 'Select a UTF-8 CSV file.');
-      if (req.file.size > 4_000_000)
-        throw new HttpError(413, 'CSV files must be smaller than 4 MB.');
+      if (!req.file) throw new HttpError(400, 'Choose a file to import.');
       // 'update' refreshes the leads that already exist instead of skipping them.
       const onDuplicate = req.body.on_duplicate === 'update' ? 'update' : 'skip';
-      let records: Record<string, string>[];
-      try {
-        records = parse(new TextDecoder('utf-8', { fatal: true }).decode(req.file.buffer), {
-          columns: (headers: string[]) =>
-            headers.map((h) => h.trim().toLowerCase().replace(/\s+/g, '_')),
-          bom: true,
-          trim: true,
-          skip_empty_lines: true,
-          max_record_size: 20000,
-        });
-      } catch {
+      const rows = await readImportRows(req.file.originalname, req.file.buffer);
+      // Reasons name the field in plain words — never a raw validator message.
+      const { leads, problems } = mapImportRows(rows, (candidate) => {
+        const parsed = leadSchema.safeParse(candidate);
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          return { ok: false, reason: friendlyIssue(String(issue.path[0] ?? ''), issue.message) };
+        }
+        if (parsed.data.website) {
+          try {
+            checkedUrl(parsed.data.website);
+          } catch {
+            return {
+              ok: false,
+              reason: 'The website "' + parsed.data.website + '" is not a public http(s) address.',
+            };
+          }
+        }
+        return { ok: true, value: parsed.data };
+      });
+      if (!leads.length)
         throw new HttpError(
           400,
-          'The CSV is malformed. Use headers: name, website, country, industry, notes.',
+          'Nothing in that file could be imported as a company lead. This importer creates companies, so each row needs a Company Name (or Name) value. ' +
+            (problems.length
+              ? 'First problem — row ' + problems[0].row + ': ' + problems[0].reason
+              : ''),
         );
-      }
-      if (!records.length || records.length > 5000)
-        throw new HttpError(400, 'Import between 1 and 5,000 leads per CSV.');
-      const leads = records.map((row, i) => {
-        let website = row.website || row.company_website || '';
-        if (website && !/^https?:\/\//i.test(website)) website = 'https://' + website;
-        const parsed = leadSchema.safeParse({
-          name: row.name || row.company_name || '',
-          website,
-          country: row.country || '',
-          city: row.city || '',
-          industry: row.industry || '',
-          employee_count: row.employee_count || row.employees || '',
-          contact_name: row.contact_name || row.contact_person || '',
-          contact_role: row.contact_role || row.job_title || '',
-          contact_email: row.contact_email || row.email || '',
-          contact_phone: row.contact_phone || row.phone || '',
-          notes: row.notes || row.description || '',
-        });
-        if (!parsed.success)
-          throw new HttpError(400, 'CSV row ' + (i + 2) + ': ' + parsed.error.issues[0].message);
-        if (parsed.data.website) checkedUrl(parsed.data.website);
-        return parsed.data;
-      });
       const results = db.transaction(() => {
         let created = 0,
           updated = 0;
@@ -840,17 +850,20 @@ export function createApp(options: {
             updated +
             ' updated; ' +
             duplicates.length +
-            ' unchanged duplicates skipped.',
+            ' unchanged duplicates skipped; ' +
+            problems.length +
+            ' rows could not be read.',
         );
         return {
           updated,
-          total: leads.length,
+          total: rows.length,
           created,
           skipped: duplicates.length,
           duplicates,
         };
       })();
-      res.json(results);
+      // Rows that could not be read are reported, never silently dropped.
+      res.json({ ...results, invalid: problems.length, problems: problems.slice(0, 50) });
     },
   );
   app.get('/api/projects/:projectId/leads/export', (req, res) => {

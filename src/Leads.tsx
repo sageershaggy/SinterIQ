@@ -234,7 +234,7 @@ export default function Leads({
         <div className="heading-actions">
           <button className="button secondary" onClick={() => setImporting(true)}>
             <Upload size={16} />
-            Import CSV
+            Import leads
           </button>
           <button className="button primary" onClick={() => setCreate(true)}>
             <Plus size={17} />
@@ -883,20 +883,27 @@ function ImportModal({
     updated: number;
     skipped: number;
     duplicates: string[];
+    invalid: number;
+    problems: Array<{ row: number; name: string; reason: string }>;
   } | null>(null);
   return (
     <Modal title="Import research leads" onClose={onClose}>
       <div className="form-stack">
         <p className="muted">
-          Import up to 5,000 leads from a UTF-8 CSV. A lead already in this project is matched on
-          company name or website domain.
+          Import up to 5,000 leads from CSV, TSV, plain text, JSON or Excel (.xlsx). A lead already
+          in this project is matched on company name or website domain.
         </p>
         <div className="csv-example">
           <strong>CSV column headers</strong>
           <code>
             name,website,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes
           </code>
-          <small>Only name is required. The company_name column is also accepted.</small>
+          <small>
+            Only the company name is required. Common export headings are recognised too — Company
+            Name, Company Website, Company Size, Full Name, Job Title, Emails, Phone Numbers,
+            Locality. A row with no company name is reported and skipped, because a lead is a
+            company.
+          </small>
         </div>
         <a className="text-button" href="/branding/leads-template.csv" download>
           <Download size={15} />
@@ -905,10 +912,10 @@ function ImportModal({
         <label className="upload-zone">
           <Upload size={27} />
           <strong>{file?.name || 'Choose a CSV file'}</strong>
-          <small>Up to 4 MB · 5,000 rows</small>
+          <small>CSV · TSV · TXT · JSON · XLSX — up to 4 MB, 5,000 rows</small>
           <input
             type="file"
-            accept=".csv"
+            accept=".csv,.tsv,.txt,.json,.xlsx,text/csv,application/json"
             disabled={busy}
             onChange={(e) => {
               setFile(e.target.files?.[0] || null);
@@ -937,7 +944,27 @@ function ImportModal({
             <CheckCircle2 size={19} />
             <strong>
               {result.created} created · {result.updated} updated · {result.skipped} unchanged
+              {result.invalid > 0 ? ' · ' + result.invalid + ' skipped' : ''}
             </strong>
+            {result.invalid > 0 && (
+              <details>
+                <summary>
+                  {result.invalid} row{result.invalid === 1 ? '' : 's'} could not be imported
+                </summary>
+                <ul>
+                  {result.problems.map((problem, i) => (
+                    <li key={i}>
+                      <strong>Row {problem.row}</strong>
+                      {problem.name === '(no company)' ? '' : ' · ' + problem.name} —{' '}
+                      {problem.reason}
+                    </li>
+                  ))}
+                  {result.invalid > result.problems.length && (
+                    <li>…and {result.invalid - result.problems.length} more.</li>
+                  )}
+                </ul>
+              </details>
+            )}
             {result.duplicates.length > 0 && (
               <details>
                 <summary>Companies left unchanged</summary>
@@ -969,6 +996,8 @@ function ImportModal({
                   updated: number;
                   skipped: number;
                   duplicates: string[];
+                  invalid: number;
+                  problems: Array<{ row: number; name: string; reason: string }>;
                 }>('/projects/' + projectId + '/leads/import', {
                   method: 'POST',
                   body: data,
@@ -980,7 +1009,9 @@ function ImportModal({
                     result.updated +
                     ' updated, ' +
                     result.skipped +
-                    ' unchanged.',
+                    ' unchanged' +
+                    (result.invalid ? ', ' + result.invalid + ' skipped' : '') +
+                    '.',
                 );
               } catch (e) {
                 setError((e as Error).message);

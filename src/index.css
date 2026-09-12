@@ -3982,3 +3982,23 @@ label {
   margin-top: 8px;
   color: var(--muted);
 }
+
+/* Each project owns the section beneath it, so the tree reads unambiguously */
+.project-nav-group {
+  display: flex;
+  flex-direction: column;
+}
+.project-nav-item .project-caret {
+  margin-left: auto;
+  opacity: 0.45;
+  transition: transform 0.15s ease;
+}
+.project-nav-item .project-caret.is-open {
+  opacity: 0.9;
+  transform: rotate(180deg);
+}
+.project-nav-group .sub-nav {
+  margin: 2px 0 6px 12px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}

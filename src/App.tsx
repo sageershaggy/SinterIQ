@@ -123,38 +123,43 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
         <div className="nav-divider" />
         <div className="nav-caption">PROJECTS</div>
         <div className="project-nav">
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              className={
-                'nav-item project-nav-item ' +
-                (p.id === selected && view !== 'projects' ? 'selected-project' : '')
-              }
-              onClick={() => open(p)}
-            >
-              <span className="project-dot" />
-              {p.name}
-              {selected === p.id && <ChevronDown size={14} />}
-            </button>
-          ))}
-        </div>
-        {project && (
-          <nav className="sub-nav" aria-label="Project">
-            {nav.map((item) => (
-              <button
-                key={item.id}
-                className={'nav-item ' + (view === item.id ? 'active' : '')}
-                onClick={() => navigate(item.id)}
-              >
-                <item.icon size={17} />
-                {item.label}
-                {item.id === 'review' && project.review_count > 0 && (
-                  <span className="nav-count">{project.review_count}</span>
+          {projects.map((p) => {
+            // The section belongs to the project above it, so it is rendered inside the
+            // list rather than after it. With more than one project, trailing it would
+            // attach the section to whichever project happened to be last.
+            const open_ = p.id === selected && view !== 'projects';
+            return (
+              <div key={p.id} className="project-nav-group">
+                <button
+                  className={'nav-item project-nav-item ' + (open_ ? 'selected-project' : '')}
+                  aria-expanded={open_}
+                  onClick={() => open(p)}
+                >
+                  <span className="project-dot" />
+                  {p.name}
+                  <ChevronDown size={14} className={'project-caret ' + (open_ ? 'is-open' : '')} />
+                </button>
+                {open_ && project && (
+                  <nav className="sub-nav" aria-label={p.name}>
+                    {nav.map((item) => (
+                      <button
+                        key={item.id}
+                        className={'nav-item ' + (view === item.id ? 'active' : '')}
+                        onClick={() => navigate(item.id)}
+                      >
+                        <item.icon size={17} />
+                        {item.label}
+                        {item.id === 'review' && project.review_count > 0 && (
+                          <span className="nav-count">{project.review_count}</span>
+                        )}
+                      </button>
+                    ))}
+                  </nav>
                 )}
-              </button>
-            ))}
-          </nav>
-        )}
+              </div>
+            );
+          })}
+        </div>
         <div className="sidebar-bottom">
           <div className="sidebar-note">
             <Sparkles size={19} />
