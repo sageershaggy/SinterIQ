@@ -1518,20 +1518,21 @@ test('a large import completes in one transaction and reports every row', async 
       .attach('file', Buffer.from(lines.join('\n') + '\n'), 'scale.csv');
     const elapsed = Date.now() - started;
     assert.equal(response.status, 200, JSON.stringify(response.body).slice(0, 300));
-    assert.equal(response.body.created, rows);
-    assert.equal(response.body.invalid, 2);
+    // Only the row with no company name is unusable. The private address costs that row
+    // its website, not its place in the project.
+    assert.equal(response.body.created, rows + 1);
+    assert.equal(response.body.invalid, 1);
+    assert.equal(response.body.warned, 1);
     assert.equal(response.body.total, rows + 2);
-    // The private address is refused by name, not by a raw validator message.
-    assert.ok(
-      response.body.problems.some((p: { reason: string }) => /not a public http/.test(p.reason)),
-    );
+    assert.match(response.body.problems[0].reason, /No company name/);
+    assert.match(response.body.warnings[0].reason, /Imported without a website/);
     assert.equal(
       (
         f.db.prepare('SELECT COUNT(*) n FROM leads WHERE project_id=?').get(project.id) as {
           n: number;
         }
       ).n,
-      rows,
+      rows + 1,
     );
     assert.ok(elapsed < 30000, 'import of ' + rows + ' rows took ' + elapsed + 'ms');
     // Re-importing the same file updates in place rather than duplicating.
@@ -1549,8 +1550,60 @@ test('a large import completes in one transaction and reports every row', async 
           n: number;
         }
       ).n,
-      rows,
+      rows + 1,
     );
+  } finally {
+    f.dispose();
+  }
+});
+test('an unusable website is dropped with a warning instead of losing the company', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const response = await f.agent
+      .post('/api' + base + '/leads/import')
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', f.csrf)
+      .attach(
+        'file',
+        Buffer.from(
+          'Company Name,Company Website,Company Size\n' +
+            'Good Co,goodco.com,50\n' +
+            'Broken Site Ltd,not a url at all,20\n' +
+            'NA Website Inc,N/A,10\n' +
+            'Private Host Co,http://localhost:3000,5\n' +
+            'No Web Co,,90\n',
+        ),
+        'broken.csv',
+      );
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    // Every company lands; only the websites are discarded.
+    assert.equal(response.body.created, 5);
+    assert.equal(response.body.invalid, 0);
+    assert.equal(response.body.warned, 3);
+    const rows = (await f.agent.get('/api' + base + '/leads?page_size=10')).body.leads as Array<{
+      name: string;
+      website: string;
+    }>;
+    assert.equal(rows.length, 5);
+    const byName = Object.fromEntries(rows.map((r) => [r.name, r.website]));
+    assert.equal(byName['Good Co'], 'https://goodco.com');
+    // A malformed value, a hostname with no dot, and a private address are all refused.
+    assert.equal(byName['Broken Site Ltd'], '');
+    assert.equal(byName['NA Website Inc'], '');
+    assert.equal(byName['Private Host Co'], '');
+    assert.equal(byName['No Web Co'], '');
+    // The warnings name the row and say what to do.
+    const warned = response.body.warnings as Array<{ row: number; name: string; reason: string }>;
+    assert.deepEqual(warned.map((w) => w.name).sort(), [
+      'Broken Site Ltd',
+      'NA Website Inc',
+      'Private Host Co',
+    ]);
+    assert.match(warned[0].reason, /Imported without a website/);
+    assert.match(warned[0].reason, /Add the real website/);
   } finally {
     f.dispose();
   }

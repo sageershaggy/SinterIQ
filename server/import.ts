@@ -240,10 +240,12 @@ export function mapImportRows<T>(
   rows: Record<string, string>[],
   validate: (
     candidate: Record<string, string>,
-  ) => { ok: true; value: T } | { ok: false; reason: string },
+  ) => { ok: true; value: T; warning?: string } | { ok: false; reason: string },
 ) {
   const leads: T[] = [];
   const problems: RowProblem[] = [];
+  /** Rows that imported, but with something unusable dropped along the way. */
+  const warnings: RowProblem[] = [];
   rows.forEach((row, index) => {
     let website = pick(row, 'website');
     if (website && !/^https?:\/\//i.test(website)) website = 'https://' + website;
@@ -271,8 +273,12 @@ export function mapImportRows<T>(
       return;
     }
     const result = validate(candidate);
-    if (result.ok) leads.push(result.value);
-    else problems.push({ row: line, name: candidate.name, reason: result.reason });
+    if (!result.ok) {
+      problems.push({ row: line, name: candidate.name, reason: result.reason });
+      return;
+    }
+    leads.push(result.value);
+    if (result.warning) warnings.push({ row: line, name: candidate.name, reason: result.warning });
   });
-  return { leads, problems };
+  return { leads, problems, warnings };
 }

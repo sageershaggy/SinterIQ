@@ -75,6 +75,9 @@ export default function Leads({
     [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
+  const [filterOpen, setFilterOpen] = useState(false),
+    filterRef = useRef<HTMLDivElement>(null),
+    exportRef = useRef<HTMLDivElement>(null);
   const [exportOpen, setExportOpen] = useState(false),
     [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
     [assigning, setAssigning] = useState<number[] | null>(null),
@@ -97,6 +100,27 @@ export default function Leads({
     }, 250);
     return () => clearTimeout(timer);
   }, [search]);
+  useEffect(() => {
+    // Either menu closes on an outside click or Escape.
+    if (!filterOpen && !exportOpen) return;
+    const away = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!filterRef.current?.contains(target)) setFilterOpen(false);
+      if (!exportRef.current?.contains(target)) setExportOpen(false);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFilterOpen(false);
+        setExportOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [filterOpen, exportOpen]);
   useEffect(() => {
     api<User[]>(base + '/assignees')
       .then(setAssignees)
@@ -300,30 +324,53 @@ export default function Leads({
               placeholder="Search company, industry or country…"
             />
           </div>
-          <label className="table-filter">
-            <Filter size={15} />
-            <span className="visually-hidden">Filter leads by status</span>
-            <select
-              value={status}
-              onChange={(e) => {
-                setStatus(e.target.value);
-                setPage(1);
+          {/* A real dropdown rather than a native select: the OS popup cannot be aligned
+              or padded, and its hit area does not match the control. */}
+          <div className="filter-menu" ref={filterRef}>
+            <button
+              className="table-filter"
+              aria-haspopup="listbox"
+              aria-expanded={filterOpen}
+              onClick={() => {
+                setFilterOpen((open) => !open);
+                setExportOpen(false);
               }}
             >
-              {statusFilters(queue).map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={15} className="filter-caret" />
-          </label>
-          <div className="export-menu">
+              <Filter size={15} />
+              <span className="filter-value">
+                {statusFilters(queue).find((o) => o.value === status)?.label || 'All leads'}
+              </span>
+              <ChevronDown size={15} className={'filter-caret ' + (filterOpen ? 'is-open' : '')} />
+            </button>
+            {filterOpen && (
+              <div className="filter-dropdown" role="listbox">
+                {statusFilters(queue).map((option) => (
+                  <button
+                    key={option.value}
+                    role="option"
+                    aria-selected={status === option.value}
+                    className={status === option.value ? 'is-selected' : ''}
+                    onClick={() => {
+                      setStatus(option.value);
+                      setPage(1);
+                      setFilterOpen(false);
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="export-menu" ref={exportRef}>
             <button
               className="button secondary"
               aria-expanded={exportOpen}
               aria-haspopup="true"
-              onClick={() => setExportOpen((open) => !open)}
+              onClick={() => {
+                setExportOpen((open) => !open);
+                setFilterOpen(false);
+              }}
             >
               <ArrowDownToLine size={15} />
               Export
@@ -905,6 +952,8 @@ function ImportModal({
     duplicates: string[];
     invalid: number;
     problems: Array<{ row: number; name: string; reason: string }>;
+    warned: number;
+    warnings: Array<{ row: number; name: string; reason: string }>;
   } | null>(null);
   return (
     <Modal title="Import research leads" onClose={onClose}>
@@ -966,6 +1015,19 @@ function ImportModal({
               {result.created} created · {result.updated} updated · {result.skipped} unchanged
               {result.invalid > 0 ? ' · ' + result.invalid + ' skipped' : ''}
             </strong>
+            {result.warned > 0 && (
+              <details>
+                <summary>{result.warned} imported without a usable website</summary>
+                <ul>
+                  {result.warnings.map((warning, i) => (
+                    <li key={i}>
+                      <strong>Row {warning.row}</strong>
+                      {warning.name ? ' · ' + warning.name : ''} — {warning.reason}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
             {result.invalid > 0 && (
               <details>
                 <summary>
@@ -1018,6 +1080,8 @@ function ImportModal({
                   duplicates: string[];
                   invalid: number;
                   problems: Array<{ row: number; name: string; reason: string }>;
+                  warned: number;
+                  warnings: Array<{ row: number; name: string; reason: string }>;
                 }>('/projects/' + projectId + '/leads/import', {
                   method: 'POST',
                   body: data,
