@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open [the sign-in page](http://localhost:3000). The public screen always shows username and password login. The app listens only on `127.0.0.1` by default. Previous SinterIQ default passwords and sessions no longer work.
+Open [the sign-in page](http://localhost:3000). The public screen always shows username and password login. The app listens only on `127.0.0.1` by default. Default passwords and sessions from the previous system no longer work.
 
 For a fresh installation, start the app once, then run `npm run admin:init` in another terminal on the server computer. This creates the initial `admin` account with a unique random password displayed once in that terminal. It refuses to replace existing accounts. Optional username and display name: `npm run admin:init -- your-username "Your Name"`. Account provisioning is separate from the login screen; additional accounts are created by an administrator inside **Workspace settings**.
 
@@ -30,7 +30,7 @@ Fit scores are computed from the proportion of positive criteria that match. Con
 
 Training here means approved project context and qualification rules supplied to the AI, not model fine-tuning. No fabricated demo results are used in the live app. Pipeline, outreach, commissions and contact management have been removed from the active product.
 
-## Existing SinterIQ data
+## Existing data from the previous system
 
 First startup reads `sintertechnik.db` without modifying it and imports every company into Sintertechnik. The original company row and previous reasoning are retained as historical context. Contacts, activities, notes and research sessions are copied into immutable, project-scoped reference records. Their original fields and dates remain visible in each lead's **Existing research** section, and earlier activity appears in Research history. Orders and every original record remain in the old database.
 
@@ -42,7 +42,7 @@ The original qualification handbook is attached to Sintertechnik. Its official w
 
 The active database is `data/innovista.db`. API keys use AES-256-GCM encryption with `data/.innovista-encryption-key`, unless a master key is configured in the environment. **Back up the database and its encryption key together.** Losing the key makes stored provider credentials unreadable. Stop the app before copying the data directory, or use SQLite's online backup API; do not copy just a live WAL-mode database file.
 
-Legacy provider settings are migrated when possible. An encrypted legacy key needs `.sinteriq-encryption-key` or `SINTERIQ_ENCRYPTION_KEY`. If it cannot be decrypted, re-enter the provider key in settings. The original database remains unchanged.
+Legacy provider settings are migrated when possible. An encrypted legacy key needs the previous system’s own key, which is still named `.sinteriq-encryption-key` / `SINTERIQ_ENCRYPTION_KEY` because that is what exists on disk and in existing environments. If it cannot be decrypted, re-enter the provider key in settings. The original database remains unchanged.
 
 `GET /api/health` queries the active database's initialization record. It returns HTTP 200 with `database: "connected"` when readable, or HTTP 503 with `database: "unavailable"` if that check fails. It does not expose file paths, records or raw database errors.
 

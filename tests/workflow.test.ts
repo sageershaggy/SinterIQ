@@ -530,7 +530,7 @@ test('lead edits invalidate qualifications and stale edit requests are rejected'
     f.dispose();
   }
 });
-test('CSV import validates atomically, deduplicates within project, and export neutralizes formulas', async () => {
+test('import reports unusable rows, deduplicates within project, and export neutralizes formulas', async () => {
   const f = fixture();
   try {
     await f.setup();
@@ -540,11 +540,23 @@ test('CSV import validates atomically, deduplicates within project, and export n
         .set('X-Requested-With', 'Innovista')
         .set('X-CSRF-Token', f.csrf)
         .attach('file', Buffer.from(csv), 'leads.csv');
+    // A row without a company name is reported, not fatal: the valid lead still lands.
+    const mixed = await upload('name,website\nValid Lead,https://example.com\n,broken');
+    assert.equal(mixed.status, 200, JSON.stringify(mixed.body));
+    assert.equal(mixed.body.created, 1);
+    assert.equal(mixed.body.invalid, 1);
+    assert.equal(mixed.body.problems[0].row, 3);
+    assert.equal((await f.agent.get('/api/projects/1/leads')).body.total, 1);
     assert.equal(
-      (await upload('name,website\nValid Lead,https://example.com\n,broken')).status,
-      400,
+      (
+        await f.agent
+          .post('/api/projects/1/leads/delete')
+          .set('X-Requested-With', 'Innovista')
+          .set('X-CSRF-Token', f.csrf)
+          .send({ ids: [mixed.body.created && 1] })
+      ).status,
+      200,
     );
-    assert.equal((await f.agent.get('/api/projects/1/leads')).body.total, 0);
     const result = await upload(
       'name,website,country\nMüller GmbH,https://example.com,Germany\nMueller GmbH,https://other.org,Germany\n=SUM(A1),https://formula.example,France',
     );
@@ -1339,6 +1351,206 @@ test('qualified leads are assigned for calling and reach the review queue with c
     assert.equal((await f.put(leadBase + '/assignment', { account_id: null })).status, 200);
     assert.equal((await f.agent.get('/api' + base + '/leads?status=ASSIGNED')).body.total, 0);
     assert.equal((await f.agent.get('/api' + base + '/leads?status=UNASSIGNED')).body.total, 1);
+  } finally {
+    f.dispose();
+  }
+});
+test('imports read CSV, TSV, JSON and XLSX, and report unusable rows instead of failing', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const upload = (name: string, body: Buffer, mode?: string) => {
+      const request = f.agent
+        .post('/api' + base + '/leads/import')
+        .set('X-Requested-With', 'Innovista')
+        .set('X-CSRF-Token', f.csrf);
+      if (mode) request.field('on_duplicate', mode);
+      return request.attach('file', body, name);
+    };
+    // A people export: common headings, and rows with no employer at all.
+    const csv = await upload(
+      'contacts.csv',
+      Buffer.from(
+        'Full name,Job title,Emails,Phone numbers,Company Name,Company Website,Company Size,Locality\n' +
+          'Ada Lovelace,Head of Engineering,ada@alpha.com,+441234567890,Alpha Pumps Ltd,alpha-pumps.com,150,Bristol\n' +
+          'Nobody Here,Consultant,nobody@example.com,,,,,\n' +
+          'Grace Hopper,CTO,grace@beta.com,,Beta Industrial,beta-industrial.com,900,Boston\n',
+      ),
+    );
+    assert.equal(csv.status, 200, JSON.stringify(csv.body));
+    // One row has no company, so it is reported — the other two still import.
+    assert.equal(csv.body.created, 2);
+    assert.equal(csv.body.invalid, 1);
+    assert.equal(csv.body.problems[0].row, 3);
+    assert.match(csv.body.problems[0].reason, /No company name/);
+    // Export headings map onto the lead record, including the contact.
+    const listed = await f.agent.get('/api' + base + '/leads?search=Alpha');
+    const lead = listed.body.leads[0];
+    assert.equal(lead.contact_name, 'Ada Lovelace');
+    assert.equal(lead.contact_role, 'Head of Engineering');
+    assert.equal(lead.contact_email, 'ada@alpha.com');
+    assert.equal(lead.employee_count, '150');
+    assert.equal(lead.city, 'Bristol');
+    assert.equal(lead.website, 'https://alpha-pumps.com');
+    // Tab-separated.
+    const tsv = await upload(
+      'more.tsv',
+      Buffer.from('name\tcountry\tcity\nGamma Systems\tDE\tBerlin\n'),
+    );
+    assert.equal(tsv.status, 200, JSON.stringify(tsv.body));
+    assert.equal(tsv.body.created, 1);
+    // JSON, both as a bare array and wrapped.
+    const jsonFile = await upload(
+      'leads.json',
+      Buffer.from(
+        JSON.stringify({
+          leads: [
+            { company_name: 'Delta Works', company_website: 'delta-works.com', city: 'Rotterdam' },
+          ],
+        }),
+      ),
+    );
+    assert.equal(jsonFile.status, 200, JSON.stringify(jsonFile.body));
+    assert.equal(jsonFile.body.created, 1);
+    // Excel, read straight from the workbook archive.
+    const sheet =
+      '<?xml version="1.0"?><worksheet><sheetData>' +
+      '<row r="1"><c r="A1" t="inlineStr"><is><t>Company Name</t></is></c><c r="B1" t="inlineStr"><is><t>Company Website</t></is></c><c r="C1" t="inlineStr"><is><t>Company Size</t></is></c></row>' +
+      '<row r="2"><c r="A2" t="inlineStr"><is><t>Epsilon Engineering</t></is></c><c r="B2" t="inlineStr"><is><t>epsilon-eng.com</t></is></c><c r="C2"><v>240</v></c></row>' +
+      '</sheetData></worksheet>';
+    const workbook = zipArchive({
+      '[Content_Types].xml': '<?xml version="1.0"?><Types/>',
+      'xl/worksheets/sheet1.xml': sheet,
+    });
+    const xlsx = await upload('leads.xlsx', workbook);
+    assert.equal(xlsx.status, 200, JSON.stringify(xlsx.body));
+    assert.equal(xlsx.body.created, 1);
+    const excel = await f.agent.get('/api' + base + '/leads?search=Epsilon');
+    assert.equal(excel.body.leads[0].website, 'https://epsilon-eng.com');
+    assert.equal(excel.body.leads[0].employee_count, '240');
+    // Unsupported formats say what is supported.
+    const bad = await upload('notes.pdf', Buffer.from('%PDF-1.4'));
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /CSV, TSV, plain text, JSON and Excel/);
+    // A file where nothing has a company name explains why, rather than showing a validator message.
+    const empty = await upload(
+      'people.csv',
+      Buffer.from('Full name,Emails\nSomeone,someone@example.com\n'),
+    );
+    assert.equal(empty.status, 400);
+    assert.match(empty.body.error, /needs a Company Name/);
+    assert.ok(!/expected string to have/.test(empty.body.error));
+  } finally {
+    f.dispose();
+  }
+});
+/** Minimal stored-entry ZIP writer, so the XLSX fixture needs no extra dependency. */
+function zipArchive(files: Record<string, string>) {
+  const table = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (buffer: Buffer) => {
+    let crc = 0xffffffff;
+    for (const byte of buffer) crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+  const entries: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [name, value] of Object.entries(files)) {
+    const filename = Buffer.from(name);
+    const data = Buffer.from(value);
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(filename.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(filename.length, 28);
+    central.writeUInt32LE(offset, 42);
+    const entry = Buffer.concat([local, filename, data]);
+    entries.push(entry);
+    centrals.push(Buffer.concat([central, filename]));
+    offset += entry.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...entries, directory, end]);
+}
+test('a large import completes in one transaction and reports every row', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const rows = 1200;
+    const lines = ['name,website,country,city,industry,employee_count'];
+    for (let i = 1; i <= rows; i++)
+      lines.push(
+        'Scale Company ' + i + ',https://scale-' + i + '.com,DE,Berlin,Manufacturing,' + (i % 900),
+      );
+    // A handful of unusable rows mixed in must not stop the rest.
+    lines.push(',https://no-name.com,DE,Berlin,Manufacturing,10');
+    lines.push('Bad Website Ltd,http://localhost:9000,DE,Berlin,Manufacturing,10');
+    const started = Date.now();
+    const response = await f.agent
+      .post('/api' + base + '/leads/import')
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', f.csrf)
+      .attach('file', Buffer.from(lines.join('\n') + '\n'), 'scale.csv');
+    const elapsed = Date.now() - started;
+    assert.equal(response.status, 200, JSON.stringify(response.body).slice(0, 300));
+    assert.equal(response.body.created, rows);
+    assert.equal(response.body.invalid, 2);
+    assert.equal(response.body.total, rows + 2);
+    // The private address is refused by name, not by a raw validator message.
+    assert.ok(
+      response.body.problems.some((p: { reason: string }) => /not a public http/.test(p.reason)),
+    );
+    assert.equal(
+      (
+        f.db.prepare('SELECT COUNT(*) n FROM leads WHERE project_id=?').get(project.id) as {
+          n: number;
+        }
+      ).n,
+      rows,
+    );
+    assert.ok(elapsed < 30000, 'import of ' + rows + ' rows took ' + elapsed + 'ms');
+    // Re-importing the same file updates in place rather than duplicating.
+    const again = await f.agent
+      .post('/api' + base + '/leads/import')
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', f.csrf)
+      .field('on_duplicate', 'update')
+      .attach('file', Buffer.from(lines.join('\n') + '\n'), 'scale.csv');
+    assert.equal(again.status, 200);
+    assert.equal(again.body.created, 0);
+    assert.equal(
+      (
+        f.db.prepare('SELECT COUNT(*) n FROM leads WHERE project_id=?').get(project.id) as {
+          n: number;
+        }
+      ).n,
+      rows,
+    );
   } finally {
     f.dispose();
   }

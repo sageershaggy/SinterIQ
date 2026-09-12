@@ -126,7 +126,7 @@ export function previousResearchContext(
   // Contact identifiers and contact channels stay in the reference UI, not the AI request.
   return JSON.stringify({
     provenance:
-      'Previous SinterIQ research. Historical, unverified context; re-check claims against current evidence and approved training. Previous scores and decisions are not the current decision.',
+      'Research carried over from the previous workspace. Historical, unverified context; re-check claims against current evidence and approved training. Previous scores and decisions are not the current decision.',
     company: pick(company, [
       'company_name',
       'city',

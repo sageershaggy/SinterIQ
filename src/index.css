@@ -1686,18 +1686,47 @@ input::file-selector-button {
   font-size: 11px;
 }
 .table-filter {
+  position: relative;
   display: flex;
+  /* This is a <label>, which is column-flex by default here. Keep the icon beside the select. */
+  flex-direction: row;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   margin-left: auto;
-  color: #68725d;
-  min-width: 180px;
+  padding: 0 12px;
+  min-width: 218px;
+  min-height: 39px;
+  border: 1px solid #dfe4d9;
+  border-radius: 7px;
+  background: #fff;
+  color: #4d5a4d;
+  cursor: pointer;
+}
+.table-filter:hover {
+  border-color: #b5c3aa;
+}
+.table-filter:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(49, 90, 63, 0.12);
 }
 .table-filter select {
+  flex: 1;
+  min-width: 0;
   border: 0;
-  font-size: 10px;
-  padding: 9px 4px;
+  outline: 0;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 10px 16px 10px 0;
   background: transparent;
+  color: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+.table-filter .filter-caret {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  opacity: 0.6;
 }
 .export-button {
   font-size: 10px;
@@ -3729,48 +3758,6 @@ label {
   margin-top: 2px;
 }
 
-/* Filter control — a real, full-width target instead of a bare transparent select */
-.table-filter {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  padding: 0 12px;
-  min-width: 232px;
-  min-height: 39px;
-  border: 1px solid #dfe4d9;
-  border-radius: 7px;
-  background: #fff;
-  color: #4d5a4d;
-  cursor: pointer;
-}
-.table-filter:hover {
-  border-color: #b5c3aa;
-}
-.table-filter:focus-within {
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px rgba(49, 90, 63, 0.12);
-}
-.table-filter select {
-  flex: 1;
-  border: 0;
-  outline: 0;
-  font-size: 12px;
-  font-weight: 550;
-  padding: 10px 18px 10px 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  appearance: none;
-}
-.table-filter .filter-caret {
-  position: absolute;
-  right: 10px;
-  pointer-events: none;
-  opacity: 0.6;
-}
-
 /* Export menu */
 .export-menu {
   position: relative;
@@ -3994,4 +3981,72 @@ label {
   display: block;
   margin-top: 8px;
   color: var(--muted);
+}
+
+/* Each project owns the section beneath it, and expands independently */
+.project-nav-group {
+  display: flex;
+  flex-direction: column;
+}
+.project-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  margin-bottom: 3px;
+}
+.project-nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.project-nav-item.selected-project {
+  background: rgba(255, 255, 255, 0.09);
+}
+.project-nav-name {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #b2beab;
+  min-height: 39px;
+  padding: 10px 4px 10px 11px;
+  background: transparent;
+  border: 0;
+  overflow-wrap: anywhere;
+}
+.project-nav-item.selected-project .project-nav-name {
+  color: #fff;
+  font-weight: 600;
+}
+.project-nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  min-height: 39px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #b2beab;
+  opacity: 0.5;
+}
+.project-nav-toggle:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+.project-nav-toggle svg {
+  transition: transform 0.15s ease;
+}
+.project-nav-toggle svg.is-open {
+  transform: rotate(180deg);
+}
+.project-nav-group .sub-nav {
+  margin: 0 0 6px 12px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
 }

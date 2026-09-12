@@ -273,6 +273,8 @@ function initialize(db: DB, secrets: Secrets, legacyPath?: string) {
         }
         if (old['llm.api_key']) {
           try {
+            // These names belong to the previous system and must not be renamed: they identify
+            // the key file and variable that actually exist next to the old database.
             const envKey = process.env.SINTERIQ_ENCRYPTION_KEY;
             const keyFile = path.join(path.dirname(legacyPath!), '.sinteriq-encryption-key');
             const rawKey =
