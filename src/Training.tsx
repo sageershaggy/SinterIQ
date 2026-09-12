@@ -180,6 +180,28 @@ export default function Training({
       text: 'Qualification rules with open questions resolved',
     },
   ];
+  /**
+   * Publishing is gated, so say which gate is closed. A disabled button with generic
+   * copy next to it reads as broken.
+   */
+  const openQuestions = lines(editor.questions).length;
+  const blocker = !project.website
+    ? 'Add the business website in Project settings first.'
+    : !checklist[0].done
+      ? 'Attach a training document or write research notes first.'
+      : !checklist[1].done
+        ? 'Capture the business website as a source — it must match the domain in Project settings.'
+        : !editor.summary.trim()
+          ? 'Write the business context and ideal customer above.'
+          : lines(editor.criteria).length === 0
+            ? 'Add at least one positive qualification criterion.'
+            : openQuestions > 0
+              ? 'Resolve and clear the ' +
+                openQuestions +
+                ' open question' +
+                (openQuestions === 1 ? '' : 's') +
+                ' above — publishing is blocked while any remain.'
+              : '';
   return (
     <>
       <div className="page-heading">
@@ -256,7 +278,7 @@ export default function Training({
                 className="visually-hidden"
                 type="file"
                 aria-label="Upload training document"
-                accept=".pdf,.docx,.md,.txt"
+                accept=".pdf,.docx,.xlsx,.csv,.tsv,.md,.txt"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   e.target.value = '';
@@ -276,7 +298,8 @@ export default function Training({
               />
             </div>
             <p className="fine-print source-hint">
-              PDF, DOCX, Markdown or text · up to 5 MB per document · text-based PDFs
+              PDF, DOCX, Excel, CSV, TSV, Markdown or text · up to 5 MB per document · text-based
+              PDFs
             </p>
             {busy === 'upload' && <Spinner text="Reading your document…" />}
             {loading ? (
@@ -510,9 +533,12 @@ export default function Training({
                   : 'Approve this training version'}
               </strong>
               <p>
-                {dirty
-                  ? 'Save your draft before publishing.'
-                  : 'Confirm that the sources and rules reflect how this project should qualify leads.'}
+                {ready
+                  ? 'Every qualification runs against this version until you publish another.'
+                  : dirty
+                    ? 'Save your draft before publishing.'
+                    : blocker ||
+                      'Confirm that the sources and rules reflect how this project should qualify leads.'}
               </p>
             </div>
             <button

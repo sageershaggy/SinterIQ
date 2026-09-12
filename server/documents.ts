@@ -1,15 +1,61 @@
 import { fork } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'csv-parse/sync';
 import { HttpError } from './validation';
+import { parseWorkbook } from './import';
+
+/** Flattens a spreadsheet or delimited file into readable lines for training context. */
+function tableToText(rows: Record<string, string>[]) {
+  if (!rows.length) return '';
+  const headers = Object.keys(rows[0]);
+  return rows
+    .map((row) =>
+      headers
+        .map((header) => (row[header] ?? '').trim())
+        .filter(Boolean)
+        .map((value, index) => headers[index] + ': ' + value)
+        .join(' · '),
+    )
+    .filter(Boolean)
+    .join('\n');
+}
 
 export async function extractDocument(file: Express.Multer.File): Promise<string> {
   const extension = path.extname(file.originalname).toLowerCase();
-  if (!['.txt', '.md', '.pdf', '.docx'].includes(extension))
-    throw new HttpError(400, 'Supported documents: PDF, DOCX, Markdown and plain text.');
+  if (!['.txt', '.md', '.pdf', '.docx', '.csv', '.tsv', '.xlsx'].includes(extension))
+    throw new HttpError(
+      400,
+      'Supported documents: PDF, DOCX, Excel (.xlsx), CSV, TSV, Markdown and plain text.',
+    );
   if (file.size > 5_000_000) throw new HttpError(413, 'Documents must be smaller than 5 MB.');
   let text: string;
-  if (extension === '.txt' || extension === '.md') {
+  if (extension === '.xlsx') {
+    // Read through the same bounded archive path the lead importer uses.
+    text = tableToText(await parseWorkbook(file.buffer));
+  } else if (extension === '.csv' || extension === '.tsv') {
+    let decoded: string;
+    try {
+      decoded = new TextDecoder('utf-8', { fatal: true }).decode(file.buffer);
+    } catch {
+      throw new HttpError(400, 'CSV and TSV files must use UTF-8 encoding.');
+    }
+    try {
+      text = tableToText(
+        parse(decoded, {
+          columns: (headers: string[]) => headers.map((h) => h.trim()),
+          delimiter: extension === '.tsv' ? ['\t'] : [',', ';', '\t', '|'],
+          bom: true,
+          trim: true,
+          skip_empty_lines: true,
+          relax_column_count: true,
+          max_record_size: 100000,
+        }) as Record<string, string>[],
+      );
+    } catch {
+      throw new HttpError(400, 'That table could not be read. Check the header row and quoting.');
+    }
+  } else if (extension === '.txt' || extension === '.md') {
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(file.buffer);
     } catch {

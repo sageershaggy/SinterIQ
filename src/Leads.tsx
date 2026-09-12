@@ -108,7 +108,9 @@ export default function Leads({
     setSelected([]);
     const params = new URLSearchParams({
       search: query,
-      status,
+      // "Assigned to me" is the ASSIGNED view narrowed to the signed-in account.
+      status: status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status,
+      ...(status === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
       page: String(page),
       page_size: '30',
     });
@@ -164,6 +166,7 @@ export default function Leads({
   async function assignLeads(ids: number[], accountId: number | null) {
     setBusy('Assigning…');
     setError('');
+    const who = assignees.find((person) => person.id === accountId)?.name || 'the team';
     try {
       if (ids.length === 1)
         await api(base + '/leads/' + ids[0] + '/assignment', {
@@ -181,8 +184,18 @@ export default function Leads({
       reload();
       notify(
         accountId === null
-          ? ids.length + ' lead(s) returned to the pool.'
-          : ids.length + ' lead(s) assigned for calling.',
+          ? ids.length +
+              ' lead' +
+              (ids.length === 1 ? '' : 's') +
+              ' returned to the pool — no longer assigned to anyone.'
+          : ids.length +
+              ' lead' +
+              (ids.length === 1 ? '' : 's') +
+              ' assigned to ' +
+              who +
+              ' for calling. They will see ' +
+              (ids.length === 1 ? 'it' : 'them') +
+              ' under “Assigned to me” in the Review queue.',
       );
     } catch (e) {
       if (mounted.current) setError((e as Error).message);
@@ -324,7 +337,11 @@ export default function Leads({
                     '/api' +
                     base +
                     '/leads/export?' +
-                    new URLSearchParams({ status, search: query })
+                    new URLSearchParams({
+                      status: status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status,
+                      ...(status === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
+                      search: query,
+                    })
                   }
                   onClick={() => setExportOpen(false)}
                 >
@@ -669,29 +686,32 @@ export default function Leads({
       )}
       {confirmDelete && (
         <Modal title="Delete leads" onClose={() => setConfirmDelete(null)}>
-          <p>
-            Deleting {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'} also removes
-            their qualification runs, human reviews and training feedback. Published training
-            versions are unaffected. This cannot be undone.
-          </p>
-          <div className="form-actions">
-            <button className="button secondary" onClick={() => setConfirmDelete(null)}>
-              Cancel
-            </button>
-            <button
-              className="button danger"
-              disabled={!!busy}
-              onClick={() => void deleteLeads(confirmDelete)}
-            >
-              {busy ? (
-                <Spinner text="Deleting…" />
-              ) : (
-                <>
-                  <Trash2 size={15} />
-                  Delete {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'}
-                </>
-              )}
-            </button>
+          {/* .form-stack carries the modal's padding — a bare child sits flush to the edge. */}
+          <div className="form-stack">
+            <p>
+              Deleting {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'} also
+              removes their qualification runs, human reviews and training feedback. Published
+              training versions are unaffected. This cannot be undone.
+            </p>
+            <div className="form-actions">
+              <button className="button secondary" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </button>
+              <button
+                className="button danger"
+                disabled={!!busy}
+                onClick={() => void deleteLeads(confirmDelete)}
+              >
+                {busy ? (
+                  <Spinner text="Deleting…" />
+                ) : (
+                  <>
+                    <Trash2 size={15} />
+                    Delete {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'}
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </Modal>
       )}
@@ -1709,7 +1729,8 @@ function statusFilters(queue: boolean) {
       label:
         'Review with the client (' + nextStepBands.review + '–' + (nextStepBands.email - 1) + ')',
     },
-    { value: 'ASSIGNED', label: 'Assigned for calling' },
+    { value: 'ASSIGNED_TO_ME', label: 'Assigned to me' },
+    { value: 'ASSIGNED', label: 'Assigned for calling (anyone)' },
     { value: 'UNASSIGNED', label: 'Qualified, not yet assigned' },
     { value: 'NEEDS_REVIEW', label: 'Needs review' },
     { value: 'NOT_A_TARGET', label: 'Not a target' },

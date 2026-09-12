@@ -153,7 +153,7 @@ function readZipEntries(buffer: Buffer, wanted: (name: string) => boolean) {
  * Reads the first worksheet of an XLSX. Parsed here rather than through a spreadsheet
  * library so the untrusted archive stays under the same bounds as document uploads.
  */
-async function parseWorkbook(buffer: Buffer) {
+export async function parseWorkbook(buffer: Buffer) {
   if (!buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])))
     throw new HttpError(400, 'That file is not a valid .xlsx workbook.');
   const files = await readZipEntries(

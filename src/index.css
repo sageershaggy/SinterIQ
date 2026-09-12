@@ -3983,22 +3983,70 @@ label {
   color: var(--muted);
 }
 
-/* Each project owns the section beneath it, so the tree reads unambiguously */
+/* Each project owns the section beneath it, and expands independently */
 .project-nav-group {
   display: flex;
   flex-direction: column;
 }
-.project-nav-item .project-caret {
-  margin-left: auto;
-  opacity: 0.45;
+.project-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  margin-bottom: 3px;
+}
+.project-nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.project-nav-item.selected-project {
+  background: rgba(255, 255, 255, 0.09);
+}
+.project-nav-name {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #b2beab;
+  min-height: 39px;
+  padding: 10px 4px 10px 11px;
+  background: transparent;
+  border: 0;
+  overflow-wrap: anywhere;
+}
+.project-nav-item.selected-project .project-nav-name {
+  color: #fff;
+  font-weight: 600;
+}
+.project-nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  min-height: 39px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #b2beab;
+  opacity: 0.5;
+}
+.project-nav-toggle:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+.project-nav-toggle svg {
   transition: transform 0.15s ease;
 }
-.project-nav-item .project-caret.is-open {
-  opacity: 0.9;
+.project-nav-toggle svg.is-open {
   transform: rotate(180deg);
 }
 .project-nav-group .sub-nav {
-  margin: 2px 0 6px 12px;
+  margin: 0 0 6px 12px;
   padding-left: 10px;
   border-left: 1px solid rgba(255, 255, 255, 0.14);
 }

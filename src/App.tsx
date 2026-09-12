@@ -31,7 +31,8 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     [loading, setLoading] = useState(true),
     [error, setError] = useState('');
   const [view, setView] = useState<View>('projects'),
-    [selected, setSelected] = useState<number | null>(null);
+    [selected, setSelected] = useState<number | null>(null),
+    [expanded, setExpanded] = useState<number[]>([]);
   const [newProject, setNewProject] = useState(false),
     [editProject, setEditProject] = useState(false),
     [menu, setMenu] = useState(false);
@@ -66,12 +67,24 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     const timer = setTimeout(() => setNotice(''), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
+  /** Opening a project selects it and expands its section, leaving others as they were. */
   function open(p: Project) {
     setSelected(p.id);
     setView('overview');
+    setExpanded((ids) => (ids.includes(p.id) ? ids : [...ids, p.id]));
     setMenu(false);
   }
+  /** Expansion is independent of selection, so several projects can be open at once. */
+  function toggleExpanded(id: number) {
+    setExpanded((ids) => (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]));
+  }
   function navigate(next: View) {
+    setView(next);
+    setMenu(false);
+  }
+  /** Jump straight to a section of a project that is not the active one. */
+  function navigateTo(p: Project, next: View) {
+    setSelected(p.id);
     setView(next);
     setMenu(false);
   }
@@ -124,33 +137,38 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
         <div className="nav-caption">PROJECTS</div>
         <div className="project-nav">
           {projects.map((p) => {
-            // The section belongs to the project above it, so it is rendered inside the
-            // list rather than after it. With more than one project, trailing it would
-            // attach the section to whichever project happened to be last.
-            const open_ = p.id === selected && view !== 'projects';
+            // Each project owns its own section, rendered inside its group rather than
+            // after the list, and expands independently of which project is active.
+            const isOpen = expanded.includes(p.id);
+            const isActive = p.id === selected && view !== 'projects';
             return (
               <div key={p.id} className="project-nav-group">
-                <button
-                  className={'nav-item project-nav-item ' + (open_ ? 'selected-project' : '')}
-                  aria-expanded={open_}
-                  onClick={() => open(p)}
-                >
-                  <span className="project-dot" />
-                  {p.name}
-                  <ChevronDown size={14} className={'project-caret ' + (open_ ? 'is-open' : '')} />
-                </button>
-                {open_ && project && (
+                <div className={'project-nav-item ' + (isActive ? 'selected-project' : '')}>
+                  <button className="project-nav-name" onClick={() => open(p)}>
+                    <span className="project-dot" />
+                    {p.name}
+                  </button>
+                  <button
+                    className="project-nav-toggle"
+                    aria-expanded={isOpen}
+                    aria-label={(isOpen ? 'Collapse ' : 'Expand ') + p.name}
+                    onClick={() => toggleExpanded(p.id)}
+                  >
+                    <ChevronDown size={14} className={isOpen ? 'is-open' : ''} />
+                  </button>
+                </div>
+                {isOpen && (
                   <nav className="sub-nav" aria-label={p.name}>
                     {nav.map((item) => (
                       <button
                         key={item.id}
-                        className={'nav-item ' + (view === item.id ? 'active' : '')}
-                        onClick={() => navigate(item.id)}
+                        className={'nav-item ' + (isActive && view === item.id ? 'active' : '')}
+                        onClick={() => navigateTo(p, item.id)}
                       >
                         <item.icon size={17} />
                         {item.label}
-                        {item.id === 'review' && project.review_count > 0 && (
-                          <span className="nav-count">{project.review_count}</span>
+                        {item.id === 'review' && p.review_count > 0 && (
+                          <span className="nav-count">{p.review_count}</span>
                         )}
                       </button>
                     ))}
