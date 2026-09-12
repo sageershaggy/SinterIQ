@@ -767,23 +767,32 @@ export function createApp(options: {
       const onDuplicate = req.body.on_duplicate === 'update' ? 'update' : 'skip';
       const rows = await readImportRows(req.file.originalname, req.file.buffer);
       // Reasons name the field in plain words — never a raw validator message.
-      const { leads, problems } = mapImportRows(rows, (candidate) => {
+      const { leads, problems, warnings } = mapImportRows(rows, (candidate) => {
+        // An unusable website must not cost us the company. Blank it, keep the lead, and
+        // say so — the researcher can add the real address and qualify it afterwards.
+        let warning = '';
+        if (candidate.website) {
+          const supplied = candidate.website;
+          let usable = false;
+          try {
+            usable = checkedUrl(supplied).hostname.includes('.');
+          } catch {
+            usable = false;
+          }
+          if (!usable) {
+            candidate.website = '';
+            warning =
+              'Imported without a website: "' +
+              supplied.slice(0, 120) +
+              '" is not a usable public address. Add the real website, then qualify the lead.';
+          }
+        }
         const parsed = leadSchema.safeParse(candidate);
         if (!parsed.success) {
           const issue = parsed.error.issues[0];
           return { ok: false, reason: friendlyIssue(String(issue.path[0] ?? ''), issue.message) };
         }
-        if (parsed.data.website) {
-          try {
-            checkedUrl(parsed.data.website);
-          } catch {
-            return {
-              ok: false,
-              reason: 'The website "' + parsed.data.website + '" is not a public http(s) address.',
-            };
-          }
-        }
-        return { ok: true, value: parsed.data };
+        return { ok: true, value: parsed.data, warning };
       });
       if (!leads.length)
         throw new HttpError(
@@ -851,6 +860,8 @@ export function createApp(options: {
             ' updated; ' +
             duplicates.length +
             ' unchanged duplicates skipped; ' +
+            warnings.length +
+            ' imported without a usable website; ' +
             problems.length +
             ' rows could not be read.',
         );
@@ -863,7 +874,13 @@ export function createApp(options: {
         };
       })();
       // Rows that could not be read are reported, never silently dropped.
-      res.json({ ...results, invalid: problems.length, problems: problems.slice(0, 50) });
+      res.json({
+        ...results,
+        invalid: problems.length,
+        problems: problems.slice(0, 50),
+        warned: warnings.length,
+        warnings: warnings.slice(0, 50),
+      });
     },
   );
   app.get('/api/projects/:projectId/leads/export', (req, res) => {
