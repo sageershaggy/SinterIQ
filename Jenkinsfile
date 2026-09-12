@@ -1,5 +1,5 @@
 // ============================================================
-// SinterIQ / Innovista Research AI — Jenkins Declarative Pipeline
+// Innovista Research AI — Jenkins Declarative Pipeline
 //
 // Runs on the EXISTING Jenkins (jenkins.zengineeringapp.com) that already
 // builds pomotoro and tawazun. This job is fully independent — it touches
@@ -21,7 +21,7 @@
 //
 // Required Jenkins credentials:
 //   - 'dockerhub-yasin' : Username/Password — Docker Hub 'yasinshaikh111' + access token.
-//   - 'sinteriq-env'    : Secret file — the production .env (see .env.production.example).
+//   - 'innovista-research-ai-env'    : Secret file — the production .env (see .env.production.example).
 //   - SCM credential to clone github.com/sageershaggy/SinterIQ — if the repo is
 //     private, add a read-only ed25519 deploy key as an SSH credential and set
 //     it on the job's Git SCM config.
@@ -36,15 +36,15 @@ pipeline {
   environment {
     REGISTRY     = 'docker.io'
     IMAGE_OWNER  = 'yasinshaikh111'                 // Docker Hub namespace
-    IMAGE_REPO   = 'sinteriq'                       // single PRIVATE repo
+    IMAGE_REPO   = 'innovista-research-ai'                       // single PRIVATE repo
     REPO_REF     = "${REGISTRY}/${IMAGE_OWNER}/${IMAGE_REPO}"
 
-    PROJECT      = 'sinteriq'                       // compose project name (stable -> stable volume/containers)
+    PROJECT      = 'innovista-research-ai'                       // compose project name (stable -> stable volume/containers)
     COMPOSE_FILE = 'docker-compose.prod.yml'
-    DOMAIN       = 'sinteriq.zengineeringapp.com'   // health check target (served by host nginx)
+    DOMAIN       = 'innovista-research-ai.zengineeringapp.com'   // health check target (served by host nginx)
     HEALTH_PATH  = '/api/health'                    // NOT /health — this app namespaces it under /api
 
-    // Isolated docker client config — keeps SinterIQ's Docker Hub login out of
+    // Isolated docker client config — keeps this app's Docker Hub login out of
     // the shared Jenkins config so other jobs' auth is never overwritten.
     DOCKER_CONFIG = "${env.WORKSPACE}/.docker"
 
@@ -88,11 +88,11 @@ pipeline {
 
     stage('Deploy') {
       steps {
-        withCredentials([file(credentialsId: 'sinteriq-env', variable: 'ENV_SRC')]) {
+        withCredentials([file(credentialsId: 'innovista-research-ai-env', variable: 'ENV_SRC')]) {
           script {
             // Remember the currently-running image for rollback (empty on first deploy).
             env.PREV_APP = sh(returnStdout: true, script:
-              "docker inspect --format '{{.Config.Image}}' sinteriq-app 2>/dev/null || true").trim()
+              "docker inspect --format '{{.Config.Image}}' innovista-research-ai-app 2>/dev/null || true").trim()
           }
           sh '''
             cp "$ENV_SRC" .env.deploy
@@ -120,7 +120,7 @@ pipeline {
             rm -f .env.deploy
 
             # Prune ONLY this app's dangling images — never touches pomotoro/tawazun.
-            docker image prune -f --filter "label=com.zengineering.app=sinteriq"
+            docker image prune -f --filter "label=com.zengineering.app=innovista-research-ai"
           '''
         }
       }
@@ -136,7 +136,7 @@ pipeline {
             echo "waiting for health... ($i)"; sleep 6
           done
           echo "Health check FAILED"
-          docker logs --tail 80 sinteriq-app || true
+          docker logs --tail 80 innovista-research-ai-app || true
           exit 1
         '''
       }
@@ -148,10 +148,10 @@ pipeline {
       script {
         if (env.PREV_APP?.trim()) {
           echo "Rolling back to previous image: ${env.PREV_APP}"
-          // PREV_APP looks like docker.io/yasinshaikh111/sinteriq:app-<oldsha>.
+          // PREV_APP looks like docker.io/yasinshaikh111/innovista-research-ai:app-<oldsha>.
           // Strip down to the bare IMAGE_TAG (drop the 'app-' role prefix).
           def prevTag = env.PREV_APP.tokenize(':').last().replaceFirst(/^app-/, '')
-          withCredentials([file(credentialsId: 'sinteriq-env', variable: 'ENV_SRC')]) {
+          withCredentials([file(credentialsId: 'innovista-research-ai-env', variable: 'ENV_SRC')]) {
             sh """
               cp "\$ENV_SRC" .env.rollback
               if grep -q '^IMAGE_TAG=' .env.rollback; then
@@ -169,7 +169,7 @@ pipeline {
       }
     }
     always {
-      sh 'docker image prune -f --filter "label=com.zengineering.app=sinteriq" || true'
+      sh 'docker image prune -f --filter "label=com.zengineering.app=innovista-research-ai" || true'
     }
   }
 }

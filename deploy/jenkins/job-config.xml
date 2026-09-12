@@ -1,6 +1,6 @@
 <?xml version='1.1' encoding='UTF-8'?>
 <!--
-  Jenkins job definition for SinterIQ / Innovista Research AI.
+  Jenkins job definition for Innovista Research AI.
   "Pipeline script from SCM": Jenkins clones the repo and runs the root
   Jenkinsfile, so the pipeline stays version-controlled with the app.
 
@@ -12,7 +12,7 @@
   to keep one source of truth.
 -->
 <flow-definition plugin="workflow-job">
-  <description>Innovista Research AI (SinterIQ) — build the app image, push to Docker Hub, deploy the isolated Compose stack behind the host nginx at https://sinteriq.zengineeringapp.com, then health-check /api/health with auto-rollback.</description>
+  <description>Innovista Research AI — build the app image, push to Docker Hub, deploy the isolated Compose stack behind the host nginx at https://innovista-research-ai.zengineeringapp.com, then health-check /api/health with auto-rollback.</description>
   <keepDependencies>false</keepDependencies>
   <properties/>
   <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
@@ -24,9 +24,9 @@
                the job is runnable without creating a new one. If that PAT does
                not cover this repo, switch to the per-app convention the other
                jobs use (pomotoro-scm / sagetrade-scm): create a read-only
-               ed25519 deploy key as credential `sinteriq-scm` and use
+               ed25519 deploy key as credential `innovista-research-ai-scm` and use
                  <url>git@github.com:sageershaggy/SinterIQ.git</url>
-                 <credentialsId>sinteriq-scm</credentialsId>
+                 <credentialsId>innovista-research-ai-scm</credentialsId>
                See README.md in this directory. -->
           <url>https://github.com/sageershaggy/SinterIQ.git</url>
           <credentialsId>github-https-pat</credentialsId>

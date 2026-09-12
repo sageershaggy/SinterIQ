@@ -4,7 +4,7 @@ How **Innovista Research AI** (repo `SinterIQ`) runs as one isolated Docker stac
 
 > **Host:** Hostinger VPS · Alpine · `srv1601542` · IP `187.127.154.31`
 > **Stack:** React 19 / Vite 8 · Express 5 (TypeScript via `tsx`) · embedded SQLite
-> **Public URL:** `https://sinteriq.zengineeringapp.com`
+> **Public URL:** `https://innovista-research-ai.zengineeringapp.com`
 > **Localhost port:** `127.0.0.1:8110`
 > **CI/CD:** Jenkins → Docker Hub → deploy via mounted `docker.sock`
 > **Reference:** this follows `pomotoro/docs/DEPLOYMENT.md`; the deltas are called out in §2.
@@ -28,8 +28,8 @@ Browser (HTTPS :443)
 │  │ 127.0.0.1:8090│   │ 127.0.0.1:80xx│   │ 127.0.0.1:8110   │        │
 │  │  web          │   │  ...          │   │  app  (API+SPA)  │        │
 │  │  api          │   │               │   │  └ SQLite in-proc│        │
-│  │  db (MySQL)   │   │               │   │  sinteriq_data   │        │
-│  │ pomotoro_net  │   │               │   │  sinteriq_net    │        │
+│  │  db (MySQL)   │   │               │   │  innovista-research-ai_data   │        │
+│  │ pomotoro_net  │   │               │   │  innovista-research-ai_net    │        │
 │  └───────────────┘   └───────────────┘   └──────────────────┘        │
 └──────────────────────────────────────────────────────────────────────┘
 
@@ -39,8 +39,8 @@ CI/CD:  git push → Jenkins → build image → Docker Hub → (docker.sock) co
 | Layer | What it is | How it's isolated |
 |---|---|---|
 | **app** | One Node 22 process. `server.ts --production` serves the `/api` routes **and** the built `dist/` bundle. Same-origin by construction — no CORS, no container nginx. | Published only on `127.0.0.1:8110` |
-| **database** | Embedded SQLite (`better-sqlite3`) in the `sinteriq_data` volume | Never on the network at all — in-process |
-| **host nginx** | Terminates TLS, forwards the domain to `127.0.0.1:8110` | One file: `/etc/nginx/http.d/sinteriq.conf` |
+| **database** | Embedded SQLite (`better-sqlite3`) in the `innovista-research-ai_data` volume | Never on the network at all — in-process |
+| **host nginx** | Terminates TLS, forwards the domain to `127.0.0.1:8110` | One file: `/etc/nginx/http.d/innovista-research-ai.conf` |
 | **Jenkins** | Builds & deploys through the mounted Docker socket | One job, per-build Docker login, labelled pruning |
 
 ### The four values
@@ -49,8 +49,8 @@ CI/CD:  git push → Jenkins → build image → Docker Hub → (docker.sock) co
 |---|---|---|
 | app / compose project name | `pomotoro` | `sinteriq` |
 | localhost port | `127.0.0.1:8090` | `127.0.0.1:8110` |
-| public domain | `pomotoro.zengineeringapp.com` | `sinteriq.zengineeringapp.com` |
-| Docker Hub repo | `yasinshaikh111/pomotoro` | `yasinshaikh111/sinteriq` |
+| public domain | `pomotoro.zengineeringapp.com` | `innovista-research-ai.zengineeringapp.com` |
+| Docker Hub repo | `yasinshaikh111/pomotoro` | `yasinshaikh111/innovista-research-ai` |
 
 ---
 
@@ -58,7 +58,7 @@ CI/CD:  git push → Jenkins → build image → Docker Hub → (docker.sock) co
 
 **a. One container, not three.** Pomotoro splits static-nginx + .NET API + MySQL. Here `server.ts` in production mode serves the API and `dist/` from a single Express process, so there is no `web`/`api` split and no container-level `nginx.conf`. The image is tagged `app-<sha>` where Pomotoro uses `web-<sha>` / `api-<sha>`.
 
-**b. There is no `db` service, by design.** The database is *embedded* SQLite: `data/innovista.db` plus `data/.innovista-encryption-key`, which encrypts stored AI provider keys. **The `sinteriq_data` volume IS the database.** Adding a MySQL container would require rewriting `server/database.ts` (~700 lines of raw SQLite against `better-sqlite3`'s synchronous API), `server/legacy.ts` (which opens `sintertechnik.db` as a read-only SQLite file), `server/secrets.ts`, `scripts/init-admin.ts` and the test suite — a data-layer port, not a deployment change. Every other isolation property Pomotoro gets from its stack (own network, own volume, localhost-only port, own env secret file, labelled pruning) is preserved here.
+**b. There is no `db` service, by design.** The database is *embedded* SQLite: `data/innovista.db` plus `data/.innovista-encryption-key`, which encrypts stored AI provider keys. **The `innovista-research-ai_data` volume IS the database.** Adding a MySQL container would require rewriting `server/database.ts` (~700 lines of raw SQLite against `better-sqlite3`'s synchronous API), `server/legacy.ts` (which opens `sintertechnik.db` as a read-only SQLite file), `server/secrets.ts`, `scripts/init-admin.ts` and the test suite — a data-layer port, not a deployment change. Every other isolation property Pomotoro gets from its stack (own network, own volume, localhost-only port, own env secret file, labelled pruning) is preserved here.
 
 > **Back up `innovista.db` and `.innovista-encryption-key` TOGETHER.** Losing the key makes stored provider credentials permanently unreadable. See §8.
 
@@ -79,10 +79,10 @@ Two more app-specific behaviours worth knowing:
 |---|---|
 | `Dockerfile` | 3-stage build: prod deps (compiles `better-sqlite3`) → Vite bundle → slim runtime |
 | `.dockerignore` | Keeps `.env*`, `data/`, `*.db` and keys out of the build context |
-| `docker-compose.prod.yml` | The isolation contract: `sinteriq_net`, `sinteriq_data`, `127.0.0.1:${APP_PORT}` |
+| `docker-compose.prod.yml` | The isolation contract: `innovista-research-ai_net`, `innovista-research-ai_data`, `127.0.0.1:${APP_PORT}` |
 | `Jenkinsfile` | checkout → build → push → deploy → health check → auto-rollback |
-| `deploy/nginx/sinteriq.conf` | The host vhost to copy to `/etc/nginx/http.d/` |
-| `.env.production.example` | Template for the `sinteriq-env` Jenkins secret file |
+| `deploy/nginx/innovista-research-ai.conf` | The host vhost to copy to `/etc/nginx/http.d/` |
+| `.env.production.example` | Template for the `innovista-research-ai-env` Jenkins secret file |
 | `deploy/jenkins/job-config.xml` | Importable Jenkins job definition (pipeline-from-SCM) |
 | `deploy/jenkins/README.md` | Credential setup, UI and API job creation, pipeline walkthrough |
 
@@ -121,7 +121,7 @@ docker ps -a --format '{{.Ports}}' | grep -oE '127[.]0[.]0[.]1:[0-9]+'   | cut -
 
 Taken as of SinterIQ's first deploy: **8080** (tawazun-edge), **8081** (jenkins), **8090** (pomotoro-web), **8091 / 8092 / 8095 / 8097** (tawazun variants), **8096** (pomotoro-staging), **8100** (sagetrade-app), **9000** (sentry), **5050** (pgadmin), **50000** (jenkins agents). SinterIQ therefore uses **8110**.
 
-If you change it, change it in **both** `.env.production` (`APP_PORT`) and `deploy/nginx/sinteriq.conf` (`proxy_pass`).
+If you change it, change it in **both** `.env.production` (`APP_PORT`) and `deploy/nginx/innovista-research-ai.conf` (`proxy_pass`).
 
 ---
 
@@ -134,10 +134,10 @@ Nothing below edits another app's files.
 Add an `A` record: `sinteriq` → `187.127.154.31`. Wait for it to resolve **before** running certbot:
 
 ```sh
-nslookup sinteriq.zengineeringapp.com
+nslookup innovista-research-ai.zengineeringapp.com
 ```
 
-> The public host is `sinteriq.zengineeringapp.com` — one `e` in "zengineering", one `p` in "app".
+> The public host is `innovista-research-ai.zengineeringapp.com` — one `e` in "zengineering", one `p` in "app".
 
 ### Step 2 — Legacy database import (OPTIONAL — disabled in the live stack)
 
@@ -145,12 +145,12 @@ nslookup sinteriq.zengineeringapp.com
 
 The one-time SinterIQ → Innovista import reads `./sintertechnik.db` from the working directory and **silently skips** when absent, so the bind mount is what enables it. The file is gitignored and never baked into the image.
 
-> **The import runs only on first database initialization.** Enabling it now against the already-initialized `sinteriq_data` volume imports nothing. To add it you must remove that volume first, which discards whatever is in the workspace:
+> **The import runs only on first database initialization.** Enabling it now against the already-initialized `innovista-research-ai_data` volume imports nothing. To add it you must remove that volume first, which discards whatever is in the workspace:
 >
 > ```sh
-> cd /srv/sinteriq
-> docker compose -p sinteriq -f docker-compose.prod.yml --env-file .env down
-> docker volume rm sinteriq_data
+> cd /srv/innovista-research-ai
+> docker compose -p innovista-research-ai -f docker-compose.prod.yml --env-file .env down
+> docker volume rm innovista-research-ai_data
 > # place the file, set LEGACY_DB_HOST_PATH, uncomment the mount, then up -d,
 > # and re-create the administrator (section 6).
 > ```
@@ -159,15 +159,15 @@ To enable it, all three of these must be true: the file exists on the host, `LEG
 
 ```sh
 # on the VPS
-mkdir -p /srv/sinteriq/legacy
+mkdir -p /srv/innovista-research-ai/legacy
 
 # from your workstation
 scp D:/yasin/github/SinterIQ/sintertechnik.db \
-    root@187.127.154.31:/srv/sinteriq/legacy/sintertechnik.db
+    root@187.127.154.31:/srv/innovista-research-ai/legacy/sintertechnik.db
 
 # back on the VPS — must be a FILE, not a directory
-chmod 600 /srv/sinteriq/legacy/sintertechnik.db
-ls -l     /srv/sinteriq/legacy/sintertechnik.db
+chmod 600 /srv/innovista-research-ai/legacy/sintertechnik.db
+ls -l     /srv/innovista-research-ai/legacy/sintertechnik.db
 ```
 
 > **Why this matters:** Docker turns a missing bind-mount source into an empty **directory**. The app would then see `sintertechnik.db` "exist" and fail to open it as a database. The `Deploy` stage in the `Jenkinsfile` pre-checks this and aborts with a clear message rather than starting a broken container.
@@ -179,11 +179,11 @@ ls -l     /srv/sinteriq/legacy/sintertechnik.db
 ### Step 3 — Host nginx vhost + TLS
 
 ```sh
-# on the VPS, as root: copy deploy/nginx/sinteriq.conf from the repo to
-#   /etc/nginx/http.d/sinteriq.conf
+# on the VPS, as root: copy deploy/nginx/innovista-research-ai.conf from the repo to
+#   /etc/nginx/http.d/innovista-research-ai.conf
 nginx -t && rc-service nginx reload
 
-certbot --nginx -d sinteriq.zengineeringapp.com \
+certbot --nginx -d innovista-research-ai.zengineeringapp.com \
   --non-interactive --agree-tos --redirect
 ```
 
@@ -194,10 +194,10 @@ certbot rewrites the file in place to add the `:443` block and the http→https 
 | ID | Kind | What it is |
 |---|---|---|
 | `dockerhub-yasin` | Username/Password | Docker Hub user + access token — **already exists**, reused as-is |
-| `sinteriq-env` | Secret file | The production `.env`, built from `.env.production.example` |
+| `innovista-research-ai-env` | Secret file | The production `.env`, built from `.env.production.example` |
 | SCM credential | SSH deploy key | Read-only key for `github.com/sageershaggy/SinterIQ` (if private) |
 
-Build the secret file locally, fill in real values, upload it as `sinteriq-env`, then delete your local copy:
+Build the secret file locally, fill in real values, upload it as `innovista-research-ai-env`, then delete your local copy:
 
 ```sh
 cp .env.production.example .env.production
@@ -218,7 +218,7 @@ Or import the job in one API call instead — `deploy/jenkins/job-config.xml` is
 
 ### Step 6 — Watch it go green
 
-The pipeline pushes `app-<sha>`, runs `compose up -d`, then polls `https://sinteriq.zengineeringapp.com/api/health` for up to 2 minutes. On failure it dumps the last 80 log lines and redeploys the previous image tag.
+The pipeline pushes `app-<sha>`, runs `compose up -d`, then polls `https://innovista-research-ai.zengineeringapp.com/api/health` for up to 2 minutes. On failure it dumps the last 80 log lines and redeploys the previous image tag.
 
 ---
 
@@ -226,20 +226,20 @@ The pipeline pushes `app-<sha>`, runs `compose up -d`, then polls `https://sinte
 
 There is no seeded admin and no default password. Two options — **pick one**.
 
-> **What the live deployment did:** Option B. `INNOVISTA_SETUP_TOKEN` is deliberately **blank** in `/srv/sinteriq/.env`, which makes the server refuse browser-based setup in production altogether, so Option A is currently unavailable by design. The `admin` account was created with `scripts/init-admin.ts` and its one-time password written to `/srv/sinteriq/admin-credentials.txt` (mode 600). **Sign in, change the password in Workspace settings, then delete that file.**
+> **What the live deployment did:** Option B. `INNOVISTA_SETUP_TOKEN` is deliberately **blank** in `/srv/innovista-research-ai/.env`, which makes the server refuse browser-based setup in production altogether, so Option A is currently unavailable by design. The `admin` account was created with `scripts/init-admin.ts` and its one-time password written to `/srv/innovista-research-ai/admin-credentials.txt` (mode 600). **Sign in, change the password in Workspace settings, then delete that file.**
 
 **Option A — from the browser (uses the setup token):**
-Open `https://sinteriq.zengineeringapp.com`. Because the accounts table is empty, the sign-in page offers workspace setup. Enter the `INNOVISTA_SETUP_TOKEN` value from the env file along with your chosen username, display name and password.
+Open `https://innovista-research-ai.zengineeringapp.com`. Because the accounts table is empty, the sign-in page offers workspace setup. Enter the `INNOVISTA_SETUP_TOKEN` value from the env file along with your chosen username, display name and password.
 
 **Option B — on the server (generates a random password):**
 
 ```sh
-docker exec -it sinteriq-app node --import tsx scripts/init-admin.ts admin "Your Name"
+docker exec -it innovista-research-ai-app node --import tsx scripts/init-admin.ts admin "Your Name"
 ```
 
 It prints the username and a one-time random password, and **refuses to run if any account already exists**.
 
-**Then close the door:** blank `INNOVISTA_SETUP_TOKEN` in the `sinteriq-env` credential and re-run the job. (The setup route already returns `409` once an account exists, so this is defence in depth.) Additional accounts are created by an administrator inside **Workspace settings**, never from the sign-in page.
+**Then close the door:** blank `INNOVISTA_SETUP_TOKEN` in the `innovista-research-ai-env` credential and re-run the job. (The setup route already returns `409` once an account exists, so this is defence in depth.) Additional accounts are created by an administrator inside **Workspace settings**, never from the sign-in page.
 
 Finally, sign in and set the AI provider under **Workspace settings** if you left `GEMINI_API_KEY` blank.
 
@@ -249,21 +249,21 @@ Finally, sign in and set the AI provider under **Workspace settings** if you lef
 
 ```sh
 # health, through the public domain — exercises nginx + TLS + the app
-curl -fsS https://sinteriq.zengineeringapp.com/api/health
+curl -fsS https://innovista-research-ai.zengineeringapp.com/api/health
 # -> {"ok":true,"application":"Innovista Research AI","database":"connected"}
 
 # security headers present, no x-powered-by
-curl -sSI https://sinteriq.zengineeringapp.com/ \
+curl -sSI https://innovista-research-ai.zengineeringapp.com/ \
   | grep -i 'strict-transport\|content-security\|x-frame'
 
 # bound to localhost only — never 0.0.0.0
-docker port sinteriq-app            # -> 3000/tcp -> 127.0.0.1:8110
+docker port innovista-research-ai-app            # -> 3000/tcp -> 127.0.0.1:8110
 
 # unreachable from outside except through nginx
 curl -sS -m 5 http://187.127.154.31:8110/   # must fail to connect
 
 # the Host allowlist is real (this is why the vhost must pass Host $host)
-docker exec sinteriq-app node -e "
+docker exec innovista-research-ai-app node -e "
 const http=require('http');
 http.request({host:'127.0.0.1',port:3000,path:'/api/health',
   headers:{Host:'evil.example.com'}},r=>console.log(r.statusCode)).end();"
@@ -281,31 +281,31 @@ The volume holds everything: the database, the uploaded source documents, and th
 ```sh
 # Consistent snapshot. Stop the app first: SQLite runs in WAL mode, and copying
 # a live WAL database file alone yields a corrupt backup.
-docker stop sinteriq-app
+docker stop innovista-research-ai-app
 
 docker run --rm \
-  -v sinteriq_data:/data:ro \
-  -v /srv/sinteriq/backups:/backup \
+  -v innovista-research-ai_data:/data:ro \
+  -v /srv/innovista-research-ai/backups:/backup \
   alpine tar czf /backup/sinteriq-$(date +%F-%H%M).tgz -C /data .
 
-docker start sinteriq-app
+docker start innovista-research-ai-app
 ```
 
-The archive contains `innovista.db` **and** `.innovista-encryption-key` — keep them together, and keep the archive encrypted at rest. Restore by extracting into a fresh `sinteriq_data` volume before the first `up`.
+The archive contains `innovista.db` **and** `.innovista-encryption-key` — keep them together, and keep the archive encrypted at rest. Restore by extracting into a fresh `innovista-research-ai_data` volume before the first `up`.
 
 ---
 
 ## 9. Adding a staging stack later
 
-Same recipe on a second port: a `Jenkinsfile.staging`, a `docker-compose.staging.yml` with `sinteriq-staging-*` names and a `sinteriq_staging_data` volume, a `staging-sinteriq-env` credential, and a second vhost + cert for `staging-sinteriq.zengineeringapp.com`. This is how `staging-pomotoro.zengineeringapp.com` runs on port `8096`.
+Same recipe on a second port: a `Jenkinsfile.staging`, a `docker-compose.staging.yml` with `sinteriq-staging-*` names and a `sinteriq_staging_data` volume, a `staging-innovista-research-ai-env` credential, and a second vhost + cert for `staging-innovista-research-ai.zengineeringapp.com`. This is how `staging-pomotoro.zengineeringapp.com` runs on port `8096`.
 
 Note that "refresh staging from prod" is a **volume copy** here, not a `mysqldump`:
 
 ```sh
-docker stop sinteriq-app sinteriq-staging-app
-docker run --rm -v sinteriq_data:/from:ro -v sinteriq_staging_data:/to \
+docker stop innovista-research-ai-app sinteriq-staging-app
+docker run --rm -v innovista-research-ai_data:/from:ro -v sinteriq_staging_data:/to \
   alpine sh -c 'rm -rf /to/* && cp -a /from/. /to/'
-docker start sinteriq-app sinteriq-staging-app
+docker start innovista-research-ai-app sinteriq-staging-app
 ```
 
 ---
@@ -314,14 +314,14 @@ docker start sinteriq-app sinteriq-staging-app
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Container exits: `Production requires INNOVISTA_ORIGIN with an HTTPS origin.` | `INNOVISTA_ORIGIN` missing or `http://` | Set the exact `https://` origin in the `sinteriq-env` file |
+| Container exits: `Production requires INNOVISTA_ORIGIN with an HTTPS origin.` | `INNOVISTA_ORIGIN` missing or `http://` | Set the exact `https://` origin in the `innovista-research-ai-env` file |
 | Container exits: `Run npm run build before starting production.` | `dist/` missing from the image | The build stage asserts `dist/index.html`; rebuild — never mount over `/app/dist` |
 | Every request → `403 {"error":"Unrecognized host."}` | nginx not forwarding `Host` | Keep `proxy_set_header Host $host;`, and make `INNOVISTA_ORIGIN`'s host match the vhost's `server_name` exactly |
 | Writes → `403 Cross-origin request refused.` | Browser origin ≠ `INNOVISTA_ORIGIN` (e.g. a `www.` prefix, or http) | Use one canonical origin; let certbot's redirect handle http |
 | Signed in, then instantly signed out | Session cookie is `secure`; the app cannot tell the request was HTTPS | `INNOVISTA_TRUST_PROXY=1` **and** `proxy_set_header X-Forwarded-Proto $scheme;` |
 | Crash loop right after adding the legacy mount | Bind source did not exist → Docker created a directory | Step 2: put a real file at `LEGACY_DB_HOST_PATH`, then `up -d --force-recreate` |
-| `EACCES` on `/app/data` | Volume was pre-created as root before the image defined it | `docker run --rm -v sinteriq_data:/d alpine chown -R 1000:1000 /d` (`node` is uid 1000) |
-| Health check 503 `database: "unavailable"` | Data volume unreadable, or the DB never initialized | `docker logs sinteriq-app`; check the volume mounted and `/app/data` ownership |
+| `EACCES` on `/app/data` | Volume was pre-created as root before the image defined it | `docker run --rm -v innovista-research-ai_data:/d alpine chown -R 1000:1000 /d` (`node` is uid 1000) |
+| Health check 503 `database: "unavailable"` | Data volume unreadable, or the DB never initialized | `docker logs innovista-research-ai-app`; check the volume mounted and `/app/data` ownership |
 | certbot fails the http-01 challenge | DNS not propagated, or the `:80` block missing | Re-check `nslookup`, `nginx -t`, then retry |
 | `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` in logs | Rate limiter sees a forwarded header without trusted-proxy config | Ensure `INNOVISTA_TRUST_PROXY=1` is set (exactly one proxy in front) |
 | Uploads fail at ~1–5 MB | nginx body cap, or multer's per-file limit | `client_max_body_size 10m` is set; 5 MB per document is the app's own limit |
@@ -337,11 +337,11 @@ ssh root@187.127.154.31
 docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'
 
 # tail this app's logs
-docker logs -f sinteriq-app
+docker logs -f innovista-research-ai-app
 
 # restart / recreate
-docker restart sinteriq-app
-docker compose -p sinteriq -f docker-compose.prod.yml --env-file <env> up -d --force-recreate
+docker restart innovista-research-ai-app
+docker compose -p innovista-research-ai -f docker-compose.prod.yml --env-file <env> up -d --force-recreate
 
 # nginx: test + reload after editing a vhost
 nginx -t && rc-service nginx reload
@@ -351,8 +351,8 @@ certbot certificates
 certbot renew --dry-run
 
 # inspect the database volume
-docker run --rm -v sinteriq_data:/data:ro alpine ls -la /data
+docker run --rm -v innovista-research-ai_data:/data:ro alpine ls -la /data
 ```
 
 > **Never** run `docker system prune` on this box — it is shared. Prune by label only:
-> `docker image prune -f --filter "label=com.zengineering.app=sinteriq"`
+> `docker image prune -f --filter "label=com.zengineering.app=innovista-research-ai"`

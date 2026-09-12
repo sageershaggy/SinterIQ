@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ============================================================
-# SinterIQ / Innovista Research AI — production image.
+# Innovista Research AI — production image.
 #
 # Unlike Pomotoro (static nginx container + separate API container), this app
 # is ONE process: server.ts in production mode serves the /api routes AND the
@@ -52,7 +52,7 @@ FROM node:22-bookworm-slim AS runtime
 
 # Label so CI prunes ONLY this app's images and never touches
 # pomotoro / tawazun / sentry / jenkins layers on the shared VPS.
-LABEL com.zengineering.app="sinteriq"
+LABEL com.zengineering.app="innovista-research-ai"
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \

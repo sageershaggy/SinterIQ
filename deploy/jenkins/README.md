@@ -5,22 +5,22 @@
 ## Current state on `srv1601542`
 
 The job definition is **already installed on disk** at
-`/var/jenkins_home/jobs/sinteriq/config.xml` (owned `root:root`, matching
+`/var/jenkins_home/jobs/innovista-research-ai/config.xml` (owned `root:root`, matching
 `pomotoro-deploy`). It is inert until the controller re-reads its config, so
 finish these three things before the first build:
 
 1. **Run certbot** — see the warning below. This is not optional.
-2. **Create the `sinteriq-env` credential** — §1.
+2. **Create the `innovista-research-ai-env` credential** — §1.
 3. **Reload Jenkins** so the job appears — §2.
 
 > ### ⚠ Run certbot BEFORE the first Jenkins build
-> The pipeline's Health check stage runs `curl -fsS https://sinteriq.zengineeringapp.com/api/health`.
+> The pipeline's Health check stage runs `curl -fsS https://innovista-research-ai.zengineeringapp.com/api/health`.
 > Until the TLS certificate exists, that curl fails, the stage fails, and the
 > `post { failure { ... } }` block **rolls the deployment back**. Issue the cert
 > first:
 >
 > ```sh
-> certbot --nginx -d sinteriq.zengineeringapp.com --non-interactive --agree-tos --redirect
+> certbot --nginx -d innovista-research-ai.zengineeringapp.com --non-interactive --agree-tos --redirect
 > ```
 
 ### Credentials already present on this controller
@@ -33,13 +33,13 @@ Checked directly against `credentials.xml` (IDs only):
   `sageershaggy/SinterIQ`. If checkout fails with an auth error, switch to the
   per-app convention (`pomotoro-scm`, `sagetrade-scm`) and create `sinteriq-scm`
   as described in §1.
-- `sinteriq-env` — **missing, you must create it.** This is the only credential
+- `innovista-research-ai-env` — **missing, you must create it.** This is the only credential
   that genuinely has to be added.
 
 Convenient shortcut: the exact env file the pipeline needs is already on the host
-at `/srv/sinteriq/.env` (mode 600), written during the manual first deploy. It
+at `/srv/innovista-research-ai/.env` (mode 600), written during the manual first deploy. It
 contains **no secrets** — the setup token and all provider keys are intentionally
-blank — so you can download it and upload it as the `sinteriq-env` Secret file
+blank — so you can download it and upload it as the `innovista-research-ai-env` Secret file
 unchanged.
 
 ---
@@ -52,20 +52,20 @@ Manage Jenkins → Credentials → System → Global credentials.
 |---|---|---|
 | `dockerhub-yasin` | Username with password | **Already exists.** Reuse as-is; do not recreate. |
 | `github-https-pat` | Username with password | **Already exists**, used for SCM by `job-config.xml`. Scope over this repo is unverified. |
-| `sinteriq-env` | Secret file | **You must create this.** The only genuinely missing credential. |
+| `innovista-research-ai-env` | Secret file | **You must create this.** The only genuinely missing credential. |
 | `sinteriq-scm` | SSH Username with private key | Only if `github-https-pat` turns out not to cover this repo. |
 
-### Creating `sinteriq-env`
+### Creating `innovista-research-ai-env`
 
-The file is already on the host at `/srv/sinteriq/.env` and contains no secrets,
+The file is already on the host at `/srv/innovista-research-ai/.env` and contains no secrets,
 so the quickest path is to copy it down and upload it verbatim:
 
 ```sh
-scp -i ~/.ssh/pomotoro_vps root@187.127.154.31:/srv/sinteriq/.env ./sinteriq.env
+scp -i ~/.ssh/pomotoro_vps root@187.127.154.31:/srv/innovista-research-ai/.env ./sinteriq.env
 ```
 
 Then Manage Jenkins → Credentials → System → Global → Add Credentials → **Secret
-file**, ID `sinteriq-env`, and upload it. Delete your local copy afterwards.
+file**, ID `innovista-research-ai-env`, and upload it. Delete your local copy afterwards.
 
 If you would rather build it from the template, `cp .env.production.example
 .env.production` and fill it in. Two fields deserve attention:
@@ -105,7 +105,7 @@ re-read it:
 3. **Build Now.**
 
 If you would rather not reload the controller, delete
-`/var/jenkins_home/jobs/sinteriq/` and create the job through the API instead
+`/var/jenkins_home/jobs/innovista-research-ai/` and create the job through the API instead
 (§3) — that registers it immediately without a reload. Or create it by hand:
 **New Item → Duplicate an existing item**, copying `pomotoro-deploy`, then set
 the repo, branch and script path as above.
@@ -131,10 +131,10 @@ curl -sS -X POST -u "$AUTH" -H "$CRUMB" \
   "$JENKINS/createItem?name=sinteriq"
 
 # Trigger the first build
-curl -sS -X POST -u "$AUTH" -H "$CRUMB" "$JENKINS/job/sinteriq/build"
+curl -sS -X POST -u "$AUTH" -H "$CRUMB" "$JENKINS/job/innovista-research-ai/build"
 
 # Follow the console output
-curl -sS -u "$AUTH" "$JENKINS/job/sinteriq/lastBuild/consoleText"
+curl -sS -u "$AUTH" "$JENKINS/job/innovista-research-ai/lastBuild/consoleText"
 ```
 
 Update an existing job from the same file:
@@ -143,7 +143,7 @@ Update an existing job from the same file:
 curl -sS -X POST -u "$AUTH" -H "$CRUMB" \
   -H 'Content-Type: application/xml' \
   --data-binary @deploy/jenkins/job-config.xml \
-  "$JENKINS/job/sinteriq/config.xml"
+  "$JENKINS/job/innovista-research-ai/config.xml"
 ```
 
 ---
@@ -155,8 +155,8 @@ curl -sS -X POST -u "$AUTH" -H "$CRUMB" \
 1. **Checkout** the branch.
 2. **Build image** — one image, tagged `app-<tag>` and `app-latest`. Pomotoro builds two (`web-`/`api-`); this app serves the API and the SPA from a single Node process, so there is only one.
 3. **Push to Docker Hub** using a per-build `DOCKER_CONFIG`, so this job's `docker login` never overwrites the shared Jenkins auth the pomotoro/tawazun jobs rely on.
-4. **Deploy** over the mounted `docker.sock`: writes the `sinteriq-env` secret file next to the compose file, forces `IMAGE_TAG` to the tag just pushed, **pre-checks that `LEGACY_DB_HOST_PATH` is a real file** (a missing bind source would become a directory and break the app), runs `compose pull && compose up -d`, deletes the env file, then prunes images filtered to `label=com.zengineering.app=sinteriq` only.
-5. **Health check** — polls `https://sinteriq.zengineeringapp.com/api/health` (note: `/api/health`, not `/health`) for up to ~2 minutes, dumping the last 80 container log lines on failure.
+4. **Deploy** over the mounted `docker.sock`: writes the `innovista-research-ai-env` secret file next to the compose file, forces `IMAGE_TAG` to the tag just pushed, **pre-checks that `LEGACY_DB_HOST_PATH` is a real file** (a missing bind source would become a directory and break the app), runs `compose pull && compose up -d`, deletes the env file, then prunes images filtered to `label=com.zengineering.app=innovista-research-ai` only.
+5. **Health check** — polls `https://innovista-research-ai.zengineeringapp.com/api/health` (note: `/api/health`, not `/health`) for up to ~2 minutes, dumping the last 80 container log lines on failure.
 6. **On failure** — redeploys the previously running image tag.
 
 ### Known quirk inherited from the pomotoro Jenkinsfile

@@ -1,24 +1,24 @@
 # ============================================================
-# SINTERIQ / Innovista Research AI — production compose for the shared
+# INNOVISTA RESEARCH AI — production compose for the shared
 # Hostinger VPS (srv1601542, Alpine).
 #
 # Fully ISOLATED, same contract as pomotoro: own bridge network
-# (sinteriq_net), own named volume, own localhost-only port. Shares nothing
+# (innovista-research-ai_net), own named volume, own localhost-only port. Shares nothing
 # with pomotoro / tawazun / sentry / jenkins.
 #
 # The HOST nginx (already on :80/:443) reverse-proxies
-# sinteriq.zengineeringapp.com -> 127.0.0.1:${APP_PORT} (this container).
+# innovista-research-ai.zengineeringapp.com -> 127.0.0.1:${APP_PORT} (this container).
 # So this stack publishes ONLY 127.0.0.1:${APP_PORT} and brings no TLS of its own.
 #
 # ---- Why there is no `db` service ----
 # This app's database is EMBEDDED SQLite (better-sqlite3): data/innovista.db
 # plus data/.innovista-encryption-key, which encrypts stored provider keys.
-# The `sinteriq_data` volume IS the database. Back the DB and the key up
+# The `innovista-research-ai_data` volume IS the database. Back the DB and the key up
 # TOGETHER — losing the key makes stored provider credentials unreadable.
 #
 # Jenkins deploys this via the mounted docker.sock:
-#   docker compose -p sinteriq -f docker-compose.prod.yml --env-file <env> pull
-#   docker compose -p sinteriq -f docker-compose.prod.yml --env-file <env> up -d
+#   docker compose -p innovista-research-ai -f docker-compose.prod.yml --env-file <env> pull
+#   docker compose -p innovista-research-ai -f docker-compose.prod.yml --env-file <env> up -d
 # ============================================================
 
 x-logging: &default-logging
@@ -30,7 +30,7 @@ x-logging: &default-logging
 services:
   app:
     image: ${REGISTRY}/${IMAGE_OWNER}/${IMAGE_REPO}:app-${IMAGE_TAG}
-    container_name: sinteriq-app
+    container_name: innovista-research-ai-app
     # server/documents.ts forks a worker process per upload; a real init
     # reaps them instead of leaving zombies under PID 1.
     init: true
@@ -68,7 +68,7 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
     volumes:
       # THE DATABASE. innovista.db (+ -wal/-shm) and .innovista-encryption-key.
-      - sinteriq_data:/app/data
+      - innovista-research-ai_data:/app/data
 
       # ---- OPTIONAL: one-time SinterIQ -> Innovista legacy migration ----
       # Disabled by default. server.ts looks for ./sintertechnik.db in the
@@ -76,7 +76,7 @@ services:
       # uncommenting the line below is what enables the legacy import.
       #
       # The import runs ONLY on first database initialization. Enabling it
-      # against an already-initialized sinteriq_data volume imports nothing —
+      # against an already-initialized innovista-research-ai_data volume imports nothing —
       # you would have to remove the volume first.
       #
       # Before uncommenting, the file MUST already exist at
@@ -87,15 +87,15 @@ services:
     ports:
       # Bound to localhost ONLY — the host nginx proxies the public domain here.
       - "127.0.0.1:${APP_PORT}:3000"
-    networks: [sinteriq_net]
+    networks: [innovista-research-ai_net]
     logging: *default-logging
     restart: unless-stopped
 
 networks:
-  sinteriq_net:
-    name: sinteriq_net
+  innovista-research-ai_net:
+    name: innovista-research-ai_net
     driver: bridge
 
 volumes:
-  sinteriq_data:
-    name: sinteriq_data
+  innovista-research-ai_data:
+    name: innovista-research-ai_data
