@@ -1765,3 +1765,106 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
     f.dispose();
   }
 });
+test('the block editor renders email-safe HTML, merges the subject, and names a bad block', async () => {
+  const sent: SentMail[] = [];
+  const f = fixture(generated, async (_config, message) => {
+    sent.push(message);
+  });
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id;
+    const created = await f.post(base + '/leads', {
+      name: 'Mailable Pumps Ltd',
+      website: 'https://mailable.com',
+      contact_name: 'Dana Prakash',
+      contact_email: 'dana@mailable.com',
+      city: 'Bristol',
+      industry: 'pump manufacturing',
+    });
+    const leadBase = base + '/leads/' + created.body.id;
+    assert.equal(
+      (
+        await f.put('/settings/email', {
+          host: '8.8.8.8',
+          port: 587,
+          password: 'mailbox-password',
+          from_name: 'Innovista Research',
+          from_email: 'research@innovista.example',
+          signature: 'Innovista Research AI',
+        })
+      ).status,
+      200,
+    );
+    // An incomplete block is reported by position and type, not by a validator path.
+    const broken = await f.post(leadBase + '/email/preview', {
+      subject: 'Test',
+      preview_text: '',
+      blocks: [
+        { type: 'text', text: 'A body long enough to be valid.', align: 'left' },
+        { type: 'button', label: 'Book a call', url: 'https://', align: 'left' },
+      ],
+    });
+    assert.equal(broken.status, 200, JSON.stringify(broken.body));
+    assert.equal(broken.body.block_problems.length, 1);
+    assert.equal(broken.body.block_problems[0].index, 1);
+    assert.match(broken.body.block_problems[0].message, /Block 2 \(button\) needs a complete/);
+    // The valid block still renders, so the preview keeps working while one block is wrong.
+    assert.ok(broken.body.html.includes('A body long enough'));
+    // Sending with that block is refused, and says which block.
+    const refused = await f.post(leadBase + '/email', {
+      to: 'dana@mailable.com',
+      subject: 'Test subject',
+      blocks: [{ type: 'button', label: 'Book', url: 'https://', align: 'left' }],
+    });
+    assert.equal(refused.status, 400);
+    assert.match(refused.body.error, /Block 1 \(button\) needs a complete/);
+    assert.ok(!/\d+\.url/.test(refused.body.error));
+    // A good send: merge fields resolve in the subject as well as the body.
+    const ok = await f.post(leadBase + '/email', {
+      to: 'dana@mailable.com',
+      subject: '{{company}} — a question about bearings',
+      preview_text: 'For {{contact_first_name}} at {{company}}',
+      blocks: [
+        { type: 'heading', text: 'Hello {{contact_first_name}}', level: 'h1', align: 'left' },
+        { type: 'text', text: 'A note about {{company}} in {{industry}}.', align: 'left' },
+        { type: 'button', label: 'Book a call', url: 'https://example.com/book', align: 'center' },
+      ],
+    });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal(sent.length, 1);
+    const message = sent[0];
+    // The subject is the most visible place an unresolved field would surface.
+    assert.equal(message.subject, 'Mailable Pumps Ltd — a question about bearings');
+    assert.ok(!message.subject.includes('{{'));
+    assert.ok(!message.html.includes('{{'));
+    // Email-safe markup: tables, inline styles, no stylesheet, no modern layout.
+    assert.match(message.html, /<table role="presentation"/);
+    assert.ok(!/display:\s*flex/.test(message.html));
+    assert.ok(!/display:\s*grid/.test(message.html));
+    assert.ok(!/<style/i.test(message.html));
+    assert.ok(!/class=/.test(message.html));
+    // The hidden preheader is what the inbox shows after the subject.
+    assert.match(message.html, /mso-hide:all/);
+    assert.ok(message.html.includes('For Dana at Mailable Pumps Ltd'));
+    // A plain-text alternative is always produced, with the button as a labelled link.
+    // Headings are upper-cased in the plain-text alternative, so match case-insensitively.
+    assert.match(message.text, /hello dana/i);
+    assert.match(message.text, /Book a call: https:\/\/example\.com\/book/);
+    // Starter templates all satisfy the block contract.
+    const library = await f.agent.get('/api/email/templates');
+    assert.equal(library.status, 200);
+    assert.ok(library.body.templates.length >= 5);
+    for (const template of library.body.templates) {
+      const check = await f.post(leadBase + '/email/preview', {
+        subject: template.subject,
+        preview_text: template.preview_text,
+        blocks: template.blocks,
+      });
+      assert.equal(check.status, 200, template.id);
+      assert.deepEqual(check.body.block_problems, [], template.id + ' should have no problems');
+    }
+  } finally {
+    f.dispose();
+  }
+});

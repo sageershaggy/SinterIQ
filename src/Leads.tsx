@@ -46,6 +46,7 @@ import type {
 import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { PreviousResearch } from './PreviousResearch';
+import { EmailComposer } from './EmailComposer';
 
 export default function Leads({
   project,
@@ -1314,319 +1315,354 @@ function LeadDetail({
               </details>
             )}
             {lead.legacy_json && <PreviousResearch lead={lead} projectName={project.name} />}
-            {run ? (
-              <>
-                <div className="result-tabs" role="tablist" aria-label="Qualification details">
-                  {(
-                    [
-                      { id: 'reasoning', title: 'Reasoning', icon: ScanLine },
-                      {
-                        id: 'evidence',
-                        title: 'Source evidence',
-                        icon: FileText,
-                      },
-                      {
-                        id: 'history',
-                        title: 'Analysis history',
-                        icon: History,
-                      },
-                      {
-                        id: 'feedback',
-                        title: 'Training feedback',
-                        icon: MessageSquareWarning,
-                      },
-                      {
-                        id: 'calls',
-                        title: 'Calls',
-                        icon: PhoneCall,
-                      },
-                      {
-                        id: 'email',
-                        title: 'Email',
-                        icon: Mail,
-                      },
-                    ] as const
-                  ).map((item) => (
-                    <button
-                      key={item.id}
-                      role="tab"
-                      aria-selected={tab === item.id}
-                      onClick={() => setTab(item.id)}
-                      className={tab === item.id ? 'active' : ''}
-                    >
-                      <item.icon size={16} />
-                      {item.title}
-                    </button>
+            <>
+              <div className="result-tabs" role="tablist" aria-label="Lead details">
+                {(
+                  [
+                    { id: 'reasoning', title: 'Reasoning', icon: ScanLine },
+                    {
+                      id: 'evidence',
+                      title: 'Source evidence',
+                      icon: FileText,
+                    },
+                    {
+                      id: 'history',
+                      title: 'Analysis history',
+                      icon: History,
+                    },
+                    {
+                      id: 'feedback',
+                      title: 'Training feedback',
+                      icon: MessageSquareWarning,
+                    },
+                    {
+                      id: 'calls',
+                      title: 'Calls',
+                      icon: PhoneCall,
+                    },
+                    {
+                      id: 'email',
+                      title: 'Email',
+                      icon: Mail,
+                    },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    role="tab"
+                    aria-selected={tab === item.id}
+                    onClick={() => setTab(item.id)}
+                    className={tab === item.id ? 'active' : ''}
+                  >
+                    <item.icon size={16} />
+                    {item.title}
+                  </button>
+                ))}
+              </div>
+              {tab === 'reasoning' && !run && (
+                <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
+                  {ready
+                    ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
+                    : 'Publish project training, then return to qualify this lead.'}
+                </Empty>
+              )}
+              {tab === 'reasoning' && run && (
+                <div className="result-content">
+                  <div className="result-metrics">
+                    <div>
+                      <small>AI DECISION</small>
+                      <Badge value={run.result.decision} />
+                    </div>
+                    <div>
+                      <small>FIT SCORE</small>
+                      <strong>
+                        {run.result.score}
+                        <span>/100</span>
+                      </strong>
+                    </div>
+                    <div>
+                      <small>CONFIDENCE</small>
+                      <strong>
+                        {run.result.confidence}
+                        <span>%</span>
+                      </strong>
+                    </div>
+                    <div>
+                      <small>TRAINING</small>
+                      <strong>v{run.training_version}</strong>
+                    </div>
+                  </div>
+                  <section className="reasoning-summary">
+                    <span className="eyebrow">WHY THIS DECISION</span>
+                    <p>{run.result.summary}</p>
+                    <small>
+                      {run.created_by} · {date(run.created_at)} · {run.model}
+                    </small>
+                  </section>
+                  {(lead.next_step !== 'NONE' || run.result.outreach?.call_script) && (
+                    <section className="outreach-box">
+                      <div className="outreach-heading">
+                        <NextStepBadge step={lead.next_step} />
+                        <small>
+                          Fit {run.result.score}/100 · {nextStepLabels[lead.next_step].hint}
+                        </small>
+                      </div>
+                      {lead.contact_name && (
+                        <p className="outreach-contact">
+                          <Users size={15} />
+                          <span>
+                            <strong>{lead.contact_name}</strong>
+                            {lead.contact_role && <small> · {lead.contact_role}</small>}
+                          </span>
+                          <button
+                            className="text-button"
+                            onClick={() => void eraseContact()}
+                            title="Delete this contact from the lead"
+                          >
+                            Remove contact
+                          </button>
+                        </p>
+                      )}
+                      {run.result.outreach?.why_qualified && (
+                        <>
+                          <h3>Why this lead qualifies</h3>
+                          <p>{run.result.outreach.why_qualified}</p>
+                        </>
+                      )}
+                      {run.result.outreach?.call_script && (
+                        <>
+                          <h3>Call opener</h3>
+                          <blockquote className="call-script">
+                            {run.result.outreach.call_script}
+                          </blockquote>
+                          <small className="fine-print">
+                            Read this as a starting point and verify every claim against the
+                            evidence tab before contacting anyone.
+                          </small>
+                        </>
+                      )}
+                    </section>
+                  )}
+                  <h3>Qualification criteria</h3>
+                  <Criteria items={run.result.criteria} />
+                  <h3>Exclusion checks</h3>
+                  {run.result.exclusions.length ? (
+                    <Criteria items={run.result.exclusions} />
+                  ) : (
+                    <p className="muted">No exclusion rules defined in this training version.</p>
+                  )}
+                  {run.result.gaps.length > 0 && (
+                    <section className="gaps-box">
+                      <h3>Evidence gaps & review notes</h3>
+                      <ul>
+                        {run.result.gaps.map((gap, i) => (
+                          <li key={i}>{gap}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                  {run.result.next_steps.length > 0 && (
+                    <>
+                      <h3>Next research steps</h3>
+                      <ul className="next-steps">
+                        {run.result.next_steps.map((step, i) => (
+                          <li key={i}>{step}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
+              {tab === 'evidence' && !run && (
+                <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
+                  {ready
+                    ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
+                    : 'Publish project training, then return to qualify this lead.'}
+                </Empty>
+              )}
+              {tab === 'evidence' && run && (
+                <div className="evidence-list">
+                  <p className="muted">
+                    These are the exact source excerpts supplied to this analysis. Source IDs
+                    connect them to the reasoning.
+                  </p>
+                  {run.evidence.map((item) => (
+                    <details key={item.id}>
+                      <summary>
+                        <span className="evidence-id">{item.id}</span>
+                        {item.title}
+                      </summary>
+                      <div className="evidence-content">
+                        {item.url && <ExternalLink url={item.url} />}
+                        <small>Captured {date(item.captured_at)}</small>
+                        <pre>{item.content}</pre>
+                      </div>
+                    </details>
                   ))}
                 </div>
-                {tab === 'reasoning' && (
-                  <div className="result-content">
-                    <div className="result-metrics">
-                      <div>
-                        <small>AI DECISION</small>
-                        <Badge value={run.result.decision} />
-                      </div>
-                      <div>
-                        <small>FIT SCORE</small>
+              )}
+              {tab === 'history' && !run && (
+                <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
+                  {ready
+                    ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
+                    : 'Publish project training, then return to qualify this lead.'}
+                </Empty>
+              )}
+              {tab === 'history' && run && (
+                <div className="history-list">
+                  <h3>Qualification runs</h3>
+                  {lead.runs?.map((item) => (
+                    <button
+                      className={'run-history ' + (item.id === runId ? 'selected' : '')}
+                      key={item.id}
+                      onClick={() => {
+                        setRunId(item.id);
+                        setTab('reasoning');
+                      }}
+                    >
+                      <span>
                         <strong>
-                          {run.result.score}
-                          <span>/100</span>
+                          Training v{item.training_version} · lead revision {item.lead_revision}
                         </strong>
-                      </div>
-                      <div>
-                        <small>CONFIDENCE</small>
-                        <strong>
-                          {run.result.confidence}
-                          <span>%</span>
-                        </strong>
-                      </div>
-                      <div>
-                        <small>TRAINING</small>
-                        <strong>v{run.training_version}</strong>
-                      </div>
-                    </div>
-                    <section className="reasoning-summary">
-                      <span className="eyebrow">WHY THIS DECISION</span>
-                      <p>{run.result.summary}</p>
-                      <small>
-                        {run.created_by} · {date(run.created_at)} · {run.model}
-                      </small>
-                    </section>
-                    {(lead.next_step !== 'NONE' || run.result.outreach?.call_script) && (
-                      <section className="outreach-box">
-                        <div className="outreach-heading">
-                          <NextStepBadge step={lead.next_step} />
+                        <small>
+                          {date(item.created_at)} · {item.created_by} · {item.model}
+                        </small>
+                      </span>
+                      <Badge value={item.result.decision} />
+                      <ArrowRight size={16} />
+                    </button>
+                  ))}
+                  <h3>Human review record</h3>
+                  {lead.reviews?.length ? (
+                    lead.reviews.map((item) => (
+                      <div className="human-review-history" key={item.id}>
+                        <div>
+                          <Badge value={item.decision} />
                           <small>
-                            Fit {run.result.score}/100 · {nextStepLabels[lead.next_step].hint}
+                            {item.created_by} · {date(item.created_at)} · analysis #{item.run_id}
                           </small>
                         </div>
-                        {lead.contact_name && (
-                          <p className="outreach-contact">
-                            <Users size={15} />
-                            <span>
-                              <strong>{lead.contact_name}</strong>
-                              {lead.contact_role && <small> · {lead.contact_role}</small>}
-                            </span>
-                            <button
-                              className="text-button"
-                              onClick={() => void eraseContact()}
-                              title="Delete this contact from the lead"
-                            >
-                              Remove contact
-                            </button>
-                          </p>
-                        )}
-                        {run.result.outreach?.why_qualified && (
-                          <>
-                            <h3>Why this lead qualifies</h3>
-                            <p>{run.result.outreach.why_qualified}</p>
-                          </>
-                        )}
-                        {run.result.outreach?.call_script && (
-                          <>
-                            <h3>Call opener</h3>
-                            <blockquote className="call-script">
-                              {run.result.outreach.call_script}
-                            </blockquote>
-                            <small className="fine-print">
-                              Read this as a starting point and verify every claim against the
-                              evidence tab before contacting anyone.
-                            </small>
-                          </>
-                        )}
-                      </section>
-                    )}
-                    <h3>Qualification criteria</h3>
-                    <Criteria items={run.result.criteria} />
-                    <h3>Exclusion checks</h3>
-                    {run.result.exclusions.length ? (
-                      <Criteria items={run.result.exclusions} />
-                    ) : (
-                      <p className="muted">No exclusion rules defined in this training version.</p>
-                    )}
-                    {run.result.gaps.length > 0 && (
-                      <section className="gaps-box">
-                        <h3>Evidence gaps & review notes</h3>
-                        <ul>
-                          {run.result.gaps.map((gap, i) => (
-                            <li key={i}>{gap}</li>
-                          ))}
-                        </ul>
-                      </section>
-                    )}
-                    {run.result.next_steps.length > 0 && (
-                      <>
-                        <h3>Next research steps</h3>
-                        <ul className="next-steps">
-                          {run.result.next_steps.map((step, i) => (
-                            <li key={i}>{step}</li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
-                  </div>
-                )}
-                {tab === 'evidence' && (
-                  <div className="evidence-list">
-                    <p className="muted">
-                      These are the exact source excerpts supplied to this analysis. Source IDs
-                      connect them to the reasoning.
-                    </p>
-                    {run.evidence.map((item) => (
-                      <details key={item.id}>
-                        <summary>
-                          <span className="evidence-id">{item.id}</span>
-                          {item.title}
-                        </summary>
-                        <div className="evidence-content">
-                          {item.url && <ExternalLink url={item.url} />}
-                          <small>Captured {date(item.captured_at)}</small>
-                          <pre>{item.content}</pre>
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                )}
-                {tab === 'history' && (
-                  <div className="history-list">
-                    <h3>Qualification runs</h3>
-                    {lead.runs?.map((item) => (
-                      <button
-                        className={'run-history ' + (item.id === runId ? 'selected' : '')}
-                        key={item.id}
-                        onClick={() => {
-                          setRunId(item.id);
-                          setTab('reasoning');
-                        }}
-                      >
-                        <span>
-                          <strong>
-                            Training v{item.training_version} · lead revision {item.lead_revision}
-                          </strong>
-                          <small>
-                            {date(item.created_at)} · {item.created_by} · {item.model}
-                          </small>
-                        </span>
-                        <Badge value={item.result.decision} />
-                        <ArrowRight size={16} />
-                      </button>
-                    ))}
-                    <h3>Human review record</h3>
-                    {lead.reviews?.length ? (
-                      lead.reviews.map((item) => (
-                        <div className="human-review-history" key={item.id}>
-                          <div>
-                            <Badge value={item.decision} />
-                            <small>
-                              {item.created_by} · {date(item.created_at)} · analysis #{item.run_id}
-                            </small>
-                          </div>
-                          <p>{item.notes}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="muted">No human reviews yet.</p>
-                    )}
-                  </div>
-                )}
-                {tab === 'email' && (
-                  <EmailTab
+                        <p>{item.notes}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="muted">No human reviews yet.</p>
+                  )}
+                </div>
+              )}
+              {tab === 'email' && (
+                <div className="feedback-tab">
+                  <EmailComposer
                     base={base}
                     lead={lead}
-                    emails={lead.emails || []}
                     onSent={() => {
                       setRefresh((n) => n + 1);
                       onChange();
                       notify('Email sent and logged against this lead.');
                     }}
                   />
-                )}
-                {tab === 'calls' && (
-                  <CallsTab
-                    base={base}
-                    lead={lead}
-                    calls={lead.calls || []}
-                    onSaved={() => {
-                      setRefresh((n) => n + 1);
-                      onChange();
-                      notify('Call logged.');
-                    }}
-                  />
-                )}
-                {tab === 'feedback' && (
-                  <FeedbackTab
-                    base={base}
-                    runId={runId}
-                    feedback={lead.feedback || []}
-                    onSaved={() => {
-                      setRefresh((n) => n + 1);
-                      onChange();
-                      notify(
-                        'Feedback saved to the training library. Publish a new training version to apply it.',
-                      );
-                    }}
-                  />
-                )}
-                {runId !== lead.latest_run_id && (
-                  <div className="inline-notice">
-                    <History size={17} />
-                    <span>You are viewing an earlier analysis.</span>
-                    <button className="text-button" onClick={() => setRunId(lead.latest_run_id)}>
-                      View latest
-                    </button>
+                  <h3>Email history</h3>
+                  {(lead.emails || []).length ? (
+                    (lead.emails || []).map((message) => (
+                      <div className="human-review-history" key={message.id}>
+                        <div>
+                          <Badge value={message.status === 'SENT' ? 'QUALIFIED' : 'NEEDS_REVIEW'}>
+                            {message.status === 'SENT' ? 'Sent' : 'Not delivered'}
+                          </Badge>
+                          <small>
+                            {message.to_email} · {message.created_by} · {date(message.created_at)}
+                          </small>
+                        </div>
+                        <p>
+                          <strong>{message.subject}</strong>
+                        </p>
+                        <p className="preserve-text">{message.body}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="muted">No emails sent to this lead yet.</p>
+                  )}
+                </div>
+              )}
+              {tab === 'calls' && (
+                <CallsTab
+                  base={base}
+                  lead={lead}
+                  calls={lead.calls || []}
+                  onSaved={() => {
+                    setRefresh((n) => n + 1);
+                    onChange();
+                    notify('Call logged.');
+                  }}
+                />
+              )}
+              {tab === 'feedback' && (
+                <FeedbackTab
+                  base={base}
+                  runId={runId}
+                  feedback={lead.feedback || []}
+                  onSaved={() => {
+                    setRefresh((n) => n + 1);
+                    onChange();
+                    notify(
+                      'Feedback saved to the training library. Publish a new training version to apply it.',
+                    );
+                  }}
+                />
+              )}
+              {runId !== lead.latest_run_id && (
+                <div className="inline-notice">
+                  <History size={17} />
+                  <span>You are viewing an earlier analysis.</span>
+                  <button className="text-button" onClick={() => setRunId(lead.latest_run_id)}>
+                    View latest
+                  </button>
+                </div>
+              )}
+              {runId === lead.latest_run_id && !lead.stale && (
+                <form className="human-review-form" onSubmit={review}>
+                  <div className="section-title">
+                    <h3>
+                      <ShieldCheck size={18} />
+                      Record your review
+                    </h3>
+                    <span className="muted">
+                      {lead.reviewed ? 'Add a follow-up decision' : 'Human judgment'}
+                    </span>
                   </div>
-                )}
-                {runId === lead.latest_run_id && !lead.stale && (
-                  <form className="human-review-form" onSubmit={review}>
-                    <div className="section-title">
-                      <h3>
-                        <ShieldCheck size={18} />
-                        Record your review
-                      </h3>
-                      <span className="muted">
-                        {lead.reviewed ? 'Add a follow-up decision' : 'Human judgment'}
-                      </span>
-                    </div>
-                    <label>
-                      Final decision
-                      <select
-                        value={decision}
-                        onChange={(e) => setDecision(e.target.value as Decision)}
-                      >
-                        <option value="QUALIFIED">Qualified</option>
-                        <option value="NOT_A_TARGET">Not a target</option>
-                        <option value="NEEDS_REVIEW">Needs more research</option>
-                      </select>
-                    </label>
-                    <label>
-                      Your reasoning
-                      <textarea
-                        rows={3}
-                        value={reviewNotes}
-                        onChange={(e) => setReviewNotes(e.target.value)}
-                        minLength={15}
-                        maxLength={6000}
-                        required
-                        placeholder="Explain the evidence you checked and why you agree or disagree…"
-                      />
-                    </label>
-                    <button
-                      className="button primary"
-                      disabled={busy || reviewNotes.trim().length < 15}
+                  <label>
+                    Final decision
+                    <select
+                      value={decision}
+                      onChange={(e) => setDecision(e.target.value as Decision)}
                     >
-                      <ClipboardCheck size={16} />
-                      Save review
-                    </button>
-                  </form>
-                )}
-              </>
-            ) : (
-              <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
-                {ready
-                  ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
-                  : 'Publish project training, then return to qualify this lead.'}
-              </Empty>
-            )}
+                      <option value="QUALIFIED">Qualified</option>
+                      <option value="NOT_A_TARGET">Not a target</option>
+                      <option value="NEEDS_REVIEW">Needs more research</option>
+                    </select>
+                  </label>
+                  <label>
+                    Your reasoning
+                    <textarea
+                      rows={3}
+                      value={reviewNotes}
+                      onChange={(e) => setReviewNotes(e.target.value)}
+                      minLength={15}
+                      maxLength={6000}
+                      required
+                      placeholder="Explain the evidence you checked and why you agree or disagree…"
+                    />
+                  </label>
+                  <button
+                    className="button primary"
+                    disabled={busy || reviewNotes.trim().length < 15}
+                  >
+                    <ClipboardCheck size={16} />
+                    Save review
+                  </button>
+                </form>
+              )}
+            </>
           </>
         )}
       </div>
@@ -1943,160 +1979,6 @@ function CallsTab({
         ))
       ) : (
         <p className="muted">No calls logged yet.</p>
-      )}
-    </div>
-  );
-}
-
-/**
- * Compose and send one email to a lead. The draft comes from the approved qualification;
- * the researcher edits it and sends deliberately. Every message is logged, sent or refused.
- */
-function EmailTab({
-  base,
-  lead,
-  emails,
-  onSent,
-}: {
-  base: string;
-  lead: Lead;
-  emails: EmailMessage[];
-  onSent: () => void;
-}) {
-  const [to, setTo] = useState(lead.contact_email);
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [mailbox, setMailbox] = useState<{ configured: boolean; from_email: string } | null>(null);
-  const [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    api<{
-      subject: string;
-      body: string;
-      to: string;
-      mailbox: { configured: boolean; from_email: string };
-    }>(base + '/email/draft')
-      .then((draft) => {
-        if (cancelled) return;
-        setSubject(draft.subject);
-        setBody(draft.body);
-        setTo(draft.to || lead.contact_email);
-        setMailbox(draft.mailbox);
-      })
-      .catch((e) => {
-        if (!cancelled) setError((e as Error).message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [base]);
-  if (loading) return <Spinner text="Preparing a draft…" />;
-  return (
-    <div className="feedback-tab">
-      {mailbox && !mailbox.configured && (
-        <Alert>
-          No workspace mailbox is configured yet. An administrator sets it up in Workspace settings,
-          then you can send from here.
-        </Alert>
-      )}
-      <p className="muted">
-        {mailbox?.configured ? 'Sent from ' + mailbox.from_email + '. ' : ''}
-        The draft below is built from this lead&apos;s qualification — edit it before sending. Every
-        message names the sender and carries an opt-out line, and is logged against this lead.
-      </p>
-      {error && <Alert>{error}</Alert>}
-      <form
-        className="form-stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            await api(base + '/email', { method: 'POST', body: json({ to, subject, body }) });
-            onSent();
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label>
-          To
-          <input
-            type="email"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            required
-            maxLength={200}
-            placeholder="No contact email on this lead yet"
-          />
-          {!lead.contact_email && (
-            <small>
-              This lead has no contact email. Add one in Edit context, or type an address here.
-            </small>
-          )}
-        </label>
-        <label>
-          Subject
-          <input
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            required
-            minLength={3}
-            maxLength={200}
-          />
-        </label>
-        <label>
-          Message
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={12}
-            required
-            minLength={20}
-            maxLength={20000}
-          />
-          <small>Blank lines become paragraphs. Your signature is appended automatically.</small>
-        </label>
-        <div className="form-actions">
-          <button className="button primary" disabled={busy || !mailbox?.configured}>
-            {busy ? (
-              <Spinner text="Sending…" />
-            ) : (
-              <>
-                <Mail size={15} />
-                Send email
-              </>
-            )}
-          </button>
-        </div>
-      </form>
-      <h3>Email history</h3>
-      {emails.length ? (
-        emails.map((message) => (
-          <div className="human-review-history" key={message.id}>
-            <div>
-              <Badge value={message.status === 'SENT' ? 'QUALIFIED' : 'NEEDS_REVIEW'}>
-                {message.status === 'SENT' ? 'Sent' : 'Not delivered'}
-              </Badge>
-              <small>
-                {message.to_email} · {message.created_by} · {date(message.created_at)}
-              </small>
-            </div>
-            <p>
-              <strong>{message.subject}</strong>
-            </p>
-            <p className="preserve-text">{message.body}</p>
-          </div>
-        ))
-      ) : (
-        <p className="muted">No emails sent to this lead yet.</p>
       )}
     </div>
   );

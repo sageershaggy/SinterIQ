@@ -34,6 +34,16 @@ import {
 } from './validation';
 import { readImportRows, mapImportRows } from './import';
 import {
+  applyMerge,
+  blocksSchema,
+  validateBlocks,
+  checkBlocks,
+  mergeFields,
+  renderBlocks,
+  type MergeContext,
+} from './email-blocks';
+import { emailTemplates, templateCategories } from './email-templates';
+import {
   assertAddress,
   assertMailHost,
   draftFor,
@@ -236,6 +246,19 @@ function friendlyIssue(path: string, message: string) {
   if (/phone/i.test(message)) return label + ' is not a valid phone number.';
   if (/http/i.test(message)) return label + ' must be a complete http(s) address.';
   return label + ': ' + message;
+}
+/** The only values a merge field can resolve to. */
+function mergeContext(lead: Lead, senderName: string): MergeContext {
+  return {
+    company: lead.name,
+    contact_name: lead.contact_name,
+    contact_first_name: lead.contact_name.split(' ')[0] || '',
+    contact_role: lead.contact_role,
+    city: lead.city,
+    country: lead.country,
+    industry: lead.industry,
+    sender_name: senderName,
+  };
 }
 function getLead(db: DB, project: Project, id: number) {
   const row = db.prepare('SELECT * FROM leads WHERE id=? AND project_id=?').get(id, project.id) as
@@ -1637,14 +1660,42 @@ export function createApp(options: {
       );
     // One header-safe recipient per request. Bulk sending is a separate, throttled path.
     const to = assertAddress(input.to, 'The recipient address');
-    const subject = input.subject.replace(/[\r\n]+/g, ' ').trim();
-    const html = renderEmail({
-      body: input.body,
-      fromName: config.from_name,
-      fromEmail: config.from_email,
-      signature: config.signature,
-      leadName: lead.name,
-    });
+    // The subject carries merge fields too. A template subject is the most visible place
+    // an unresolved {{company}} would surface, so it is merged like the body.
+    const subject = applyMerge(
+      input.subject.replace(/[\r\n]+/g, ' ').trim(),
+      mergeContext(lead, config.from_name || req.user.name),
+    ).merged;
+    // The editor sends a block document; a quick note sends plain text.
+    const built = input.blocks
+      ? (() => {
+          const { blocks, problems } = validateBlocks(input.blocks);
+          if (problems.length) throw new HttpError(400, problems[0].message);
+          if (!blocks.length) throw new HttpError(400, 'Add at least one block before sending.');
+          const rendered = renderBlocks(blocks, {
+            context: mergeContext(lead, config.from_name || req.user.name),
+            fromName: config.from_name,
+            fromEmail: config.from_email,
+            signature: config.signature,
+            previewText: input.preview_text,
+          });
+          return { html: rendered.html, text: rendered.text };
+        })()
+      : (() => {
+          if (input.body.trim().length < 20)
+            throw new HttpError(400, 'Write a message of at least 20 characters.');
+          return {
+            html: renderEmail({
+              body: input.body,
+              fromName: config.from_name,
+              fromEmail: config.from_email,
+              signature: config.signature,
+              leadName: lead.name,
+            }),
+            text: input.body,
+          };
+        })();
+    const html = built.html;
     const record = db.prepare(
       'INSERT INTO email_messages (project_id,lead_id,to_email,subject,body,status,error,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
     );
@@ -1653,7 +1704,7 @@ export function createApp(options: {
         deliver(config, {
           to,
           subject,
-          text: input.body,
+          text: built.text,
           html,
           replyTo: config.reply_to || config.from_email,
         }),
@@ -1665,7 +1716,7 @@ export function createApp(options: {
         lead.id,
         to,
         subject,
-        input.body,
+        built.text,
         'FAILED',
         'Delivery refused.',
         req.user.name,
@@ -1682,7 +1733,7 @@ export function createApp(options: {
           );
     }
     const id = Number(
-      record.run(project.id, lead.id, to, subject, input.body, 'SENT', '', req.user.name, now())
+      record.run(project.id, lead.id, to, subject, built.text, 'SENT', '', req.user.name, now())
         .lastInsertRowid,
     );
     db.prepare('UPDATE leads SET updated_at=? WHERE id=? AND project_id=?').run(
@@ -1692,6 +1743,49 @@ export function createApp(options: {
     );
     audit(db, project.id, req.user.name, 'lead.email_sent', lead.name + ' to ' + to);
     res.status(201).json({ id });
+  });
+  /** Starter templates for the editor, grouped the way the picker shows them. */
+  app.get('/api/email/templates', (_req, res) =>
+    res.json({
+      templates: emailTemplates,
+      categories: templateCategories,
+      merge_fields: mergeFields,
+    }),
+  );
+  /** Renders a block document for the desktop/mobile preview, and returns the pre-send checks. */
+  app.post('/api/projects/:projectId/leads/:leadId/email/preview', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const input = z
+      .object({
+        subject: text(200).default(''),
+        preview_text: text(200).default(''),
+        blocks: z.array(z.unknown()).max(60),
+      })
+      .strict()
+      .parse(req.body);
+    // Problems are reported, not thrown: the editor shows them beside the block.
+    const { blocks, problems } = validateBlocks(input.blocks);
+    if (!blocks.length)
+      return void res.json({ html: '', text: '', warnings: [], block_problems: problems });
+    const config = getEmailConfig(db, secrets);
+    const rendered = renderBlocks(blocks, {
+      context: mergeContext(lead, config.from_name || req.user.name),
+      fromName: config.from_name,
+      fromEmail: config.from_email || 'not-configured@example.invalid',
+      signature: config.signature,
+      previewText: input.preview_text,
+    });
+    res.json({
+      html: rendered.html,
+      text: rendered.text,
+      warnings: checkBlocks(
+        blocks,
+        rendered,
+        applyMerge(input.subject, mergeContext(lead, config.from_name || req.user.name)).merged,
+      ),
+      block_problems: problems,
+    });
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
