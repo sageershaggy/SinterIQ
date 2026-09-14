@@ -1659,7 +1659,9 @@ input::file-selector-button {
 }
 .leads-panel {
   padding: 0;
-  overflow: hidden;
+  /* Not hidden: the filter and Export menus hang below the toolbar and must stay clickable
+     when the table is short. The footer rounds its own corners instead. */
+  overflow: visible;
 }
 .table-toolbar {
   display: flex;
@@ -1949,6 +1951,7 @@ th:last-child {
   font-size: 9px;
   color: #6f7662;
   background: #fcfdf8;
+  border-radius: 0 0 8px 8px;
 }
 .table-footer > .fine-print {
   font-size: 9px;
