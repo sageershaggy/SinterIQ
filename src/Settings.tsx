@@ -21,6 +21,7 @@ import type {
 } from '../shared/types';
 import { api, json, setSession, type Session } from './api';
 import { Alert, Badge, Modal, Spinner } from './ui';
+import { IncomingSettings } from './IncomingSettings';
 
 export default function Settings({
   user,
@@ -166,6 +167,7 @@ export default function Settings({
                         from_name: mailbox.from_name,
                         from_email: mailbox.from_email,
                         reply_to: mailbox.reply_to,
+                        copy_to: mailbox.copy_to || '',
                         signature: mailbox.signature,
                       }),
                     });
@@ -262,7 +264,19 @@ export default function Settings({
                     onChange={(e) => setMailbox({ ...mailbox, reply_to: e.target.value })}
                     maxLength={200}
                   />
-                  <small>Replies arrive in this mailbox, not in the app.</small>
+                  <small>Connect this inbox below to receive replies inside the app.</small>
+                </label>
+                <label>
+                  Copy every outreach email to
+                  <input
+                    type="email"
+                    value={mailbox.copy_to || ''}
+                    maxLength={200}
+                    onChange={(e) => setMailbox({ ...mailbox, copy_to: e.target.value })}
+                  />
+                  <small>
+                    Receives a BCC of sent messages. Required before starting an email funnel.
+                  </small>
                 </label>
                 <label>
                   Signature
@@ -328,6 +342,7 @@ export default function Settings({
               </form>
             </section>
           )}
+          {user.role === 'admin' && <IncomingSettings notify={notify} />}
           <section className="panel" hidden={user.role !== 'admin'}>
             <div className="section-title">
               <h2>

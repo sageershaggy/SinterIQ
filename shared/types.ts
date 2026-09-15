@@ -167,6 +167,21 @@ export interface Lead {
   feedback?: LeadFeedback[];
   calls?: CallLog[];
   emails?: EmailMessage[];
+  outreach_status?: string;
+  campaigns?: Array<
+    import('./funnels').Enrollment & {
+      funnel_name: string;
+      funnel_status: string;
+      step_count: number;
+    }
+  >;
+  outreach_events?: Array<{
+    id: number;
+    outcome: string;
+    notes: string;
+    created_at: string;
+    created_by: string;
+  }>;
 }
 export type CallOutcome =
   'CONNECTED' | 'NO_ANSWER' | 'CALLBACK' | 'NOT_INTERESTED' | 'WRONG_CONTACT' | 'MEETING_BOOKED';
@@ -215,9 +230,30 @@ export interface EmailSettings {
   from_name: string;
   from_email: string;
   reply_to: string;
+  copy_to?: string;
   signature: string;
   configured: boolean;
   has_password: boolean;
+}
+export type TemplateCategory = 'outreach' | 'follow_up' | 'meeting' | 'transactional';
+/** The closed set of blocks the editor may produce and the renderer vouches for. */
+export type EmailBlock =
+  | { type: 'heading'; text: string; level: 'h1' | 'h2'; align: 'left' | 'center' }
+  | { type: 'text'; text: string; align: 'left' | 'center' }
+  | { type: 'button'; label: string; url: string; align: 'left' | 'center' }
+  | { type: 'image'; url: string; alt: string; width: number }
+  | { type: 'divider' }
+  | { type: 'spacer'; size: 'small' | 'medium' | 'large' }
+  | { type: 'quote'; text: string; cite: string };
+export interface EmailTemplate {
+  custom?: boolean;
+  id: string;
+  name: string;
+  category: TemplateCategory;
+  description: string;
+  subject: string;
+  preview_text: string;
+  blocks: EmailBlock[];
 }
 /** One outbound email, logged whether it was accepted or refused. */
 export interface EmailMessage {

@@ -9,7 +9,7 @@ loadEnvironment();
 const production = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '127.0.0.1';
-const { app, db } = createApp({
+const { app, db, funnels, mailbox } = createApp({
   dataDir: path.resolve(process.env.INNOVISTA_DATA_DIR || 'data'),
   legacyPath: process.env.INNOVISTA_TEST === 'true' ? undefined : path.resolve('sintertechnik.db'),
   production,
@@ -44,8 +44,23 @@ const server = app.listen(port, host, () =>
   console.log('Innovista Research AI is ready at http://' + host + ':' + port),
 );
 server.requestTimeout = 120000;
+// Funnels remain drafts until explicitly activated in the app. Persisted due times
+// and delivery keys make this bounded worker safe across normal restarts.
+let pendingDelivery = Promise.resolve();
+const funnelTimer = setInterval(() => {
+  pendingDelivery = pendingDelivery
+    .then(() => mailbox.sync())
+    .then(() => {})
+    .then(() => funnels.tick())
+    .catch(() =>
+      console.error('[mail] Processing paused. Check incoming settings and the outbox.'),
+    );
+}, 60_000);
+funnelTimer.unref();
 function shutdown() {
-  server.close(() => {
+  clearInterval(funnelTimer);
+  server.close(async () => {
+    await pendingDelivery;
     db.close();
     process.exit(0);
   });

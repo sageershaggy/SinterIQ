@@ -18,20 +18,26 @@ import {
   Users,
   X,
   Menu,
+  GitBranch,
+  Mail,
 } from 'lucide-react';
 import type { Project, User } from '../shared/types';
 import { api, date, json } from './api';
 import { Alert, Badge, Brand, Empty, ExternalLink, Modal, Spinner } from './ui';
+import { Notifications } from './Notifications';
+import { readRoute, type View } from './navigation';
 const Training = lazy(() => import('./Training'));
 const Leads = lazy(() => import('./Leads'));
+const Funnels = lazy(() => import('./Funnels'));
 const Settings = lazy(() => import('./Settings'));
-type View = 'projects' | 'overview' | 'training' | 'leads' | 'review' | 'activity' | 'settings';
+const Mailbox = lazy(() => import('./Mailbox'));
 export default function App({ user, onLogout }: { user: User; onLogout: () => Promise<void> }) {
   const [projects, setProjects] = useState<Project[]>([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState('');
-  const [view, setView] = useState<View>('projects'),
-    [selected, setSelected] = useState<number | null>(null),
+  const [route, setRoute] = useState(readRoute);
+  const [view, setView] = useState<View>(route.view),
+    [selected, setSelected] = useState<number | null>(route.projectId),
     [expanded, setExpanded] = useState<number[]>([]);
   const [newProject, setNewProject] = useState(false),
     [editProject, setEditProject] = useState(false),
@@ -41,8 +47,22 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
   const project = projects.find((p) => p.id === selected);
   const reload = () => setRefresh((value) => value + 1);
   useEffect(() => {
+    const sync = () => {
+      const next = readRoute();
+      setRoute(next);
+      setView(next.view);
+      setSelected(next.projectId);
+      if (next.projectId)
+        setExpanded((ids) => (ids.includes(next.projectId!) ? ids : [...ids, next.projectId!]));
+      setMenu(false);
+    };
+    sync();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+  useEffect(() => {
     window.scrollTo(0, 0);
-  }, [view, selected]);
+  }, [view, selected, route.leadId]);
   useEffect(() => {
     let cancelled = false;
     api<Project[]>('/projects')
@@ -69,6 +89,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
   }, [notice]);
   /** Opening a project selects it and expands its section, leaving others as they were. */
   function open(p: Project) {
+    window.location.hash = `projects/${p.id}/overview`;
     setSelected(p.id);
     setView('overview');
     setExpanded((ids) => (ids.includes(p.id) ? ids : [...ids, p.id]));
@@ -79,11 +100,16 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     setExpanded((ids) => (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]));
   }
   function navigate(next: View) {
+    window.location.hash =
+      next === 'projects' || next === 'settings' || next === 'mailbox'
+        ? next
+        : `projects/${selected}/${next}`;
     setView(next);
     setMenu(false);
   }
   /** Jump straight to a section of a project that is not the active one. */
   function navigateTo(p: Project, next: View) {
+    window.location.hash = `projects/${p.id}/${next}`;
     setSelected(p.id);
     setView(next);
     setMenu(false);
@@ -94,6 +120,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     { id: 'training', label: 'Training library', icon: BookOpen },
     { id: 'leads', label: 'Lead research', icon: ScanLine },
     { id: 'review', label: 'Review queue', icon: ShieldCheck },
+    { id: 'funnels', label: 'Email funnels', icon: GitBranch },
     { id: 'activity', label: 'Research history', icon: History },
   ] as const;
   const headings: Record<View, string> = {
@@ -102,8 +129,10 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     training: 'Training library',
     leads: 'Lead research',
     review: 'Review queue',
+    funnels: 'Email funnels',
     activity: 'Research history',
     settings: 'Workspace settings',
+    mailbox: 'Mailbox',
   };
   return (
     <div className="app-shell">
@@ -132,6 +161,14 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             <FolderOpen size={18} />
             All projects<span className="nav-count">{projects.length}</span>
           </button>
+          {user.role === 'admin' && (
+            <button
+              className={'nav-item ' + (view === 'mailbox' ? 'active' : '')}
+              onClick={() => navigate('mailbox')}
+            >
+              <Mail size={18} /> Mailbox
+            </button>
+          )}
         </nav>
         <div className="nav-divider" />
         <div className="nav-caption">PROJECTS</div>
@@ -240,6 +277,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             <strong>{headings[view]}</strong>
           </div>
           <div className="topbar-right">
+            <Notifications refresh={refresh} />
             <span className="private-label">
               <ShieldCheck size={14} />
               Team workspace
@@ -260,6 +298,23 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             <Spinner text="Loading projects…" />
           ) : (
             <Suspense fallback={<Spinner text="Opening workspace…" />}>
+              {view === 'mailbox' &&
+                (user.role === 'admin' ? (
+                  <Mailbox projects={projects} notify={setNotice} />
+                ) : (
+                  <Alert>
+                    Ask an administrator to manage the shared mailbox. Your project’s incoming
+                    replies are available on each company’s Email tab.
+                  </Alert>
+                ))}
+              {selected && !project && view !== 'projects' && view !== 'settings' && (
+                <Alert>
+                  This project is unavailable.{' '}
+                  <button className="text-button" onClick={() => navigate('projects')}>
+                    Return to projects
+                  </button>
+                </Alert>
+              )}
               {view === 'projects' && (
                 <>
                   <div className="page-heading">
@@ -445,6 +500,15 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                   <Activity projectId={project.id} compact refresh={refresh} />
                 </>
               )}
+              {project && view === 'funnels' && (
+                <Funnels
+                  key={project.id}
+                  project={project}
+                  user={user}
+                  notify={setNotice}
+                  onSettings={() => navigate('settings')}
+                />
+              )}
               {project && view === 'training' && (
                 <Training
                   key={project.id}
@@ -458,6 +522,8 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                 <Leads
                   key={project.id + view}
                   project={project}
+                  detailId={route.leadId}
+                  detailTab={route.tab}
                   queue={view === 'review'}
                   onChange={reload}
                   onTraining={() => navigate('training')}

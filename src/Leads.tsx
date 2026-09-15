@@ -46,6 +46,11 @@ import type {
 import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { PreviousResearch } from './PreviousResearch';
+import { EmailComposer } from './EmailComposer';
+import { IncomingReplies } from './IncomingReplies';
+import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
+import { CompanyOverview } from './CompanyOverview';
+import { leadLink, type LeadTab } from './navigation';
 
 export default function Leads({
   project,
@@ -53,12 +58,16 @@ export default function Leads({
   onChange,
   onTraining,
   notify,
+  detailId,
+  detailTab,
 }: {
   project: Project;
   queue: boolean;
   onChange: () => void;
   onTraining: () => void;
   notify: (text: string) => void;
+  detailId: number | null;
+  detailTab: LeadTab;
 }) {
   const base = '/projects/' + project.id;
   const [leads, setLeads] = useState<Lead[]>([]),
@@ -71,17 +80,21 @@ export default function Leads({
     [error, setError] = useState(''),
     [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<number[]>([]),
-    [detail, setDetail] = useState<number | null>(null),
     [create, setCreate] = useState(false),
     [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
-  const [filterOpen, setFilterOpen] = useState(false),
-    filterRef = useRef<HTMLDivElement>(null),
-    exportRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+  const detail = detailId;
+  const setDetail = (id: number | null, tab: LeadTab = 'overview') => {
+    window.location.hash = id
+      ? leadLink(project.id, id, tab, queue)
+      : `#projects/${project.id}/${queue ? 'review' : 'leads'}`;
+  };
   const [exportOpen, setExportOpen] = useState(false),
     [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
     [assigning, setAssigning] = useState<number[] | null>(null),
+    [enrolling, setEnrolling] = useState(false),
     [assignees, setAssignees] = useState<User[]>([]);
   const ready = project.active_version && project.revision === project.trained_revision;
   const reload = () => {
@@ -102,16 +115,13 @@ export default function Leads({
     return () => clearTimeout(timer);
   }, [search]);
   useEffect(() => {
-    // Either menu closes on an outside click or Escape.
-    if (!filterOpen && !exportOpen) return;
+    if (!exportOpen) return;
     const away = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (!filterRef.current?.contains(target)) setFilterOpen(false);
       if (!exportRef.current?.contains(target)) setExportOpen(false);
     };
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setFilterOpen(false);
         setExportOpen(false);
       }
     };
@@ -121,7 +131,7 @@ export default function Leads({
       document.removeEventListener('mousedown', away);
       document.removeEventListener('keydown', key);
     };
-  }, [filterOpen, exportOpen]);
+  }, [exportOpen]);
   useEffect(() => {
     api<User[]>(base + '/assignees')
       .then(setAssignees)
@@ -255,540 +265,577 @@ export default function Leads({
   }
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <span className="eyebrow">
-            {queue ? 'HUMAN JUDGMENT, IN THE LOOP' : 'RESEARCH THAT FOLLOWS YOUR RULES'}
-          </span>
-          <h1>{queue ? 'A closer look.' : 'Find the right fit.'}</h1>
-          <p>
-            {queue
-              ? 'Review uncertain findings, research new leads and revisit results when training changes.'
-              : 'Analyze your leads against ' +
-                project.name +
-                ' training. Understand the evidence behind the fit.'}
-          </p>
-        </div>
-        <div className="heading-actions">
-          <button className="button secondary" onClick={() => setImporting(true)}>
-            <Upload size={16} />
-            Import leads
-          </button>
-          <button className="button primary" onClick={() => setCreate(true)}>
-            <Plus size={17} />
-            Add lead
-          </button>
-        </div>
-      </div>
-      {!ready && (
-        <div className="inline-notice">
-          <BookOpen size={20} />
-          <span>
-            <strong>Training comes first.</strong> Publish your current training to start qualifying
-            these leads.
-          </span>
-          <button className="text-button" onClick={onTraining}>
-            Open training
-            <ArrowRight size={15} />
-          </button>
-        </div>
-      )}
-      <div className="lead-summary">
-        <span>
-          <Users size={16} />
-          <strong>{project.lead_count}</strong> total leads
-        </span>
-        <span>
-          <span className="small-dot green-dot" />
-          <strong>{project.qualified_count}</strong> qualified on current training
-        </span>
-        <span>
-          <span className="small-dot amber-dot" />
-          <strong>{project.review_count}</strong> awaiting research
-        </span>
-        {ready && (
-          <span className="training-version">
-            <BookOpen size={14} />
-            Training v{project.active_version}
-          </span>
-        )}
-      </div>
-      {error && <Alert>{error}</Alert>}
-      <section className="panel leads-panel">
-        <div className="table-toolbar">
-          <div className="search-input">
-            <Search size={17} />
-            <input
-              aria-label="Search leads"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search company, industry or country…"
-            />
-          </div>
-          {/* A real dropdown rather than a native select: the OS popup cannot be aligned
-              or padded, and its hit area does not match the control. */}
-          <div className="filter-menu" ref={filterRef}>
-            <button
-              className="table-filter"
-              aria-haspopup="listbox"
-              aria-expanded={filterOpen}
-              onClick={() => {
-                setFilterOpen((open) => !open);
-                setExportOpen(false);
-              }}
-            >
-              <Filter size={15} />
-              <span className="filter-value">
-                {statusFilters(queue).find((o) => o.value === status)?.label || 'All leads'}
-              </span>
-              <ChevronDown size={15} className={'filter-caret ' + (filterOpen ? 'is-open' : '')} />
-            </button>
-            {filterOpen && (
-              <div className="filter-dropdown" role="listbox">
-                {statusFilters(queue).map((option) => (
-                  <button
-                    key={option.value}
-                    role="option"
-                    aria-selected={status === option.value}
-                    className={status === option.value ? 'is-selected' : ''}
-                    onClick={() => {
-                      setStatus(option.value);
-                      setPage(1);
-                      setFilterOpen(false);
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="export-menu" ref={exportRef}>
-            <button
-              className="button secondary"
-              aria-expanded={exportOpen}
-              aria-haspopup="true"
-              onClick={() => {
-                setExportOpen((open) => !open);
-                setFilterOpen(false);
-              }}
-            >
-              <ArrowDownToLine size={15} />
-              Export
-              <ChevronDown size={14} />
-            </button>
-            {exportOpen && (
-              <div className="export-dropdown" role="menu">
-                <a
-                  role="menuitem"
-                  href={
-                    '/api' +
-                    base +
-                    '/leads/export?' +
-                    new URLSearchParams({
-                      status: status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status,
-                      ...(status === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
-                      search: query,
-                    })
-                  }
-                  onClick={() => setExportOpen(false)}
-                >
-                  <strong>This view</strong>
-                  <small>
-                    {statusFilters(queue).find((o) => o.value === status)?.label}
-                    {query ? ' · matching “' + query + '”' : ''} · {total} lead
-                    {total === 1 ? '' : 's'}
-                  </small>
-                </a>
-                <div className="export-divider" />
-                {statusFilters(queue)
-                  .filter((option) => option.value !== status)
-                  .map((option) => (
-                    <a
-                      key={option.value}
-                      role="menuitem"
-                      href={'/api' + base + '/leads/export?status=' + option.value}
-                      onClick={() => setExportOpen(false)}
-                    >
-                      {option.label}
-                    </a>
-                  ))}
-              </div>
-            )}
-          </div>
-        </div>
-        {selected.length > 0 && (
-          <div className="selection-bar">
-            <span>{selected.length} selected</span>
-            <button className="button primary" disabled={!ready || !!busy} onClick={bulkQualify}>
-              {busy ? (
-                <Spinner text={busy} />
-              ) : (
-                <>
-                  <Sparkles size={15} />
-                  Qualify selected
-                </>
-              )}
-            </button>
-            <button
-              className="button secondary"
-              disabled={!!busy}
-              onClick={() => setAssigning(selected)}
-            >
-              <UserPlus size={15} />
-              Assign for calling
-            </button>
-            <button
-              className="button danger"
-              disabled={!!busy}
-              onClick={() => setConfirmDelete(selected)}
-            >
-              <Trash2 size={15} />
-              Delete selected
-            </button>
-            <button className="text-button" disabled={!!busy} onClick={() => setSelected([])}>
-              Clear selection
-            </button>
-          </div>
-        )}
-        {loading ? (
-          <div className="table-loading">
-            <Spinner text="Loading leads…" />
-          </div>
-        ) : !leads.length ? (
-          <Empty
-            icon={<ScanLine size={30} />}
-            title={
-              query || status !== 'ALL'
-                ? 'No leads match this view'
-                : 'Your next discovery starts here'
-            }
-            action={
-              <button className="button secondary" onClick={() => setCreate(true)}>
-                <Plus size={16} />
-                Add a lead
-              </button>
-            }
-          >
-            {query || status !== 'ALL'
-              ? 'Try another filter, or add a lead to this project.'
-              : 'Add a company and its website, or import a CSV to build your research list.'}
-          </Empty>
-        ) : (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th className="checkbox-cell">
-                    <input
-                      type="checkbox"
-                      aria-label="Select up to 20 visible leads"
-                      disabled={!!busy}
-                      checked={
-                        selected.length > 0 && selected.length === Math.min(20, leads.length)
-                      }
-                      onChange={(e) =>
-                        setSelected(e.target.checked ? leads.slice(0, 20).map((l) => l.id) : [])
-                      }
-                    />
-                  </th>
-                  <th>Company</th>
-                  <th>Contact</th>
-                  <th>Industry / location</th>
-                  <th>Fit score</th>
-                  <th>Next step</th>
-                  <th>Assigned to</th>
-                  <th>Qualification</th>
-                  <th>
-                    <span className="visually-hidden">Open</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {leads.map((lead) => (
-                  <tr key={lead.id}>
-                    <td className="checkbox-cell">
-                      <input
-                        type="checkbox"
-                        aria-label={'Select ' + lead.name}
-                        checked={selected.includes(lead.id)}
-                        disabled={!!busy || (!selected.includes(lead.id) && selected.length >= 20)}
-                        onChange={(e) =>
-                          setSelected((ids) =>
-                            e.target.checked
-                              ? [...ids, lead.id]
-                              : ids.filter((id) => id !== lead.id),
-                          )
-                        }
-                      />
-                    </td>
-                    <td>
-                      <div className="lead-company">
-                        <span className="lead-monogram">{lead.name.slice(0, 2).toUpperCase()}</span>
-                        <div>
-                          <button className="lead-name" onClick={() => setDetail(lead.id)}>
-                            {lead.name}
-                          </button>
-                          <ExternalLink url={lead.website} />
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      {lead.contact_name ? (
-                        <>
-                          <span className="industry-text">{lead.contact_name}</span>
-                          <small className="table-subtext">
-                            {lead.contact_role || 'Role not published'}
-                          </small>
-                        </>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="industry-text">{lead.industry || 'Industry unknown'}</span>
-                      <small className="table-subtext">{lead.country || 'Location unknown'}</small>
-                    </td>
-                    <td>
-                      {lead.score === null ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        <div className={'score-cell ' + (lead.stale ? 'score-stale' : '')}>
-                          <strong>
-                            {lead.score}
-                            <small>/100</small>
-                          </strong>
-                          <span className="score-track">
-                            <i style={{ width: lead.score + '%' }} />
-                          </span>
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <NextStepBadge step={lead.next_step} />
-                    </td>
-                    <td>
-                      <button
-                        className="assignee-cell"
-                        disabled={!!busy}
-                        onClick={() => setAssigning([lead.id])}
-                        title="Assign this lead for calling"
-                      >
-                        {lead.assigned_to_name ? (
-                          <>
-                            <span className="assignee-avatar">{lead.assigned_to_name[0]}</span>
-                            <span>
-                              {lead.assigned_to_name}
-                              {(lead.call_count || 0) > 0 && (
-                                <small>
-                                  {lead.call_count} call{lead.call_count === 1 ? '' : 's'} logged
-                                </small>
-                              )}
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <UserPlus size={14} />
-                            <span className="muted">Assign</span>
-                          </>
-                        )}
-                      </button>
-                    </td>
-                    <td>
-                      <Badge value={lead.stale ? 'stale' : lead.status}>
-                        {lead.stale ? 'Requalification needed' : label(lead.status)}
-                      </Badge>
-                      <small className="table-subtext">
-                        {lead.reviewed && (
-                          <>
-                            <ShieldCheck size={12} /> Human reviewed ·{' '}
-                          </>
-                        )}
-                        {lead.training_version ? 'Training v' + lead.training_version : 'No run'}
-                      </small>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          className="button small primary"
-                          disabled={!ready || !!busy}
-                          title={
-                            ready
-                              ? 'Research this lead with AI against training v' +
-                                project.active_version
-                              : 'Publish your training before qualifying leads'
-                          }
-                          onClick={() => void qualifyOne(lead)}
-                        >
-                          {busy === 'lead-' + lead.id ? (
-                            <Spinner text="" />
-                          ) : (
-                            <>
-                              <Sparkles size={14} />
-                              {lead.latest_run_id ? 'Re-run' : 'Qualify'}
-                            </>
-                          )}
-                        </button>
-                        <button
-                          className="icon-button"
-                          onClick={() => setDetail(lead.id)}
-                          aria-label={'View reasoning for ' + lead.name}
-                          title="Open lead"
-                        >
-                          <ArrowUpRight size={18} />
-                        </button>
-                        <button
-                          className="icon-button danger"
-                          disabled={!!busy}
-                          onClick={() => setConfirmDelete([lead.id])}
-                          aria-label={'Delete ' + lead.name}
-                          title="Delete lead"
-                        >
-                          <Trash2 size={17} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="table-footer">
-          <span>
-            {total ? Math.min((page - 1) * 30 + 1, total) : 0}–{Math.min(page * 30, total)} of{' '}
-            {total} leads
-          </span>
-          <span className="fine-print">Select up to 20 leads for a qualification batch.</span>
+      <div hidden={Boolean(detail)}>
+        <div className="page-heading">
           <div>
-            <button
-              className="icon-button"
-              disabled={page <= 1 || loading || !!busy}
-              onClick={() => setPage((n) => n - 1)}
-              aria-label="Previous page"
-            >
-              <ChevronLeft size={18} />
+            <span className="eyebrow">
+              {queue ? 'HUMAN JUDGMENT, IN THE LOOP' : 'RESEARCH THAT FOLLOWS YOUR RULES'}
+            </span>
+            <h1>{queue ? 'A closer look.' : 'Find the right fit.'}</h1>
+            <p>
+              {queue
+                ? 'Review uncertain findings, research new leads and revisit results when training changes.'
+                : 'Analyze your leads against ' +
+                  project.name +
+                  ' training. Understand the evidence behind the fit.'}
+            </p>
+          </div>
+          <div className="heading-actions">
+            <button className="button secondary" onClick={() => setImporting(true)}>
+              <Upload size={16} />
+              Import leads
             </button>
-            <span>{page}</span>
-            <button
-              className="icon-button"
-              disabled={page * 30 >= total || loading || !!busy}
-              onClick={() => setPage((n) => n + 1)}
-              aria-label="Next page"
-            >
-              <ChevronRight size={18} />
+            <button className="button primary" onClick={() => setCreate(true)}>
+              <Plus size={17} />
+              Add lead
             </button>
           </div>
         </div>
-      </section>
-      {assigning && (
-        <Modal
-          title={
-            assigning.length === 1 ? 'Assign this lead for calling' : 'Assign leads for calling'
-          }
-          onClose={() => setAssigning(null)}
-        >
-          <div className="form-stack">
-            <p className="muted">
-              The person you pick sees these {assigning.length === 1 ? 'lead' : 'leads'} under
-              &ldquo;Assigned to me&rdquo; in the Review queue, where they log each call. Only
-              people with access to {project.name} can be assigned.
-            </p>
-            {assignees.length === 0 ? (
-              <Alert>No one has access to this project yet. Assign it in Workspace settings.</Alert>
-            ) : (
-              <div className="assignment-list">
-                {assignees.map((person) => (
-                  <button
-                    key={person.id}
-                    className="assignee-option"
-                    disabled={!!busy}
-                    onClick={() => void assignLeads(assigning, person.id)}
-                  >
-                    <span className="assignee-avatar">{person.name[0]}</span>
-                    <span>
-                      <strong>{person.name}</strong>
-                      <small>
-                        @{person.username} ·{' '}
-                        {person.role === 'admin' ? 'Administrator' : 'Researcher'}
-                      </small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="form-actions">
-              <button className="button secondary" onClick={() => setAssigning(null)}>
-                Cancel
-              </button>
-              <button
-                className="text-button"
-                disabled={!!busy}
-                onClick={() => void assignLeads(assigning, null)}
+        {!ready && (
+          <div className="inline-notice">
+            <BookOpen size={20} />
+            <span>
+              <strong>Training comes first.</strong> Publish your current training to start
+              qualifying these leads.
+            </span>
+            <button className="text-button" onClick={onTraining}>
+              Open training
+              <ArrowRight size={15} />
+            </button>
+          </div>
+        )}
+        <div className="lead-summary">
+          <span>
+            <Users size={16} />
+            <strong>{project.lead_count}</strong> total leads
+          </span>
+          <span>
+            <span className="small-dot green-dot" />
+            <strong>{project.qualified_count}</strong> qualified on current training
+          </span>
+          <span>
+            <span className="small-dot amber-dot" />
+            <strong>{project.review_count}</strong> awaiting research
+          </span>
+          {ready && (
+            <span className="training-version">
+              <BookOpen size={14} />
+              Training v{project.active_version}
+            </span>
+          )}
+        </div>
+        {error && <Alert>{error}</Alert>}
+        <section className="panel leads-panel">
+          <div className="table-toolbar">
+            <div className="search-input">
+              <Search size={17} />
+              <input
+                aria-label="Search leads"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search company, industry or country…"
+              />
+            </div>
+            <label className="lead-filter-control">
+              <Filter size={15} aria-hidden="true" />
+              <select
+                aria-label="Filter leads"
+                value={status}
+                onChange={(e) => {
+                  setStatus(e.target.value);
+                  setPage(1);
+                  setExportOpen(false);
+                }}
               >
-                Clear assignment
+                {statusFilters(queue).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="export-menu" ref={exportRef}>
+              <button
+                className="button secondary"
+                aria-expanded={exportOpen}
+                aria-haspopup="true"
+                onClick={() => {
+                  setExportOpen((open) => !open);
+                }}
+              >
+                <ArrowDownToLine size={15} />
+                Export
+                <ChevronDown size={14} />
               </button>
+              {exportOpen && (
+                <div className="export-dropdown" role="menu">
+                  <a
+                    role="menuitem"
+                    href={
+                      '/api' +
+                      base +
+                      '/leads/export?' +
+                      new URLSearchParams({
+                        status: status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status,
+                        ...(status === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
+                        search: query,
+                      })
+                    }
+                    onClick={() => setExportOpen(false)}
+                  >
+                    <strong>This view</strong>
+                    <small>
+                      {statusFilters(queue).find((o) => o.value === status)?.label}
+                      {query ? ' · matching “' + query + '”' : ''} · {total} lead
+                      {total === 1 ? '' : 's'}
+                    </small>
+                  </a>
+                  <div className="export-divider" />
+                  {statusFilters(queue)
+                    .filter((option) => option.value !== status)
+                    .map((option) => (
+                      <a
+                        key={option.value}
+                        role="menuitem"
+                        href={
+                          '/api' +
+                          base +
+                          '/leads/export?' +
+                          new URLSearchParams({
+                            status: option.value === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : option.value,
+                            ...(option.value === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
+                          })
+                        }
+                        onClick={() => setExportOpen(false)}
+                      >
+                        {option.label}
+                      </a>
+                    ))}
+                </div>
+              )}
             </div>
           </div>
-        </Modal>
-      )}
-      {confirmDelete && (
-        <Modal title="Delete leads" onClose={() => setConfirmDelete(null)}>
-          {/* .form-stack carries the modal's padding — a bare child sits flush to the edge. */}
-          <div className="form-stack">
-            <p>
-              Deleting {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'} also
-              removes their qualification runs, human reviews and training feedback. Published
-              training versions are unaffected. This cannot be undone.
-            </p>
-            <div className="form-actions">
-              <button className="button secondary" onClick={() => setConfirmDelete(null)}>
-                Cancel
+          {selected.length > 0 && (
+            <div className="selection-bar">
+              <span>{selected.length} selected</span>
+              <button
+                className="button primary"
+                disabled={!!busy}
+                onClick={ready ? bulkQualify : onTraining}
+              >
+                {busy ? (
+                  <Spinner text={busy} />
+                ) : (
+                  <>
+                    <Sparkles size={15} />
+                    {ready ? 'Run AI qualification' : 'Set up qualification'}
+                  </>
+                )}
+              </button>
+              <button
+                className="button secondary"
+                disabled={!!busy}
+                onClick={() => setAssigning(selected)}
+              >
+                <UserPlus size={15} />
+                Assign for calling
+              </button>
+              <button
+                className="button secondary"
+                disabled={!!busy || !ready}
+                onClick={() => setEnrolling(true)}
+              >
+                <Mail size={15} />
+                Add to funnel
               </button>
               <button
                 className="button danger"
                 disabled={!!busy}
-                onClick={() => void deleteLeads(confirmDelete)}
+                onClick={() => setConfirmDelete(selected)}
               >
-                {busy ? (
-                  <Spinner text="Deleting…" />
-                ) : (
-                  <>
-                    <Trash2 size={15} />
-                    Delete {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'}
-                  </>
-                )}
+                <Trash2 size={15} />
+                Delete selected
+              </button>
+              <button className="text-button" disabled={!!busy} onClick={() => setSelected([])}>
+                Clear selection
+              </button>
+            </div>
+          )}
+          {loading ? (
+            <div className="table-loading">
+              <Spinner text="Loading leads…" />
+            </div>
+          ) : !leads.length ? (
+            <Empty
+              icon={<ScanLine size={30} />}
+              title={
+                query || status !== 'ALL'
+                  ? 'No leads match this view'
+                  : 'Your next discovery starts here'
+              }
+              action={
+                <button className="button secondary" onClick={() => setCreate(true)}>
+                  <Plus size={16} />
+                  Add a lead
+                </button>
+              }
+            >
+              {query || status !== 'ALL'
+                ? 'Try another filter, or add a lead to this project.'
+                : 'Add a company and its website, or import a CSV to build your research list.'}
+            </Empty>
+          ) : (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th className="checkbox-cell">
+                      <input
+                        type="checkbox"
+                        aria-label="Select up to 20 visible leads"
+                        disabled={!!busy}
+                        checked={
+                          selected.length > 0 && selected.length === Math.min(20, leads.length)
+                        }
+                        onChange={(e) =>
+                          setSelected(e.target.checked ? leads.slice(0, 20).map((l) => l.id) : [])
+                        }
+                      />
+                    </th>
+                    <th>Company</th>
+                    <th>Contact</th>
+                    <th>Industry / location</th>
+                    <th>Fit score</th>
+                    <th>Next step</th>
+                    <th>Assigned to</th>
+                    <th>Qualification</th>
+                    <th>
+                      <span className="visually-hidden">Open</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads.map((lead) => (
+                    <tr key={lead.id}>
+                      <td className="checkbox-cell">
+                        <input
+                          type="checkbox"
+                          aria-label={'Select ' + lead.name}
+                          checked={selected.includes(lead.id)}
+                          disabled={
+                            !!busy || (!selected.includes(lead.id) && selected.length >= 20)
+                          }
+                          onChange={(e) =>
+                            setSelected((ids) =>
+                              e.target.checked
+                                ? [...ids, lead.id]
+                                : ids.filter((id) => id !== lead.id),
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <div className="lead-company">
+                          <span className="lead-monogram">
+                            {lead.name.slice(0, 2).toUpperCase()}
+                          </span>
+                          <div>
+                            <button className="lead-name" onClick={() => setDetail(lead.id)}>
+                              {lead.name}
+                            </button>
+                            <ExternalLink url={lead.website} />
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        {lead.contact_name ? (
+                          <>
+                            <span className="industry-text">{lead.contact_name}</span>
+                            <small className="table-subtext">
+                              {lead.contact_role || 'Role not published'}
+                            </small>
+                          </>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="industry-text">{lead.industry || 'Industry unknown'}</span>
+                        <small className="table-subtext">
+                          {lead.country || 'Location unknown'}
+                        </small>
+                      </td>
+                      <td>
+                        {lead.score === null ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <div className={'score-cell ' + (lead.stale ? 'score-stale' : '')}>
+                            <strong>
+                              {lead.score}
+                              <small>/100</small>
+                            </strong>
+                            <span className="score-track">
+                              <i style={{ width: lead.score + '%' }} />
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <NextStepBadge step={lead.next_step} />
+                      </td>
+                      <td>
+                        <button
+                          className="assignee-cell"
+                          disabled={!!busy}
+                          onClick={() => setAssigning([lead.id])}
+                          title="Assign this lead for calling"
+                        >
+                          {lead.assigned_to_name ? (
+                            <>
+                              <span className="assignee-avatar">{lead.assigned_to_name[0]}</span>
+                              <span>
+                                {lead.assigned_to_name}
+                                {(lead.call_count || 0) > 0 && (
+                                  <small>
+                                    {lead.call_count} call{lead.call_count === 1 ? '' : 's'} logged
+                                  </small>
+                                )}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus size={14} />
+                              <span className="muted">Assign</span>
+                            </>
+                          )}
+                        </button>
+                      </td>
+                      <td>
+                        <Badge value={lead.stale ? 'stale' : lead.status}>
+                          {lead.stale ? 'Requalification needed' : label(lead.status)}
+                        </Badge>
+                        <small className="table-subtext">
+                          {lead.reviewed && (
+                            <>
+                              <ShieldCheck size={12} /> Human reviewed ·{' '}
+                            </>
+                          )}
+                          {lead.training_version ? 'Training v' + lead.training_version : 'No run'}
+                        </small>
+                        {lead.outreach_status && lead.outreach_status !== 'NOT_CONTACTED' && (
+                          <small className="table-subtext">
+                            Outreach: {label(lead.outreach_status)}
+                          </small>
+                        )}
+                      </td>
+                      <td>
+                        <div className="row-actions">
+                          <button
+                            className="button small primary"
+                            disabled={!!busy}
+                            title={
+                              ready
+                                ? 'Research this lead with AI against training v' +
+                                  project.active_version
+                                : 'Publish your training before qualifying leads'
+                            }
+                            onClick={() => (ready ? void qualifyOne(lead) : onTraining())}
+                          >
+                            {busy === 'lead-' + lead.id ? (
+                              <Spinner text="" />
+                            ) : (
+                              <>
+                                <Sparkles size={14} />
+                                {!ready ? 'Set up' : lead.latest_run_id ? 'Re-run' : 'Qualify'}
+                              </>
+                            )}
+                          </button>
+                          <button
+                            className="button small secondary"
+                            onClick={() => setDetail(lead.id, 'email')}
+                            aria-label={'Create email for ' + lead.name}
+                          >
+                            <Mail size={14} />
+                            Email
+                          </button>
+                          <button
+                            className="icon-button"
+                            onClick={() => setDetail(lead.id)}
+                            aria-label={'Open company page for ' + lead.name}
+                            title="Open company page"
+                          >
+                            <ArrowUpRight size={18} />
+                          </button>
+                          <button
+                            className="icon-button danger"
+                            disabled={!!busy}
+                            onClick={() => setConfirmDelete([lead.id])}
+                            aria-label={'Delete ' + lead.name}
+                            title="Delete lead"
+                          >
+                            <Trash2 size={17} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="table-footer">
+            <span>
+              {total ? Math.min((page - 1) * 30 + 1, total) : 0}–{Math.min(page * 30, total)} of{' '}
+              {total} leads
+            </span>
+            <span className="fine-print">Select up to 20 leads for a qualification batch.</span>
+            <div>
+              <button
+                className="icon-button"
+                disabled={page <= 1 || loading || !!busy}
+                onClick={() => setPage((n) => n - 1)}
+                aria-label="Previous page"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <span>{page}</span>
+              <button
+                className="icon-button"
+                disabled={page * 30 >= total || loading || !!busy}
+                onClick={() => setPage((n) => n + 1)}
+                aria-label="Next page"
+              >
+                <ChevronRight size={18} />
               </button>
             </div>
           </div>
-        </Modal>
-      )}
-      {create && (
-        <LeadForm
-          projectId={project.id}
-          onClose={() => setCreate(false)}
-          onSaved={(lead) => {
-            setCreate(false);
-            reload();
-            setDetail(lead.id);
-            notify('Lead added to ' + project.name + '.');
-          }}
-        />
-      )}
-      {importing && (
-        <ImportModal
-          projectId={project.id}
-          onClose={() => setImporting(false)}
-          onImported={(message) => {
-            reload();
-            notify(message);
-          }}
-        />
-      )}
+        </section>
+        {enrolling && (
+          <EnrollmentPicker
+            projectId={project.id}
+            leadIds={selected}
+            onClose={() => setEnrolling(false)}
+            onSaved={(message) => {
+              setEnrolling(false);
+              reload();
+              notify(message);
+            }}
+          />
+        )}
+        {assigning && (
+          <Modal
+            title={
+              assigning.length === 1 ? 'Assign this lead for calling' : 'Assign leads for calling'
+            }
+            onClose={() => setAssigning(null)}
+          >
+            <div className="form-stack">
+              <p className="muted">
+                The person you pick sees these {assigning.length === 1 ? 'lead' : 'leads'} under
+                &ldquo;Assigned to me&rdquo; in the Review queue, where they log each call. Only
+                people with access to {project.name} can be assigned.
+              </p>
+              {assignees.length === 0 ? (
+                <Alert>
+                  No one has access to this project yet. Assign it in Workspace settings.
+                </Alert>
+              ) : (
+                <div className="assignment-list">
+                  {assignees.map((person) => (
+                    <button
+                      key={person.id}
+                      className="assignee-option"
+                      disabled={!!busy}
+                      onClick={() => void assignLeads(assigning, person.id)}
+                    >
+                      <span className="assignee-avatar">{person.name[0]}</span>
+                      <span>
+                        <strong>{person.name}</strong>
+                        <small>
+                          @{person.username} ·{' '}
+                          {person.role === 'admin' ? 'Administrator' : 'Researcher'}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="form-actions">
+                <button className="button secondary" onClick={() => setAssigning(null)}>
+                  Cancel
+                </button>
+                <button
+                  className="text-button"
+                  disabled={!!busy}
+                  onClick={() => void assignLeads(assigning, null)}
+                >
+                  Clear assignment
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+        {confirmDelete && (
+          <Modal title="Delete leads" onClose={() => setConfirmDelete(null)}>
+            {/* .form-stack carries the modal's padding — a bare child sits flush to the edge. */}
+            <div className="form-stack">
+              <p>
+                Deleting {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'} also
+                removes their qualification runs, human reviews and training feedback. Published
+                training versions are unaffected. This cannot be undone.
+              </p>
+              <div className="form-actions">
+                <button className="button secondary" onClick={() => setConfirmDelete(null)}>
+                  Cancel
+                </button>
+                <button
+                  className="button danger"
+                  disabled={!!busy}
+                  onClick={() => void deleteLeads(confirmDelete)}
+                >
+                  {busy ? (
+                    <Spinner text="Deleting…" />
+                  ) : (
+                    <>
+                      <Trash2 size={15} />
+                      Delete {confirmDelete.length} lead{confirmDelete.length === 1 ? '' : 's'}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+        {create && (
+          <LeadForm
+            projectId={project.id}
+            onClose={() => setCreate(false)}
+            onSaved={(lead) => {
+              setCreate(false);
+              reload();
+              setDetail(lead.id);
+              notify('Lead added to ' + project.name + '.');
+            }}
+          />
+        )}
+        {importing && (
+          <ImportModal
+            projectId={project.id}
+            onClose={() => setImporting(false)}
+            onImported={(message) => {
+              reload();
+              notify(message);
+            }}
+          />
+        )}
+      </div>
       {detail && (
         <LeadDetail
+          key={detail}
           project={project}
           leadId={detail}
+          tab={detailTab}
+          onTab={(tab) => setDetail(detail, tab)}
           onClose={() => setDetail(null)}
           onChange={reload}
           onTraining={() => {
@@ -1119,6 +1166,8 @@ function LeadDetail({
   onChange,
   onTraining,
   notify,
+  tab,
+  onTab: setTab,
 }: {
   project: Project;
   leadId: number;
@@ -1126,6 +1175,8 @@ function LeadDetail({
   onChange: () => void;
   onTraining: () => void;
   notify: (text: string) => void;
+  tab: LeadTab;
+  onTab: (tab: LeadTab) => void;
 }) {
   const base = '/projects/' + project.id + '/leads/' + leadId;
   const [lead, setLead] = useState<Lead | null>(null),
@@ -1136,9 +1187,7 @@ function LeadDetail({
   const [runId, setRunId] = useState<number | null>(null),
     [decision, setDecision] = useState<Decision>('NEEDS_REVIEW'),
     [reviewNotes, setReviewNotes] = useState('');
-  const [tab, setTab] = useState<
-    'reasoning' | 'evidence' | 'history' | 'feedback' | 'calls' | 'email'
-  >('reasoning');
+  const [enrolling, setEnrolling] = useState(false);
   const ready = project.active_version && project.revision === project.trained_revision;
   useEffect(() => {
     let cancelled = false;
@@ -1220,7 +1269,22 @@ function LeadDetail({
       />
     );
   return (
-    <Modal title={lead?.name || 'Lead research'} onClose={onClose} wide>
+    <section className="company-workspace">
+      <button className="text-button company-back" onClick={onClose}>
+        <ChevronLeft size={16} />
+        Back to leads
+      </button>
+      <div className="page-heading company-heading">
+        <div>
+          <span className="eyebrow">COMPANY WORKSPACE</span>
+          <h1>{lead?.name || 'Loading company…'}</h1>
+          <p>Research, conversations and follow-ups in one place.</p>
+        </div>
+        <button className="button primary" onClick={() => setTab('email')}>
+          <Mail size={16} />
+          Create email
+        </button>
+      </div>
       <div className="lead-detail">
         {error && <Alert>{error}</Alert>}
         {!lead ? (
@@ -1300,8 +1364,8 @@ function LeadDetail({
                     <Sparkles size={16} />
                     {ready
                       ? lead.latest_run_id
-                        ? 'Requalify lead'
-                        : 'Qualify lead'
+                        ? 'Run AI qualification again'
+                        : 'Run AI qualification'
                       : 'Open training'}
                   </>
                 )}
@@ -1314,323 +1378,440 @@ function LeadDetail({
               </details>
             )}
             {lead.legacy_json && <PreviousResearch lead={lead} projectName={project.name} />}
-            {run ? (
-              <>
-                <div className="result-tabs" role="tablist" aria-label="Qualification details">
-                  {(
-                    [
-                      { id: 'reasoning', title: 'Reasoning', icon: ScanLine },
-                      {
-                        id: 'evidence',
-                        title: 'Source evidence',
-                        icon: FileText,
-                      },
-                      {
-                        id: 'history',
-                        title: 'Analysis history',
-                        icon: History,
-                      },
-                      {
-                        id: 'feedback',
-                        title: 'Training feedback',
-                        icon: MessageSquareWarning,
-                      },
-                      {
-                        id: 'calls',
-                        title: 'Calls',
-                        icon: PhoneCall,
-                      },
-                      {
-                        id: 'email',
-                        title: 'Email',
-                        icon: Mail,
-                      },
-                    ] as const
-                  ).map((item) => (
+            <>
+              <div className="result-tabs" role="tablist" aria-label="Lead details">
+                {(
+                  [
+                    { id: 'overview', title: 'Overview', icon: Globe },
+                    { id: 'email', title: 'Email & templates', icon: Mail },
+                    { id: 'campaigns', title: 'Campaigns', icon: Users },
+                    { id: 'reasoning', title: 'Reasoning', icon: ScanLine },
+                    {
+                      id: 'evidence',
+                      title: 'Source evidence',
+                      icon: FileText,
+                    },
+                    {
+                      id: 'history',
+                      title: 'Analysis history',
+                      icon: History,
+                    },
+                    {
+                      id: 'feedback',
+                      title: 'Training feedback',
+                      icon: MessageSquareWarning,
+                    },
+                    {
+                      id: 'calls',
+                      title: 'Calls',
+                      icon: PhoneCall,
+                    },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    role="tab"
+                    aria-selected={tab === item.id}
+                    onClick={() => setTab(item.id)}
+                    className={tab === item.id ? 'active' : ''}
+                  >
+                    <item.icon size={16} />
+                    {item.title}
+                  </button>
+                ))}
+              </div>
+              {tab === 'overview' && <CompanyOverview lead={lead} onTab={setTab} />}
+              {tab === 'campaigns' && (
+                <div className="company-campaigns">
+                  <div className="section-title">
+                    <div>
+                      <h3>Email campaigns</h3>
+                      <p className="muted">
+                        Choose a sequence and track the next follow-up for this company.
+                      </p>
+                    </div>
                     <button
-                      key={item.id}
-                      role="tab"
-                      aria-selected={tab === item.id}
-                      onClick={() => setTab(item.id)}
-                      className={tab === item.id ? 'active' : ''}
+                      className="button primary"
+                      disabled={lead.stale || lead.status !== 'QUALIFIED' || !ready}
+                      onClick={() => setEnrolling(true)}
                     >
-                      <item.icon size={16} />
-                      {item.title}
+                      <Plus size={16} />
+                      Add to campaign
                     </button>
+                  </div>
+                  {(lead.stale || lead.status !== 'QUALIFIED' || !ready) && (
+                    <Alert>
+                      Campaign enrollment requires a qualified lead on the current published
+                      training. You can create an email draft at any time.
+                    </Alert>
+                  )}
+                  {!lead.campaigns?.length && (
+                    <p className="muted">This company has no campaigns yet.</p>
+                  )}
+                  {lead.campaigns?.map((campaign) => (
+                    <article key={campaign.id} className="company-campaign-card">
+                      <div>
+                        <a href={`#projects/${project.id}/funnels`}>
+                          <strong>{campaign.funnel_name}</strong>
+                        </a>
+                        <small>
+                          {campaign.recipient} · {label(campaign.funnel_status)} campaign
+                        </small>
+                      </div>
+                      <Badge value={campaign.status.toLowerCase()}>{label(campaign.status)}</Badge>
+                      <p>
+                        {campaign.next_step} of {campaign.step_count} messages sent
+                      </p>
+                      <p>
+                        {campaign.status === 'QUEUED'
+                          ? campaign.funnel_status === 'ACTIVE'
+                            ? 'Next: ' + new Date(campaign.next_send_at).toLocaleString()
+                            : 'Waiting for campaign activation'
+                          : campaign.reason}
+                      </p>
+                    </article>
                   ))}
                 </div>
-                {tab === 'reasoning' && (
-                  <div className="result-content">
-                    <div className="result-metrics">
-                      <div>
-                        <small>AI DECISION</small>
-                        <Badge value={run.result.decision} />
-                      </div>
-                      <div>
-                        <small>FIT SCORE</small>
-                        <strong>
-                          {run.result.score}
-                          <span>/100</span>
-                        </strong>
-                      </div>
-                      <div>
-                        <small>CONFIDENCE</small>
-                        <strong>
-                          {run.result.confidence}
-                          <span>%</span>
-                        </strong>
-                      </div>
-                      <div>
-                        <small>TRAINING</small>
-                        <strong>v{run.training_version}</strong>
-                      </div>
+              )}
+              {tab === 'reasoning' && !run && (
+                <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
+                  {ready
+                    ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
+                    : 'Publish project training, then return to qualify this lead.'}
+                </Empty>
+              )}
+              {tab === 'reasoning' && run && (
+                <div className="result-content">
+                  <div className="result-metrics">
+                    <div>
+                      <small>AI DECISION</small>
+                      <Badge value={run.result.decision} />
                     </div>
-                    <section className="reasoning-summary">
-                      <span className="eyebrow">WHY THIS DECISION</span>
-                      <p>{run.result.summary}</p>
-                      <small>
-                        {run.created_by} · {date(run.created_at)} · {run.model}
-                      </small>
+                    <div>
+                      <small>FIT SCORE</small>
+                      <strong>
+                        {run.result.score}
+                        <span>/100</span>
+                      </strong>
+                    </div>
+                    <div>
+                      <small>CONFIDENCE</small>
+                      <strong>
+                        {run.result.confidence}
+                        <span>%</span>
+                      </strong>
+                    </div>
+                    <div>
+                      <small>TRAINING</small>
+                      <strong>v{run.training_version}</strong>
+                    </div>
+                  </div>
+                  <section className="reasoning-summary">
+                    <span className="eyebrow">WHY THIS DECISION</span>
+                    <p>{run.result.summary}</p>
+                    <small>
+                      {run.created_by} · {date(run.created_at)} · {run.model}
+                    </small>
+                  </section>
+                  {(lead.next_step !== 'NONE' || run.result.outreach?.call_script) && (
+                    <section className="outreach-box">
+                      <div className="outreach-heading">
+                        <NextStepBadge step={lead.next_step} />
+                        <small>
+                          Fit {run.result.score}/100 · {nextStepLabels[lead.next_step].hint}
+                        </small>
+                      </div>
+                      {lead.contact_name && (
+                        <p className="outreach-contact">
+                          <Users size={15} />
+                          <span>
+                            <strong>{lead.contact_name}</strong>
+                            {lead.contact_role && <small> · {lead.contact_role}</small>}
+                          </span>
+                          <button
+                            className="text-button"
+                            onClick={() => void eraseContact()}
+                            title="Delete this contact from the lead"
+                          >
+                            Remove contact
+                          </button>
+                        </p>
+                      )}
+                      {run.result.outreach?.why_qualified && (
+                        <>
+                          <h3>Why this lead qualifies</h3>
+                          <p>{run.result.outreach.why_qualified}</p>
+                        </>
+                      )}
+                      {run.result.outreach?.call_script && (
+                        <>
+                          <h3>Call opener</h3>
+                          <blockquote className="call-script">
+                            {run.result.outreach.call_script}
+                          </blockquote>
+                          <small className="fine-print">
+                            Read this as a starting point and verify every claim against the
+                            evidence tab before contacting anyone.
+                          </small>
+                        </>
+                      )}
                     </section>
-                    {(lead.next_step !== 'NONE' || run.result.outreach?.call_script) && (
-                      <section className="outreach-box">
-                        <div className="outreach-heading">
-                          <NextStepBadge step={lead.next_step} />
+                  )}
+                  <h3>Qualification criteria</h3>
+                  <Criteria items={run.result.criteria} />
+                  <h3>Exclusion checks</h3>
+                  {run.result.exclusions.length ? (
+                    <Criteria items={run.result.exclusions} />
+                  ) : (
+                    <p className="muted">No exclusion rules defined in this training version.</p>
+                  )}
+                  {run.result.gaps.length > 0 && (
+                    <section className="gaps-box">
+                      <h3>Evidence gaps & review notes</h3>
+                      <ul>
+                        {run.result.gaps.map((gap, i) => (
+                          <li key={i}>{gap}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                  {run.result.next_steps.length > 0 && (
+                    <>
+                      <h3>Next research steps</h3>
+                      <ul className="next-steps">
+                        {run.result.next_steps.map((step, i) => (
+                          <li key={i}>{step}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
+              {tab === 'evidence' && !run && (
+                <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
+                  {ready
+                    ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
+                    : 'Publish project training, then return to qualify this lead.'}
+                </Empty>
+              )}
+              {tab === 'evidence' && run && (
+                <div className="evidence-list">
+                  <p className="muted">
+                    These are the exact source excerpts supplied to this analysis. Source IDs
+                    connect them to the reasoning.
+                  </p>
+                  {run.evidence.map((item) => (
+                    <details key={item.id}>
+                      <summary>
+                        <span className="evidence-id">{item.id}</span>
+                        {item.title}
+                      </summary>
+                      <div className="evidence-content">
+                        {item.url && <ExternalLink url={item.url} />}
+                        <small>Captured {date(item.captured_at)}</small>
+                        <pre>{item.content}</pre>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              )}
+              {tab === 'history' && !run && (
+                <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
+                  {ready
+                    ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
+                    : 'Publish project training, then return to qualify this lead.'}
+                </Empty>
+              )}
+              {tab === 'history' && run && (
+                <div className="history-list">
+                  <h3>Qualification runs</h3>
+                  {lead.runs?.map((item) => (
+                    <button
+                      className={'run-history ' + (item.id === runId ? 'selected' : '')}
+                      key={item.id}
+                      onClick={() => {
+                        setRunId(item.id);
+                        setTab('reasoning');
+                      }}
+                    >
+                      <span>
+                        <strong>
+                          Training v{item.training_version} · lead revision {item.lead_revision}
+                        </strong>
+                        <small>
+                          {date(item.created_at)} · {item.created_by} · {item.model}
+                        </small>
+                      </span>
+                      <Badge value={item.result.decision} />
+                      <ArrowRight size={16} />
+                    </button>
+                  ))}
+                  <h3>Human review record</h3>
+                  {lead.reviews?.length ? (
+                    lead.reviews.map((item) => (
+                      <div className="human-review-history" key={item.id}>
+                        <div>
+                          <Badge value={item.decision} />
                           <small>
-                            Fit {run.result.score}/100 · {nextStepLabels[lead.next_step].hint}
+                            {item.created_by} · {date(item.created_at)} · analysis #{item.run_id}
                           </small>
                         </div>
-                        {lead.contact_name && (
-                          <p className="outreach-contact">
-                            <Users size={15} />
-                            <span>
-                              <strong>{lead.contact_name}</strong>
-                              {lead.contact_role && <small> · {lead.contact_role}</small>}
-                            </span>
-                            <button
-                              className="text-button"
-                              onClick={() => void eraseContact()}
-                              title="Delete this contact from the lead"
-                            >
-                              Remove contact
-                            </button>
-                          </p>
-                        )}
-                        {run.result.outreach?.why_qualified && (
-                          <>
-                            <h3>Why this lead qualifies</h3>
-                            <p>{run.result.outreach.why_qualified}</p>
-                          </>
-                        )}
-                        {run.result.outreach?.call_script && (
-                          <>
-                            <h3>Call opener</h3>
-                            <blockquote className="call-script">
-                              {run.result.outreach.call_script}
-                            </blockquote>
-                            <small className="fine-print">
-                              Read this as a starting point and verify every claim against the
-                              evidence tab before contacting anyone.
-                            </small>
-                          </>
-                        )}
-                      </section>
-                    )}
-                    <h3>Qualification criteria</h3>
-                    <Criteria items={run.result.criteria} />
-                    <h3>Exclusion checks</h3>
-                    {run.result.exclusions.length ? (
-                      <Criteria items={run.result.exclusions} />
-                    ) : (
-                      <p className="muted">No exclusion rules defined in this training version.</p>
-                    )}
-                    {run.result.gaps.length > 0 && (
-                      <section className="gaps-box">
-                        <h3>Evidence gaps & review notes</h3>
-                        <ul>
-                          {run.result.gaps.map((gap, i) => (
-                            <li key={i}>{gap}</li>
-                          ))}
-                        </ul>
-                      </section>
-                    )}
-                    {run.result.next_steps.length > 0 && (
-                      <>
-                        <h3>Next research steps</h3>
-                        <ul className="next-steps">
-                          {run.result.next_steps.map((step, i) => (
-                            <li key={i}>{step}</li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
-                  </div>
-                )}
-                {tab === 'evidence' && (
-                  <div className="evidence-list">
-                    <p className="muted">
-                      These are the exact source excerpts supplied to this analysis. Source IDs
-                      connect them to the reasoning.
-                    </p>
-                    {run.evidence.map((item) => (
-                      <details key={item.id}>
-                        <summary>
-                          <span className="evidence-id">{item.id}</span>
-                          {item.title}
-                        </summary>
-                        <div className="evidence-content">
-                          {item.url && <ExternalLink url={item.url} />}
-                          <small>Captured {date(item.captured_at)}</small>
-                          <pre>{item.content}</pre>
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                )}
-                {tab === 'history' && (
-                  <div className="history-list">
-                    <h3>Qualification runs</h3>
-                    {lead.runs?.map((item) => (
-                      <button
-                        className={'run-history ' + (item.id === runId ? 'selected' : '')}
-                        key={item.id}
-                        onClick={() => {
-                          setRunId(item.id);
-                          setTab('reasoning');
-                        }}
-                      >
-                        <span>
-                          <strong>
-                            Training v{item.training_version} · lead revision {item.lead_revision}
-                          </strong>
-                          <small>
-                            {date(item.created_at)} · {item.created_by} · {item.model}
-                          </small>
-                        </span>
-                        <Badge value={item.result.decision} />
-                        <ArrowRight size={16} />
-                      </button>
-                    ))}
-                    <h3>Human review record</h3>
-                    {lead.reviews?.length ? (
-                      lead.reviews.map((item) => (
-                        <div className="human-review-history" key={item.id}>
-                          <div>
-                            <Badge value={item.decision} />
-                            <small>
-                              {item.created_by} · {date(item.created_at)} · analysis #{item.run_id}
-                            </small>
-                          </div>
-                          <p>{item.notes}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="muted">No human reviews yet.</p>
-                    )}
-                  </div>
-                )}
-                {tab === 'email' && (
-                  <EmailTab
+                        <p>{item.notes}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="muted">No human reviews yet.</p>
+                  )}
+                </div>
+              )}
+              {tab === 'email' && (
+                <div className="feedback-tab">
+                  <EmailComposer
                     base={base}
                     lead={lead}
-                    emails={lead.emails || []}
+                    onCampaign={() => setTab('campaigns')}
                     onSent={() => {
                       setRefresh((n) => n + 1);
                       onChange();
                       notify('Email sent and logged against this lead.');
                     }}
                   />
-                )}
-                {tab === 'calls' && (
-                  <CallsTab
+                  <OutreachOutcomeForm
                     base={base}
                     lead={lead}
-                    calls={lead.calls || []}
                     onSaved={() => {
                       setRefresh((n) => n + 1);
                       onChange();
-                      notify('Call logged.');
+                      notify('Response recorded. Further sequence messages stopped.');
                     }}
                   />
-                )}
-                {tab === 'feedback' && (
-                  <FeedbackTab
+                  <IncomingReplies
                     base={base}
-                    runId={runId}
-                    feedback={lead.feedback || []}
-                    onSaved={() => {
+                    onSent={() => {
                       setRefresh((n) => n + 1);
                       onChange();
-                      notify(
-                        'Feedback saved to the training library. Publish a new training version to apply it.',
-                      );
                     }}
                   />
-                )}
-                {runId !== lead.latest_run_id && (
-                  <div className="inline-notice">
-                    <History size={17} />
-                    <span>You are viewing an earlier analysis.</span>
-                    <button className="text-button" onClick={() => setRunId(lead.latest_run_id)}>
-                      View latest
-                    </button>
+                  <h3>Outgoing email history</h3>
+                  {(lead.emails || []).length ? (
+                    (lead.emails || []).map((message) => (
+                      <div className="human-review-history" key={message.id}>
+                        <div>
+                          <Badge value={message.status === 'SENT' ? 'QUALIFIED' : 'NEEDS_REVIEW'}>
+                            {message.status === 'SENT' ? 'Sent' : 'Delivery not confirmed'}
+                          </Badge>
+                          <small>
+                            {message.to_email} · {message.created_by} · {date(message.created_at)}
+                          </small>
+                        </div>
+                        <p>
+                          <strong>{message.subject}</strong>
+                        </p>
+                        <p className="preserve-text">{message.body}</p>
+                        {message.error && <p className="muted">{message.error}</p>}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="muted">No emails sent to this lead yet.</p>
+                  )}
+                </div>
+              )}
+              {tab === 'calls' && (
+                <CallsTab
+                  base={base}
+                  lead={lead}
+                  calls={lead.calls || []}
+                  onSaved={() => {
+                    setRefresh((n) => n + 1);
+                    onChange();
+                    notify('Call logged.');
+                  }}
+                />
+              )}
+              {tab === 'feedback' && (
+                <FeedbackTab
+                  base={base}
+                  runId={runId}
+                  feedback={lead.feedback || []}
+                  onSaved={() => {
+                    setRefresh((n) => n + 1);
+                    onChange();
+                    notify(
+                      'Feedback saved to the training library. Publish a new training version to apply it.',
+                    );
+                  }}
+                />
+              )}
+              {runId !== lead.latest_run_id && (
+                <div className="inline-notice">
+                  <History size={17} />
+                  <span>You are viewing an earlier analysis.</span>
+                  <button className="text-button" onClick={() => setRunId(lead.latest_run_id)}>
+                    View latest
+                  </button>
+                </div>
+              )}
+              {tab === 'reasoning' && run && runId === lead.latest_run_id && !lead.stale && (
+                <form className="human-review-form" onSubmit={review}>
+                  <div className="section-title">
+                    <h3>
+                      <ShieldCheck size={18} />
+                      Record your review
+                    </h3>
+                    <span className="muted">
+                      {lead.reviewed ? 'Add a follow-up decision' : 'Human judgment'}
+                    </span>
                   </div>
-                )}
-                {runId === lead.latest_run_id && !lead.stale && (
-                  <form className="human-review-form" onSubmit={review}>
-                    <div className="section-title">
-                      <h3>
-                        <ShieldCheck size={18} />
-                        Record your review
-                      </h3>
-                      <span className="muted">
-                        {lead.reviewed ? 'Add a follow-up decision' : 'Human judgment'}
-                      </span>
-                    </div>
-                    <label>
-                      Final decision
-                      <select
-                        value={decision}
-                        onChange={(e) => setDecision(e.target.value as Decision)}
-                      >
-                        <option value="QUALIFIED">Qualified</option>
-                        <option value="NOT_A_TARGET">Not a target</option>
-                        <option value="NEEDS_REVIEW">Needs more research</option>
-                      </select>
-                    </label>
-                    <label>
-                      Your reasoning
-                      <textarea
-                        rows={3}
-                        value={reviewNotes}
-                        onChange={(e) => setReviewNotes(e.target.value)}
-                        minLength={15}
-                        maxLength={6000}
-                        required
-                        placeholder="Explain the evidence you checked and why you agree or disagree…"
-                      />
-                    </label>
-                    <button
-                      className="button primary"
-                      disabled={busy || reviewNotes.trim().length < 15}
+                  <label>
+                    Final decision
+                    <select
+                      value={decision}
+                      onChange={(e) => setDecision(e.target.value as Decision)}
                     >
-                      <ClipboardCheck size={16} />
-                      Save review
-                    </button>
-                  </form>
-                )}
-              </>
-            ) : (
-              <Empty icon={<ScanLine size={28} />} title="Ready for a closer look">
-                {ready
-                  ? 'Run qualification to see the fit score, evidence, rule-by-rule assessment and research gaps.'
-                  : 'Publish project training, then return to qualify this lead.'}
-              </Empty>
-            )}
+                      <option value="QUALIFIED">Qualified</option>
+                      <option value="NOT_A_TARGET">Not a target</option>
+                      <option value="NEEDS_REVIEW">Needs more research</option>
+                    </select>
+                  </label>
+                  <label>
+                    Your reasoning
+                    <textarea
+                      rows={3}
+                      value={reviewNotes}
+                      onChange={(e) => setReviewNotes(e.target.value)}
+                      minLength={15}
+                      maxLength={6000}
+                      required
+                      placeholder="Explain the evidence you checked and why you agree or disagree…"
+                    />
+                  </label>
+                  <button
+                    className="button primary"
+                    disabled={busy || reviewNotes.trim().length < 15}
+                  >
+                    <ClipboardCheck size={16} />
+                    Save review
+                  </button>
+                </form>
+              )}
+            </>
           </>
         )}
       </div>
-    </Modal>
+      {enrolling && (
+        <EnrollmentPicker
+          projectId={project.id}
+          leadIds={[leadId]}
+          onClose={() => setEnrolling(false)}
+          onSaved={(message) => {
+            setEnrolling(false);
+            setRefresh((n) => n + 1);
+            onChange();
+            notify(message);
+          }}
+        />
+      )}
+    </section>
   );
 }
 function Criteria({ items }: { items: CriterionResult[] }) {
@@ -1943,160 +2124,6 @@ function CallsTab({
         ))
       ) : (
         <p className="muted">No calls logged yet.</p>
-      )}
-    </div>
-  );
-}
-
-/**
- * Compose and send one email to a lead. The draft comes from the approved qualification;
- * the researcher edits it and sends deliberately. Every message is logged, sent or refused.
- */
-function EmailTab({
-  base,
-  lead,
-  emails,
-  onSent,
-}: {
-  base: string;
-  lead: Lead;
-  emails: EmailMessage[];
-  onSent: () => void;
-}) {
-  const [to, setTo] = useState(lead.contact_email);
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [mailbox, setMailbox] = useState<{ configured: boolean; from_email: string } | null>(null);
-  const [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    api<{
-      subject: string;
-      body: string;
-      to: string;
-      mailbox: { configured: boolean; from_email: string };
-    }>(base + '/email/draft')
-      .then((draft) => {
-        if (cancelled) return;
-        setSubject(draft.subject);
-        setBody(draft.body);
-        setTo(draft.to || lead.contact_email);
-        setMailbox(draft.mailbox);
-      })
-      .catch((e) => {
-        if (!cancelled) setError((e as Error).message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [base]);
-  if (loading) return <Spinner text="Preparing a draft…" />;
-  return (
-    <div className="feedback-tab">
-      {mailbox && !mailbox.configured && (
-        <Alert>
-          No workspace mailbox is configured yet. An administrator sets it up in Workspace settings,
-          then you can send from here.
-        </Alert>
-      )}
-      <p className="muted">
-        {mailbox?.configured ? 'Sent from ' + mailbox.from_email + '. ' : ''}
-        The draft below is built from this lead&apos;s qualification — edit it before sending. Every
-        message names the sender and carries an opt-out line, and is logged against this lead.
-      </p>
-      {error && <Alert>{error}</Alert>}
-      <form
-        className="form-stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            await api(base + '/email', { method: 'POST', body: json({ to, subject, body }) });
-            onSent();
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label>
-          To
-          <input
-            type="email"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            required
-            maxLength={200}
-            placeholder="No contact email on this lead yet"
-          />
-          {!lead.contact_email && (
-            <small>
-              This lead has no contact email. Add one in Edit context, or type an address here.
-            </small>
-          )}
-        </label>
-        <label>
-          Subject
-          <input
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            required
-            minLength={3}
-            maxLength={200}
-          />
-        </label>
-        <label>
-          Message
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={12}
-            required
-            minLength={20}
-            maxLength={20000}
-          />
-          <small>Blank lines become paragraphs. Your signature is appended automatically.</small>
-        </label>
-        <div className="form-actions">
-          <button className="button primary" disabled={busy || !mailbox?.configured}>
-            {busy ? (
-              <Spinner text="Sending…" />
-            ) : (
-              <>
-                <Mail size={15} />
-                Send email
-              </>
-            )}
-          </button>
-        </div>
-      </form>
-      <h3>Email history</h3>
-      {emails.length ? (
-        emails.map((message) => (
-          <div className="human-review-history" key={message.id}>
-            <div>
-              <Badge value={message.status === 'SENT' ? 'QUALIFIED' : 'NEEDS_REVIEW'}>
-                {message.status === 'SENT' ? 'Sent' : 'Not delivered'}
-              </Badge>
-              <small>
-                {message.to_email} · {message.created_by} · {date(message.created_at)}
-              </small>
-            </div>
-            <p>
-              <strong>{message.subject}</strong>
-            </p>
-            <p className="preserve-text">{message.body}</p>
-          </div>
-        ))
-      ) : (
-        <p className="muted">No emails sent to this lead yet.</p>
       )}
     </div>
   );

@@ -81,14 +81,19 @@ export const emailSettingsSchema = z
     from_name: text(120).default(''),
     from_email: emailAddress.default(''),
     reply_to: emailAddress.default(''),
+    copy_to: emailAddress.default(''),
     signature: text(1000).default(''),
   })
   .strict();
 export const emailSendSchema = z
   .object({
+    reply_to_message_id: z.number().int().positive().optional(),
     to: requiredText(200),
     subject: requiredText(200).min(3),
-    body: requiredText(20000).min(20),
+    preview_text: text(200).default(''),
+    // Either a block document from the editor, or the plain body for a quick note.
+    blocks: z.array(z.unknown()).max(60).optional(),
+    body: text(20000).default(''),
   })
   .strict();
 export const decisionSchema = z.enum(['QUALIFIED', 'NOT_A_TARGET', 'NEEDS_REVIEW']);

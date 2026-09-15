@@ -22,13 +22,28 @@ Configure Gemini or a public HTTPS OpenAI-compatible provider in **Workspace set
 1. As an administrator, open **Workspace settings → Workspace administration → Create research project** and enter its business website and research objective.
 2. **Build the training library** using PDF, DOCX, Markdown, text, written notes and captured public website pages. Open a source to inspect the extracted text or download the original document.
 3. **Analyze training** to generate a proposed rubric. Review the business context, positive criteria, exclusions and open questions. Save the draft, resolve open questions and choose **Approve & publish**.
-4. **Add or import leads** into that project. CSV supports `name` (or `company_name`), `website`, `country`, `industry`, and `notes`. Import up to 500 rows / 1 MB; only the name is required. Duplicate normalized names or website domains are skipped within the project.
+4. **Add or import leads** into that project. CSV, TSV, JSON and XLSX support company, website, location, industry, contact and notes fields. Import up to 5,000 rows / 4 MB; only the name is required. Duplicate matching stays within the project; choose whether to skip or update matches. Invalid rows and unusable websites are reported.
 5. **Qualify leads** individually or in batches of up to 20. The app captures the lead website and up to two relevant internal links, evaluates every training rule, and stores the evidence and result.
 6. **Review the reasoning** and source excerpts. Record a human decision with written reasoning. Export the project's qualification results as CSV when needed.
 
 Fit scores are computed from the proportion of positive criteria that match. Confirmed exclusions set the fit score to zero. Low-confidence, missing-evidence and uncertain results go to review. Changing training or lead context marks earlier results for requalification; previous analyses and human reviews remain available.
 
-Training here means approved project context and qualification rules supplied to the AI, not model fine-tuning. No fabricated demo results are used in the live app. Pipeline, outreach, commissions and contact management have been removed from the active product.
+Training here means approved project context and qualification rules supplied to the AI, not model fine-tuning. No fabricated demo results are used in the live app. Calling assignments, append-only call logs and email outreach accompany qualification; commissions, orders and CRM pipelines remain outside the product.
+
+## Email funnels and responses
+
+1. An administrator configures the shared SMTP mailbox and **Copy every outreach email to** in Workspace settings. Copies use BCC. Passwords remain encrypted on the server.
+2. Open a project's **Email funnels**, create a named audience and edit up to three messages. Choose the first delay after enrollment and subsequent delays after the previous accepted message (for example 0, 3 and 7 days). Merge fields are checked before enrollment and sending.
+3. Add current qualified leads in the funnel or select them in Lead research and choose **Add to funnel**. Enrollment is atomic, duplicate enrollment is skipped and a recipient can have only one active sequence.
+4. Review the sequence and explicitly start it. Starting requires `INNOVISTA_ORIGIN` set to the public HTTPS app origin, a configured mailbox and a copy address. Keep the app server running and that origin reachable for unsubscribe links. Local drafts can be prepared without delivery setup.
+5. The server processes at most one due message per minute, persists progress across restarts, and supports pause/resume. There is no catch-up burst. Pausing cannot recall messages already handed to SMTP.
+6. Open **Mailbox** for Inbox, Outbox, Sent and your private drafts. An administrator connects SMTP for sending and optionally enables incoming IMAP in **Workspace settings**. Click **Verify & sync** to verify the saved incoming connection. Matched replies appear on their lead and stop applicable follow-ups; link unmatched mail to its company before replying. Record interest, conversion and unsubscribe requests deliberately in the lead's **Email** tab. Qualification remains unchanged. Unsubscribe links suppress further emails automatically after confirmation or an email client's one-click POST.
+
+Every lead's **Email** button opens its saved draft or the **Support email** template. Edit it, choose another project/starter template or use the block designer, then click **Send**. Connecting email never sends saved drafts automatically. See [mailbox setup](docs/mailbox-setup.md) for incoming authentication, sync limits and provider requirements.
+
+Individual outreach and funnels share a maximum of three accepted or uncertain sends per recipient across the workspace. Opt-outs and send counts survive lead deletion and reimport. A changed lead, training version or project assignment blocks scheduled delivery pending review. Failed or interrupted SMTP attempts are never automatically retried when delivery may already have happened; inspect the mailbox before contacting again.
+
+See [the meeting review](docs/meeting-updates.md) for the mapped requests and unresolved form/ticket integration references.
 
 ## Existing data from the previous system
 
@@ -50,7 +65,7 @@ Legacy provider settings are migrated when possible. An encrypted legacy key nee
 
 All business APIs require an authenticated server session. Passwords use salted scrypt hashes. Sessions expire after 12 hours and are revoked on logout, password changes or account deactivation. Writes require CSRF and request-verification headers. Administrator privileges are explicit roles, not inferred from names.
 
-Authenticated team members share all projects. Project-scoped queries separate their research context; this is a shared-team application, not a multi-tenant client portal. Administrators manage project creation, provider settings and team membership. Every member can change their own password from Workspace settings.
+Researchers can access only assigned projects. Administrators manage project creation, settings and team assignments. Project-scoped queries separate research context within one organization; this is not a multi-tenant client portal. Every member can change their own password from Workspace settings.
 
 For production:
 
@@ -61,7 +76,7 @@ npm start
 
 Set `INNOVISTA_ORIGIN` to the exact HTTPS origin, configure TLS at the reverse proxy, and supply `INNOVISTA_SETUP_TOKEN` for initial remote account creation. Set `HOST` explicitly if binding beyond localhost. Set `INNOVISTA_TRUST_PROXY=1` only behind one trusted reverse proxy. Production cookies require HTTPS. The app refuses production startup without an HTTPS origin.
 
-Use OS permissions and encrypted storage/backups for company data and documents. File modes are restrictive on POSIX; on Windows, apply an ACL limiting the data directory to the server account. Only provider API keys are encrypted by the application itself. Keep data and secrets out of source control.
+Use OS permissions and encrypted storage/backups for company data and documents. File modes are restrictive on POSIX; on Windows, apply an ACL limiting the data directory to the server account. Only provider API keys and mailbox passwords are encrypted by the application itself. Keep data and secrets out of source control.
 
 Website requests reject private/reserved networks, validate redirects and pin validated DNS addresses. Provider endpoints must use public HTTPS and cannot redirect requests containing credentials. AI requests have timeouts and concurrency/rate limits. Public pages only are supported; paste text when a page is blocked, requires JavaScript or needs authentication.
 
