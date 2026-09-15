@@ -29,6 +29,7 @@ export function getEmailConfig(db: DB, secrets: Secrets): SmtpConfig {
     from_name: saved.smtp_from_name || '',
     from_email: saved.smtp_from_email || '',
     reply_to: saved.smtp_reply_to || '',
+    copy_to: saved.smtp_copy_to || '',
     signature: saved.smtp_signature || '',
     configured: Boolean(saved.smtp_host && saved.smtp_from_email && saved.smtp_password),
     has_password: Boolean(saved.smtp_password),
@@ -45,25 +46,36 @@ export function publicEmailSettings(config: SmtpConfig): EmailSettings {
  * website fetch: public addresses only, on a submission port.
  */
 export async function assertMailHost(host: string, port: number) {
+  if (!allowedPorts.includes(port))
+    throw new HttpError(400, 'Use SMTP submission port 587, 465 or 2525.');
+  return resolveMailHost(host);
+}
+/** Shared public-network validation for TLS mail connections. */
+export async function resolveMailHost(host: string) {
   const clean = host.trim().toLowerCase();
   if (!/^[a-z0-9.-]+$/.test(clean) || clean.length > 253 || clean.startsWith('-'))
     throw new HttpError(400, 'Enter a valid mail server hostname.');
   if (clean === 'localhost' || /\.(localhost|local|internal|test|invalid)$/.test(clean))
     throw new HttpError(400, 'The mail server must be a public host.');
-  if (!allowedPorts.includes(port))
-    throw new HttpError(400, 'Use SMTP submission port 587, 465 or 2525.');
   if (net.isIP(clean)) {
     if (!isPublicIp(clean)) throw new HttpError(400, 'The mail server must be a public host.');
-    return;
+    return { address: clean, servername: clean };
   }
   let records: Array<{ address: string }>;
   try {
-    records = await dns.lookup(clean, { all: true });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    records = await Promise.race([
+      dns.lookup(clean, { all: true }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('DNS timeout')), 5000);
+      }),
+    ]).finally(() => clearTimeout(timeout));
   } catch {
     throw new HttpError(400, 'That mail server hostname could not be resolved.');
   }
   if (!records.length || records.some((record) => !isPublicIp(record.address)))
     throw new HttpError(400, 'That mail server resolves to a private or reserved network.');
+  return { address: records[0].address, servername: clean };
 }
 
 /** CR and LF in a header value are how header injection happens. */
@@ -97,6 +109,7 @@ export function renderEmail(options: {
   fromEmail: string;
   signature: string;
   leadName: string;
+  includeFooter?: boolean;
 }) {
   const paragraphs = options.body
     .split(/\n{2,}/)
@@ -129,19 +142,32 @@ export function renderEmail(options: {
     '<div style="max-width:600px;margin:0 auto;padding:28px 24px;background:#ffffff;font-family:-apple-system,Segoe UI,Arial,sans-serif;">' +
     paragraphs +
     signature +
-    footer +
+    (options.includeFooter === false ? '<!--outreach-footer-->' : footer) +
     '</div></body></html>'
   );
 }
 
 export type Send = (
   config: SmtpConfig,
-  message: { to: string; subject: string; text: string; html: string; replyTo: string },
+  message: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    replyTo: string;
+    bcc?: string;
+    unsubscribeUrl?: string;
+    messageId?: string;
+    inReplyTo?: string;
+    beforeSend?: () => void;
+  },
 ) => Promise<void>;
 export const sendMail: Send = async (config, message) => {
-  await assertMailHost(config.host, config.port);
+  const target = await assertMailHost(config.host, config.port);
+  message.beforeSend?.();
   const transport = nodemailer.createTransport({
-    host: config.host,
+    host: target.address,
+    tls: { servername: target.servername, rejectUnauthorized: true },
     port: config.port,
     secure: config.secure,
     auth: config.username ? { user: config.username, pass: config.password } : undefined,
@@ -154,14 +180,32 @@ export const sendMail: Send = async (config, message) => {
     disableUrlAccess: true,
   });
   try {
-    await transport.sendMail({
+    const result = await transport.sendMail({
       from: { name: config.from_name || config.from_email, address: config.from_email },
       to: message.to,
+      bcc: message.bcc,
+      headers: message.unsubscribeUrl
+        ? {
+            'List-Unsubscribe': '<' + message.unsubscribeUrl + '>',
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          }
+        : undefined,
       replyTo: message.replyTo || config.reply_to || config.from_email,
       subject: message.subject,
+      messageId: message.messageId,
+      inReplyTo: message.inReplyTo,
+      references: message.inReplyTo,
       text: message.text,
       html: message.html,
     });
+    // Partial acceptance must not look like a confirmed send with its required copy.
+    const accepted = result.accepted.map((address) => address.toLowerCase());
+    if (
+      ![message.to, ...(message.bcc ? [message.bcc] : [])].every((address) =>
+        accepted.includes(address.toLowerCase()),
+      )
+    )
+      throw new Error('A recipient was not accepted.');
   } catch {
     // Provider errors can carry credentials and full message content.
     throw new HttpError(
@@ -178,7 +222,7 @@ export function draftFor(lead: Lead, whyQualified: string, callScript: string) {
   const greeting = lead.contact_name ? 'Hello ' + lead.contact_name.split(' ')[0] : 'Hello';
   const reason = whyQualified.trim() || callScript.trim();
   return {
-    subject: lead.name + ' — a quick question about your bearing requirements',
+    subject: lead.name + ' — a quick question about working together',
     body:
       greeting +
       ',\n\n' +

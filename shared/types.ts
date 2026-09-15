@@ -167,6 +167,21 @@ export interface Lead {
   feedback?: LeadFeedback[];
   calls?: CallLog[];
   emails?: EmailMessage[];
+  outreach_status?: string;
+  campaigns?: Array<
+    import('./funnels').Enrollment & {
+      funnel_name: string;
+      funnel_status: string;
+      step_count: number;
+    }
+  >;
+  outreach_events?: Array<{
+    id: number;
+    outcome: string;
+    notes: string;
+    created_at: string;
+    created_by: string;
+  }>;
 }
 export type CallOutcome =
   'CONNECTED' | 'NO_ANSWER' | 'CALLBACK' | 'NOT_INTERESTED' | 'WRONG_CONTACT' | 'MEETING_BOOKED';
@@ -215,6 +230,7 @@ export interface EmailSettings {
   from_name: string;
   from_email: string;
   reply_to: string;
+  copy_to?: string;
   signature: string;
   configured: boolean;
   has_password: boolean;
@@ -230,6 +246,7 @@ export type EmailBlock =
   | { type: 'spacer'; size: 'small' | 'medium' | 'large' }
   | { type: 'quote'; text: string; cite: string };
 export interface EmailTemplate {
+  custom?: boolean;
   id: string;
   name: string;
   category: TemplateCategory;

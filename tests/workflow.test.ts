@@ -1808,6 +1808,12 @@ test('the block editor renders email-safe HTML, merges the subject, and names a 
     assert.equal(broken.status, 200, JSON.stringify(broken.body));
     assert.equal(broken.body.block_problems.length, 1);
     assert.equal(broken.body.block_problems[0].index, 1);
+    const missingSubject = await f.post(leadBase + '/email/preview', {
+      subject: 'Hello {{unknown_field}}',
+      blocks: [{ type: 'text', text: 'A valid message with no missing fields.', align: 'left' }],
+    });
+    assert.equal(missingSubject.status, 200);
+    assert.ok(missingSubject.body.missing_merge_fields.includes('unknown_field'));
     assert.match(broken.body.block_problems[0].message, /Block 2 \(button\) needs a complete/);
     // The valid block still renders, so the preview keeps working while one block is wrong.
     assert.ok(broken.body.html.includes('A body long enough'));

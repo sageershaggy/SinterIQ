@@ -64,6 +64,18 @@ Stored LLM settings are migrated. Encrypted legacy keys need the previous system
 
 Migration is transactional and idempotent. Restarting never imports a company twice. Preserve the old database until the migration has been reviewed.
 
+## Meeting follow-up: email funnels
+
+The September meeting extends the earlier single-message workflow with project-specific sequences and persistent enrollment. Administrators create and start funnels, while assigned researchers can enroll qualified leads and record responses. All new project routes preserve the membership 404 boundary and session/CSRF checks. A public recipient preference route is intentionally separate: its random 256-bit token authorizes only unsubscribe, the database retains its hash, and GET requests never change preferences.
+
+The additive migration creates funnel, enrollment, delivery-ledger, suppression, unsubscribe-token and outreach-event tables, plus a separate lead outreach outcome. It does not alter qualification history or legacy records. Enrollment IDs are never reused, so deleting a lead cannot collide with an old delivery key. Send counters and suppressions remain after lead deletion to prevent accidental recontact on reimport.
+
+Activation requires a configured mailbox, copy address and public HTTPS app origin. The worker reserves one due enrollment per minute in SQLite, checks the enrolling account's current access and the lead's qualified revision, and repeats those checks before SMTP connection. DNS addresses are validated and pinned, with TLS certificate checks against the original hostname. Plain-text and HTML messages include identity and opt-out information. Copy delivery uses BCC; partial recipient acceptance is reported as uncertain rather than successful.
+
+SMTP cannot guarantee exactly-once delivery after a process crash. Every step has one persistent delivery key; unconfirmed acceptance consumes the three-message allowance and is never automatically retried. Interruptions older than ten minutes become blocked for review. Pause, response and unsubscribe prevent pending sends; messages already handed to SMTP cannot be recalled. Delay intervals begin after the preceding accepted send and missed runs do not burst on restart.
+
+Administrator-enabled IMAP polling records strongly matched replies and stops applicable scheduled follow-ups without modifying qualification or overriding terminal outcomes. Unmatched messages require explicit company linking. Interest, conversion and unsubscribe requests are still team decisions. Full inbox access remains administrator-only and linked replies require project membership. The [mailbox setup](mailbox-setup.md) explains authentication and bounds. No form/ticket integration is present; the [meeting review](meeting-updates.md) records the missing details for that workflow.
+
 ## Validation and operating limits
 
 Automated tests cover authentication, CSRF/origin/Host checks, session revocation, authorization, source/lead project boundaries, training requirements, snapshots, stale writes, concurrent qualification, malformed AI output, missing evidence, imports, formula-safe exports, encryption, migration, public URL checks, and real PDF/DOCX extraction. AI-provider responses and website content in the API tests are deterministic fixtures; the tests do not incur provider charges.
@@ -87,3 +99,7 @@ Production requires an HTTPS origin, TLS termination and restricted filesystem a
 Removing the old database from tracking does not remove it from existing Git history or previously distributed copies. History cleanup, secret rotation if any were exposed, and deployment-specific penetration testing remain separate operational work; no history rewrite or deployment is performed by this upgrade.
 
 Security reference material: [Express production security](https://expressjs.com/en/advanced/best-practice-security/) and [OWASP SSRF prevention](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html). The seeded website is [Sintertechnik's official site](https://www.sintertechnik.com/).
+
+# Company workspace follow-up (15 September 2026)
+
+See [company-email-workspace.md](company-email-workspace.md) for the screenshot review and implemented concept. Additive `email_drafts`, `project_email_templates` and `notifications` tables support private versioned drafts, project templates and access-scoped updates. Drafts and notifications cascade away on lead deletion; no existing research rows are rewritten. Saved templates are structured blocks, never raw HTML. Incomplete draft fields remain editable and are strictly checked before delivery.

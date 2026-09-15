@@ -18,17 +18,39 @@ export interface EmailTemplate {
  */
 export const emailTemplates: EmailTemplate[] = [
   {
+    id: 'support',
+    name: 'Support email',
+    category: 'transactional',
+    description: 'A simple starting point for helping a company. Edit the details before sending.',
+    subject: 'Support for {{company}}',
+    preview_text: 'How can we help your team?',
+    blocks: [
+      { type: 'heading', text: 'How can we help?', level: 'h2', align: 'left' },
+      { type: 'text', text: 'Hello,', align: 'left' },
+      {
+        type: 'text',
+        text: 'I am getting in touch with the team at {{company}}. Please let us know what you need help with, and we can discuss the next steps.',
+        align: 'left',
+      },
+      {
+        type: 'text',
+        text: 'You can reply directly to this email.\n\nBest regards,\n{{sender_name}}',
+        align: 'left',
+      },
+    ],
+  },
+  {
     id: 'first-contact',
     name: 'First contact',
     category: 'outreach',
     description: 'Short opener that names the reason this company came up.',
-    subject: '{{company}} — a question about your bearing requirements',
-    preview_text: 'A short question about how {{company}} specifies bearings.',
+    subject: 'A short introduction for {{company}}',
+    preview_text: 'A question about whether there is a fit.',
     blocks: [
-      { type: 'text', text: 'Hello {{contact_first_name}},', align: 'left' },
+      { type: 'text', text: 'Hello,', align: 'left' },
       {
         type: 'text',
-        text: 'I was reading about {{company}} and its work in {{industry}}. We supply ceramic and hybrid bearings for duty where steel struggles — corrosive media, high temperature, hygiene requirements.',
+        text: 'I was reading about {{company}} and wanted to learn more about your current requirements.',
         align: 'left',
       },
       {
@@ -68,12 +90,12 @@ export const emailTemplates: EmailTemplate[] = [
     name: 'Technical brief',
     category: 'outreach',
     description: 'Leads with the application rather than the product.',
-    subject: 'Bearing options for {{industry}} applications',
-    preview_text: 'Where ceramic and hybrid bearings hold up and where they do not.',
+    subject: 'A technical discussion with {{company}}',
+    preview_text: 'Understanding the application and its requirements.',
     blocks: [
       {
         type: 'heading',
-        text: 'Where ceramic bearings earn their place',
+        text: 'Understanding your application',
         level: 'h1',
         align: 'left',
       },
@@ -84,8 +106,8 @@ export const emailTemplates: EmailTemplate[] = [
       },
       {
         type: 'quote',
-        text: 'Full ceramic suits corrosive, hygienic and high-temperature duty. Hybrid suits high speed and reduced maintenance. Neither is a drop-in for every position.',
-        cite: 'Engineering summary',
+        text: 'Application requirements, operating conditions and constraints help us assess whether there is a useful fit.',
+        cite: '',
       },
       {
         type: 'text',

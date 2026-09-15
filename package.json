@@ -22,8 +22,10 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
     "helmet": "^8.1.0",
+    "imapflow": "^2.0.5",
     "ipaddr.js": "^2.2.0",
     "lucide-react": "^0.546.0",
+    "mailparser": "^3.9.28",
     "mammoth": "^1.12.2",
     "multer": "^2.3.0",
     "nodemailer": "^10.0.9",
@@ -37,6 +39,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.0",
+    "@types/mailparser": "^3.4.6",
     "@types/multer": "^2.0.0",
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^8.0.1",

@@ -81,11 +81,13 @@ export const emailSettingsSchema = z
     from_name: text(120).default(''),
     from_email: emailAddress.default(''),
     reply_to: emailAddress.default(''),
+    copy_to: emailAddress.default(''),
     signature: text(1000).default(''),
   })
   .strict();
 export const emailSendSchema = z
   .object({
+    reply_to_message_id: z.number().int().positive().optional(),
     to: requiredText(200),
     subject: requiredText(200).min(3),
     preview_text: text(200).default(''),

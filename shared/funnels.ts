@@ -1,0 +1,33 @@
+export interface FunnelStep {
+  delay_days: number;
+  subject: string;
+  body: string;
+}
+export type FunnelStatus = 'DRAFT' | 'ACTIVE' | 'PAUSED';
+export interface Funnel {
+  id: number;
+  project_id: number;
+  name: string;
+  audience: string;
+  steps: FunnelStep[];
+  status: FunnelStatus;
+  revision: number;
+  created_at: string;
+  enrolled_count: number;
+  queued_count: number;
+  converted_count: number;
+}
+export type OutreachOutcome = 'REPLIED' | 'INTERESTED' | 'CONVERTED' | 'STOPPED' | 'UNSUBSCRIBED';
+export interface Enrollment {
+  id: number;
+  funnel_id: number;
+  lead_id: number;
+  lead_name: string;
+  recipient: string;
+  status: string;
+  next_step: number;
+  next_send_at: number;
+  reason: string;
+  created_by: string;
+  updated_at: string;
+}

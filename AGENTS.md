@@ -7,7 +7,7 @@ This is a project-based training, lead research and qualification workspace. Sin
 - Projects, source libraries, training analysis, approved versioned rubrics, lead research, evidence-backed qualification, human review and history.
 - Per-project team assignment, website-published business contacts, fit-score outreach bands with a call opener, lead-level training feedback, per-lead calling assignment and an append-only call log.
 - One shared workspace mailbox: per-lead email composed from the qualification, sent deliberately, logged sent or refused.
-- No CRM pipeline, commissions, orders, follow-up scheduling, or unattended/bulk email blasting.
+- Project email funnels: up to three scheduled messages, deliberate administrator activation, copy recipient, response history and recipient opt-out. No CRM pipeline, commissions, orders or unrestricted bulk email blasting.
 - Read README.md and docs/upgrade-review.md for architecture, migration and security details.
 
 ## Stack and commands
@@ -25,7 +25,7 @@ This is a project-based training, lead research and qualification workspace. Sin
 - Every source, lead, run and training lookup is scoped to its project. Never query a child record by ID alone.
 - All business APIs require authenticated server sessions. Never add default passwords, auth bypasses, browser credential storage or identity-header fallbacks.
 - Administrator rights use the persisted role. A researcher reaches only assigned projects; an unassigned project must answer 404 on every project-scoped route so membership cannot be probed by ID. Only administrators create projects and change assignments.
-- All state changes require CSRF and same-origin request validation.
+- All workspace state changes require CSRF and same-origin request validation. Public email unsubscribe is a separate recipient-owned POST authorized only by an unguessable scoped token; GET never changes preferences.
 - Provider keys stay server-side and encrypted at rest. Never add secret values to Vite define or VITE_ environment variables.
 - Public URL fetches must use server/network.ts, including validation on redirects and DNS pinning. Never send provider credentials over redirects or private-network endpoints.
 - Uploaded documents are untrusted. Retain size, signature, ZIP expansion, page-count, timeout and process-isolation limits.
@@ -33,6 +33,9 @@ This is a project-based training, lead research and qualification workspace. Sin
 - Lead feedback is project knowledge, never an edit: it must not rewrite a stored run, a lead decision or a review. It invalidates the published training and is folded into the next published snapshot.
 - Calling assignment never widens access: only an account that can already reach the project may hold one. Logging a call must not change the qualification, fit score or decision, and the call log is append-only.
 - Email: the mailbox is administrator-only and its password is encrypted at rest and never returned. Treat the SMTP host as an outbound target — public addresses on a submission port only. Strip CR/LF from every header value, escape all body interpolation, keep a named sender and a working opt-out in every message, and record refused sends rather than discarding them. Never return a raw transport error.
+- Funnels stay drafts until explicitly activated. Activation requires a public HTTPS origin, configured mailbox and copy address. Recheck membership, qualification, lead revision, recipient and suppression before delivery. Enrolled sequences cannot be edited. Pace due messages to one per minute and never retry ambiguous SMTP acceptance automatically.
+- Individual mail and funnels share a three-email recipient limit and durable suppression, including after lead deletion/reimport. Record outreach outcomes separately from qualification and preserve their append-only history. Explicitly enabled incoming IMAP sync may record matched replies; conversion and interest remain team decisions. Unsubscribe links stop future sends automatically.
+- Incoming mail: administrator-only TLS IMAP configuration with encrypted credentials, public DNS pinning, read-only access, bounded messages and no raw transport logs. Recheck configuration revision and the enabling administrator before saving a sync. Full mailbox access is administrator-only; linked replies require current project membership. Match app-generated Message-ID references and the original sender, leaving ambiguous mail for explicit linking. Preserve terminal outcomes and stop applicable queued follow-ups without changing qualification. Never render inbound HTML or fetch its images. Pause automatic deliveries if an enabled incoming sync fails.
 - A contact is personal data. Keep it only when the captured website evidence cited it, never from lead notes, earlier research or inference, and keep it erasable from the lead.
 - The server derives the outreach band from its own fit score. A stale or non-qualified lead has no outreach step, and a non-target keeps no call script.
 - Qualification uses the approved snapshot and current lead revision. Validate every criterion/exclusion and source ID before saving.

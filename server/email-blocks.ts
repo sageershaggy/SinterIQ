@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { text, requiredText, webUrl } from './validation';
+import type { Lead } from '../shared/types';
 
 /**
  * A typed block model, rendered server-side into email-safe HTML.
@@ -75,6 +76,18 @@ export const mergeFields = [
   'sender_name',
 ] as const;
 export type MergeContext = Record<(typeof mergeFields)[number], string>;
+export function mergeContext(lead: Lead, senderName: string): MergeContext {
+  return {
+    company: lead.name,
+    contact_name: lead.contact_name,
+    contact_first_name: lead.contact_name.split(' ')[0] || '',
+    contact_role: lead.contact_role,
+    city: lead.city,
+    country: lead.country,
+    industry: lead.industry,
+    sender_name: senderName,
+  };
+}
 /**
  * Substitution happens on the raw text, before escaping, so a value containing HTML is
  * still escaped by the renderer. An unresolved field is reported, never silently dropped.
@@ -249,6 +262,7 @@ export function renderBlocks(
     fromEmail: string;
     signature: string;
     previewText: string;
+    includeFooter?: boolean;
   },
 ): RenderedEmail {
   const missing = new Set<string>();
@@ -300,7 +314,7 @@ export function renderBlocks(
     body +
     row('<div style="height:8px;line-height:1px;">&nbsp;</div>', '0') +
     signature +
-    footer +
+    (options.includeFooter === false ? row('<!--outreach-footer-->') : footer) +
     row('<div style="height:28px;line-height:1px;">&nbsp;</div>', '0') +
     '</table></td></tr></table></body></html>';
   // The text alternative matters: some clients and most filters read it.
@@ -329,20 +343,22 @@ export function renderBlocks(
   return {
     html,
     text:
-      plain +
-      (options.signature.trim() ? '\n\n' + options.signature.trim() : '') +
-      '\n\n' +
-      (options.fromName || options.fromEmail) +
-      ' <' +
-      options.fromEmail +
-      '>\nReply with "unsubscribe" and we will not contact you again.',
+      options.includeFooter === false
+        ? plain
+        : plain +
+          (options.signature.trim() ? '\n\n' + options.signature.trim() : '') +
+          '\n\n' +
+          (options.fromName || options.fromEmail) +
+          ' <' +
+          options.fromEmail +
+          '>\nReply with "unsubscribe" and we will not contact you again.',
     missingMergeFields: [...missing],
   };
 }
 
 /**
  * Pre-send checks, mirroring the concept's "claims, links, alt text, merge fields".
- * Advisory: they are surfaced to the sender, they do not block the send.
+ * Content advice is advisory; unresolved merge fields also block delivery server-side.
  */
 export function checkBlocks(blocks: EmailBlock[], rendered: RenderedEmail, subject: string) {
   const warnings: string[] = [];
@@ -352,7 +368,7 @@ export function checkBlocks(blocks: EmailBlock[], rendered: RenderedEmail, subje
         (rendered.missingMergeFields.length === 1 ? '' : 's') +
         ': ' +
         rendered.missingMergeFields.map((field) => '{{' + field + '}}').join(', ') +
-        ' — the placeholder will be sent as written.',
+        ' — fill these fields or edit the template before sending.',
     );
   if (blocks.some((block) => block.type === 'image' && !block.alt.trim()))
     warnings.push('An image has no alt text, so it is unreadable when images are blocked.');

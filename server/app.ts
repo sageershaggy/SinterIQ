@@ -6,6 +6,11 @@ import { parse } from 'csv-parse/sync';
 import { z } from 'zod';
 import { openDatabase, audit, hash, nameKey, websiteKey, now, type DB } from './database';
 import { installAuth, adminOnly } from './auth';
+import { createOutreach, installUnsubscribe } from './outreach';
+import { createFunnels } from './funnels';
+import { createMailbox } from './mailbox';
+import { messageIds, type ReadInbox } from './imap';
+import { installWorkspace, notifyLead, savedDraft } from './workspace';
 import { fetchWebsite, checkedUrl } from './network';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
@@ -40,7 +45,7 @@ import {
   checkBlocks,
   mergeFields,
   renderBlocks,
-  type MergeContext,
+  mergeContext,
 } from './email-blocks';
 import { emailTemplates, templateCategories } from './email-templates';
 import {
@@ -247,19 +252,6 @@ function friendlyIssue(path: string, message: string) {
   if (/http/i.test(message)) return label + ' must be a complete http(s) address.';
   return label + ': ' + message;
 }
-/** The only values a merge field can resolve to. */
-function mergeContext(lead: Lead, senderName: string): MergeContext {
-  return {
-    company: lead.name,
-    contact_name: lead.contact_name,
-    contact_first_name: lead.contact_name.split(' ')[0] || '',
-    contact_role: lead.contact_role,
-    city: lead.city,
-    country: lead.country,
-    industry: lead.industry,
-    sender_name: senderName,
-  };
-}
 function getLead(db: DB, project: Project, id: number) {
   const row = db.prepare('SELECT * FROM leads WHERE id=? AND project_id=?').get(id, project.id) as
     Lead | undefined;
@@ -311,6 +303,7 @@ export function createApp(options: {
   fetchWebsite?: typeof fetchWebsite;
   extractDocument?: typeof extractDocument;
   sendMail?: Send;
+  readInbox?: ReadInbox;
 }) {
   const production = options.production || false;
   const { db, secrets } = openDatabase(options.dataDir, options.legacyPath);
@@ -324,6 +317,9 @@ export function createApp(options: {
     throw new Error('Production requires INNOVISTA_ORIGIN with an HTTPS origin.');
   if (process.env.INNOVISTA_TRUST_PROXY === '1') app.set('trust proxy', 1);
   const origin = options.origin ? new URL(options.origin).origin : '';
+  const outreach = createOutreach(db, deliver, origin);
+  const funnels = createFunnels({ db, secrets, publicOrigin: origin, outreach, getProject });
+  const mailbox = createMailbox({ db, secrets, getProject, readInbox: options.readInbox });
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -386,7 +382,11 @@ export function createApp(options: {
     }),
   );
   app.use(express.json({ limit: '1mb' }));
+  installUnsubscribe(app, db);
   installAuth(app, db, production);
+  installWorkspace(app, db, getProject);
+  funnels.install(app);
+  mailbox.install(app);
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -791,6 +791,7 @@ export function createApp(options: {
         existing_id: result.duplicate.id,
       });
     audit(db, project.id, req.user.name, 'lead.created', input.name);
+    notifyLead(db, project.id, result.id!, 'created', input.name + ' was added.');
     res.status(201).json(getLead(db, project, result.id!));
   });
   app.post(
@@ -1073,6 +1074,18 @@ export function createApp(options: {
           'SELECT * FROM email_messages WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
         )
         .all(lead.id, project.id),
+      outreach_events: db
+        .prepare(
+          'SELECT * FROM outreach_events WHERE project_id=? AND lead_id=? ORDER BY id DESC LIMIT 100',
+        )
+        .all(project.id, lead.id),
+      campaigns: db
+        .prepare(
+          `SELECT e.*,f.name funnel_name,f.status funnel_status,json_array_length(f.steps_json) step_count
+        FROM funnel_enrollments e JOIN funnels f ON f.id=e.funnel_id AND f.project_id=e.project_id
+        WHERE e.project_id=? AND e.lead_id=? ORDER BY e.id DESC LIMIT 100`,
+        )
+        .all(project.id, lead.id),
       assigned_to_name: lead.assigned_to
         ? ((
             db.prepare('SELECT name FROM accounts WHERE id=?').get(lead.assigned_to) as
@@ -1245,6 +1258,13 @@ export function createApp(options: {
           'lead.qualified',
           lead.name + ': ' + qualified.decision + ' against training v' + project.active_version,
         );
+        notifyLead(
+          db,
+          project.id,
+          lead.id,
+          'qualification',
+          lead.name + ': ' + qualified.decision.replaceAll('_', ' ').toLowerCase(),
+        );
         return { run_id: id, result: qualified };
       })();
     });
@@ -1274,6 +1294,7 @@ export function createApp(options: {
         'UPDATE leads SET status=?,reviewed=1,updated_at=? WHERE id=? AND project_id=?',
       ).run(input.decision, now(), lead.id, project.id);
       audit(db, project.id, req.user.name, 'lead.reviewed', lead.name + ': ' + input.decision);
+      notifyLead(db, project.id, lead.id, 'qualification', 'Review recorded for ' + lead.name);
     })();
     res.json(getLead(db, project, lead.id));
   });
@@ -1354,16 +1375,26 @@ export function createApp(options: {
     return db.transaction(() => {
       const found = db
         .prepare(
-          'SELECT id FROM leads WHERE project_id=? AND id IN (' +
+          'SELECT id,name FROM leads WHERE project_id=? AND id IN (' +
             ids.map(() => '?').join(',') +
             ')',
         )
-        .all(project.id, ...ids) as Array<{ id: number }>;
+        .all(project.id, ...ids) as Array<{ id: number; name: string }>;
       const update = db.prepare(
         'UPDATE leads SET assigned_to=?,assigned_at=?,updated_at=? WHERE id=? AND project_id=?',
       );
-      for (const lead of found)
+      for (const lead of found) {
         update.run(accountId, accountId === null ? null : now(), now(), lead.id, project.id);
+        if (accountId !== null)
+          notifyLead(
+            db,
+            project.id,
+            lead.id,
+            'assignment',
+            lead.name + ' was assigned to you for calling.',
+            accountId,
+          );
+      }
       audit(
         db,
         project.id,
@@ -1426,6 +1457,7 @@ export function createApp(options: {
       project.id,
     );
     audit(db, project.id, req.user.name, 'lead.call_logged', lead.name + ': ' + input.outcome);
+    notifyLead(db, project.id, lead.id, 'call', 'Call recorded for ' + lead.name);
     res.status(201).json({ id });
   });
   /**
@@ -1442,6 +1474,34 @@ export function createApp(options: {
         )
         .all(project.id, ...ids) as Array<{ id: number; name: string }>;
       for (const lead of found) {
+        if (
+          db
+            .prepare(
+              "SELECT 1 FROM email_deliveries WHERE project_id=? AND lead_id=? AND status='SENDING'",
+            )
+            .get(project.id, lead.id)
+        )
+          throw new HttpError(
+            409,
+            'A message is being sent for this lead. Wait for delivery to finish before deleting it.',
+          );
+        db.prepare(
+          `INSERT INTO email_deliveries (delivery_key,project_id,lead_id,recipient,status,message_id,started_at)
+          SELECT 'legacy:' || m.id || ':' || m.created_at,m.project_id,m.lead_id,lower(trim(m.to_email)),'SENT',m.id,0
+          FROM email_messages m WHERE m.project_id=? AND m.lead_id=? AND m.status='SENT'
+          AND NOT EXISTS (SELECT 1 FROM email_deliveries d WHERE d.message_id=m.id)`,
+        ).run(project.id, lead.id);
+        db.prepare(
+          'UPDATE email_deliveries SET message_id=NULL WHERE project_id=? AND lead_id=?',
+        ).run(project.id, lead.id);
+        db.prepare('DELETE FROM funnel_enrollments WHERE project_id=? AND lead_id=?').run(
+          project.id,
+          lead.id,
+        );
+        db.prepare('DELETE FROM outreach_events WHERE project_id=? AND lead_id=?').run(
+          project.id,
+          lead.id,
+        );
         db.prepare(
           'DELETE FROM reviews WHERE run_id IN (SELECT id FROM qualification_runs WHERE lead_id=? AND project_id=?)',
         ).run(lead.id, project.id);
@@ -1595,6 +1655,7 @@ export function createApp(options: {
     if (input.host) await assertMailHost(input.host, input.port);
     if (input.from_email) assertAddress(input.from_email, 'The sender address');
     if (input.reply_to) assertAddress(input.reply_to, 'The reply-to address');
+    if (input.copy_to) assertAddress(input.copy_to, 'The copy address');
     if (input.host && !input.from_email)
       throw new HttpError(400, 'A sender address is required — recipients must see who sent it.');
     db.transaction(() => {
@@ -1608,6 +1669,7 @@ export function createApp(options: {
       save.run('smtp_from_name', input.from_name);
       save.run('smtp_from_email', input.from_email);
       save.run('smtp_reply_to', input.reply_to);
+      save.run('smtp_copy_to', input.copy_to);
       save.run('smtp_signature', input.signature);
       if (input.clear_password) save.run('smtp_password', '');
       else if (input.password) save.run('smtp_password', secrets.encrypt(input.password));
@@ -1645,7 +1707,15 @@ export function createApp(options: {
     res.json({
       ...draftFor(lead, result?.outreach?.why_qualified || '', result?.outreach?.call_script || ''),
       to: lead.contact_email,
-      mailbox: publicEmailSettings(getEmailConfig(db, secrets)),
+      saved: savedDraft(db, project.id, lead.id, req.user.id),
+      mailbox: (() => {
+        const config = getEmailConfig(db, secrets);
+        return {
+          configured: config.configured,
+          from_email: config.from_email,
+          from_name: config.from_name,
+        };
+      })(),
     });
   });
   app.post('/api/projects/:projectId/leads/:leadId/email', expensiveLimit, async (req, res) => {
@@ -1660,12 +1730,28 @@ export function createApp(options: {
       );
     // One header-safe recipient per request. Bulk sending is a separate, throttled path.
     const to = assertAddress(input.to, 'The recipient address');
+    let inReplyTo: string | undefined;
+    if (input.reply_to_message_id) {
+      const incoming = db
+        .prepare(
+          'SELECT internet_message_id,from_email FROM incoming_messages WHERE project_id=? AND lead_id=? AND id=?',
+        )
+        .get(project.id, lead.id, input.reply_to_message_id) as
+        { internet_message_id: string; from_email: string } | undefined;
+      if (!incoming) throw new HttpError(404, 'Reply message not found for this lead.');
+      if (incoming.from_email.toLowerCase() !== to.toLowerCase())
+        throw new HttpError(400, 'Send this reply to the original sender.');
+      inReplyTo = messageIds(incoming.internet_message_id)[0];
+    }
     // The subject carries merge fields too. A template subject is the most visible place
     // an unresolved {{company}} would surface, so it is merged like the body.
-    const subject = applyMerge(
+    const mergedSubject = applyMerge(
       input.subject.replace(/[\r\n]+/g, ' ').trim(),
       mergeContext(lead, config.from_name || req.user.name),
-    ).merged;
+    );
+    if (mergedSubject.missing.length)
+      throw new HttpError(400, 'Fill missing subject fields: ' + mergedSubject.missing.join(', '));
+    const subject = mergedSubject.merged;
     // The editor sends a block document; a quick note sends plain text.
     const built = input.blocks
       ? (() => {
@@ -1678,70 +1764,57 @@ export function createApp(options: {
             fromEmail: config.from_email,
             signature: config.signature,
             previewText: input.preview_text,
+            includeFooter: false,
           });
+          if (rendered.missingMergeFields.length)
+            throw new HttpError(
+              400,
+              'Fill missing message fields: ' + rendered.missingMergeFields.join(', '),
+            );
           return { html: rendered.html, text: rendered.text };
         })()
       : (() => {
           if (input.body.trim().length < 20)
             throw new HttpError(400, 'Write a message of at least 20 characters.');
+          const body = applyMerge(
+            input.body,
+            mergeContext(lead, config.from_name || req.user.name),
+          );
+          if (body.missing.length)
+            throw new HttpError(400, 'Fill missing message fields: ' + body.missing.join(', '));
           return {
             html: renderEmail({
-              body: input.body,
+              body: body.merged,
               fromName: config.from_name,
               fromEmail: config.from_email,
               signature: config.signature,
               leadName: lead.name,
+              includeFooter: false,
             }),
-            text: input.body,
+            text: body.merged,
           };
         })();
-    const html = built.html;
-    const record = db.prepare(
-      'INSERT INTO email_messages (project_id,lead_id,to_email,subject,body,status,error,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-    );
-    try {
-      await single('email:' + lead.id, () =>
-        deliver(config, {
-          to,
-          subject,
-          text: built.text,
-          html,
-          replyTo: config.reply_to || config.from_email,
-        }),
-      );
-    } catch (error) {
-      // A refused message is still recorded, so the history stays truthful.
-      record.run(
-        project.id,
-        lead.id,
-        to,
-        subject,
-        built.text,
-        'FAILED',
-        'Delivery refused.',
-        req.user.name,
-        now(),
-      );
-      audit(db, project.id, req.user.name, 'lead.email_failed', lead.name + ' to ' + to);
-      // Never surface a transport error: it can carry credentials and message content.
-      // Sanitized here rather than in the transport, so this holds for every transport.
-      throw error instanceof HttpError
-        ? error
-        : new HttpError(
-            502,
-            'The mail server rejected the message. Check the mailbox settings and try again.',
-          );
-    }
-    const id = Number(
-      record.run(project.id, lead.id, to, subject, built.text, 'SENT', '', req.user.name, now())
-        .lastInsertRowid,
-    );
-    db.prepare('UPDATE leads SET updated_at=? WHERE id=? AND project_id=?').run(
-      now(),
-      lead.id,
-      project.id,
-    );
-    audit(db, project.id, req.user.name, 'lead.email_sent', lead.name + ' to ' + to);
+    const id = await outreach.send({
+      projectId: project.id,
+      leadId: lead.id,
+      actor: req.user.name,
+      config,
+      to,
+      subject,
+      text: built.text,
+      html: built.html,
+      inReplyTo,
+      beforeSend: () => {
+        const account = db
+          .prepare('SELECT id,username,name,role FROM accounts WHERE id=? AND active=1')
+          .get(req.user.id) as User | undefined;
+        if (!account) throw new HttpError(409, 'Your account is no longer active.');
+        getProject(db, project.id, account);
+        const current = getLead(db, project, lead.id);
+        if (current.revision !== lead.revision)
+          throw new HttpError(409, 'Lead details changed. Review the message again.');
+      },
+    });
     res.status(201).json({ id });
   });
   /** Starter templates for the editor, grouped the way the picker shows them. */
@@ -1779,6 +1852,13 @@ export function createApp(options: {
     res.json({
       html: rendered.html,
       text: rendered.text,
+      missing_merge_fields: [
+        ...new Set([
+          ...rendered.missingMergeFields,
+          ...applyMerge(input.subject, mergeContext(lead, config.from_name || req.user.name))
+            .missing,
+        ]),
+      ],
       warnings: checkBlocks(
         blocks,
         rendered,
@@ -1811,5 +1891,5 @@ export function createApp(options: {
     res.status(500).json({ error: 'The request could not be completed. Please retry.' });
   };
   app.use(errorHandler);
-  return { app, db, errorHandler };
+  return { app, db, errorHandler, funnels, mailbox };
 }
