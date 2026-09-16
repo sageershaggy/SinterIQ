@@ -22,6 +22,7 @@ import {
   qualify,
   type Generate,
 } from './ai';
+import { researchMissing, researchableFields } from './enrich';
 import {
   HttpError,
   positiveId,
@@ -60,7 +61,15 @@ import {
   type Send,
 } from './email';
 import { nextStepFor, nextStepBands } from '../shared/types';
-import type { Lead, Project, Source, TrainingSnapshot, Evidence, User } from '../shared/types';
+import type {
+  Lead,
+  Project,
+  ResearchableField,
+  Source,
+  TrainingSnapshot,
+  Evidence,
+  User,
+} from '../shared/types';
 
 const sourceColumns = 'id,project_id,kind,title,url,content,filename,sha256,created_at';
 const projectSelect = `SELECT p.*,
@@ -1138,6 +1147,128 @@ export function createApp(options: {
     );
     res.json(getLead(db, project, lead.id));
   });
+  /**
+   * Researches what a lead record is missing, from the company's own website. Values arrive
+   * with a citation that has been checked against the fetched page, so writing them is an
+   * ordinary recorded edit: the lead revision moves and any previous qualification becomes
+   * stale. That is what makes "fill the gaps, then analyze again" a safe sequence rather than
+   * a way to quietly rewrite a record under an old verdict.
+   */
+  app.post('/api/projects/:projectId/leads/:leadId/research', expensiveLimit, async (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const outcome = await single('lead-research:' + lead.id, async () => {
+      const config = getAiConfig(db, secrets);
+      if (!config.api_key && !options.generate)
+        throw new HttpError(409, 'Configure an AI provider in Settings first.');
+      return researchMissing({
+        lead,
+        config,
+        generate: options.generate || generate,
+        fetchPage: options.fetchWebsite,
+      });
+    });
+    const applied: ResearchableField[] = [];
+    const fieldSchemas = leadSchema.shape as Record<string, z.ZodTypeAny>;
+    if (outcome.proposals.length)
+      db.transaction(() => {
+        // Re-read inside the transaction. The pass spends real time on the network, and
+        // someone may have typed the very value we are about to write: research fills gaps,
+        // it never overwrites what a person entered.
+        const current = db
+          .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
+          .get(lead.id, project.id) as Record<string, string> | undefined;
+        if (!current) throw new HttpError(404, 'Lead not found in this project.');
+        const site = outcome.proposals.find((proposal) => proposal.field === 'website');
+        const clash = site
+          ? (db
+              .prepare(
+                "SELECT name FROM leads WHERE project_id=? AND id<>? AND website_key=? AND website_key<>''",
+              )
+              .get(project.id, lead.id, websiteKey(site.value)) as { name: string } | undefined)
+          : undefined;
+        if (clash) {
+          // The site belongs to another lead here, so this record is most likely a duplicate
+          // of that one. Nothing read from that page is written, not merely the address.
+          for (const proposal of outcome.proposals)
+            outcome.refused.push({
+              field: proposal.field,
+              value: proposal.value,
+              reason:
+                'That website already belongs to ' +
+                clash.name +
+                ' in this project, so this lead may be a duplicate of it. Nothing was saved.',
+            });
+          return;
+        }
+        for (const proposal of outcome.proposals) {
+          // The column name comes from this closed list, never from the response.
+          if (!researchableFields.includes(proposal.field)) continue;
+          if (String(current[proposal.field] ?? '').trim()) {
+            outcome.refused.push({
+              field: proposal.field,
+              value: proposal.value,
+              reason: 'This was filled in while the research was running, so it was left alone.',
+            });
+            continue;
+          }
+          // The same validator the edit form uses, so research can never write a value a
+          // person could not have typed, and the lead stays saveable afterwards.
+          const parsed = fieldSchemas[proposal.field]?.safeParse(proposal.value);
+          if (!parsed?.success) {
+            outcome.refused.push({
+              field: proposal.field,
+              value: proposal.value,
+              reason: 'The lead form would not accept that value, so it was not saved.',
+            });
+            continue;
+          }
+          const value = parsed.data as string;
+          if (proposal.field === 'website')
+            db.prepare('UPDATE leads SET website=?,website_key=? WHERE id=? AND project_id=?').run(
+              value,
+              websiteKey(value),
+              lead.id,
+              project.id,
+            );
+          else
+            db.prepare('UPDATE leads SET ' + proposal.field + '=? WHERE id=? AND project_id=?').run(
+              value,
+              lead.id,
+              project.id,
+            );
+          // Keep the provenance with the value, not only in this response.
+          db.prepare(
+            `INSERT INTO lead_research_citations
+              (project_id,lead_id,field,value,evidence,source_url,created_at,created_by)
+            VALUES (?,?,?,?,?,?,?,?)`,
+          ).run(
+            project.id,
+            lead.id,
+            proposal.field,
+            value,
+            proposal.evidence,
+            proposal.source_url,
+            now(),
+            req.user.name,
+          );
+          applied.push(proposal.field);
+        }
+        if (applied.length) {
+          db.prepare(
+            'UPDATE leads SET revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+          ).run(now(), lead.id, project.id);
+          audit(
+            db,
+            project.id,
+            req.user.name,
+            'lead.researched',
+            'Filled ' + applied.join(', ') + ' for ' + lead.name + ' from ' + outcome.website + '.',
+          );
+        }
+      })();
+    res.json({ ...outcome, applied });
+  });
   app.post('/api/projects/:projectId/leads/:leadId/qualify', expensiveLimit, async (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
@@ -1237,8 +1368,13 @@ export function createApp(options: {
               req.user.name,
             ).lastInsertRowid,
         );
+        // A run that found no contact must not erase one that is already on the record: the
+        // panel invites a re-run straight after research, and that would undo it.
         db.prepare(
-          'UPDATE leads SET status=?,score=?,confidence=?,latest_run_id=?,training_version=?,qualified_revision=?,contact_name=?,contact_role=?,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+          `UPDATE leads SET status=?,score=?,confidence=?,latest_run_id=?,training_version=?,qualified_revision=?,
+            contact_name=CASE WHEN ?<>'' THEN ? ELSE contact_name END,
+            contact_role=CASE WHEN ?<>'' THEN ? ELSE contact_role END,
+            reviewed=0,updated_at=? WHERE id=? AND project_id=?`,
         ).run(
           qualified.decision,
           qualified.score,
@@ -1247,6 +1383,8 @@ export function createApp(options: {
           project.active_version,
           lead.revision,
           qualified.outreach.contact_name,
+          qualified.outreach.contact_name,
+          qualified.outreach.contact_role,
           qualified.outreach.contact_role,
           now(),
           lead.id,
@@ -1531,6 +1669,10 @@ export function createApp(options: {
           lead.id,
           project.id,
         );
+        db.prepare('DELETE FROM lead_research_citations WHERE lead_id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
         db.prepare('DELETE FROM leads WHERE id=? AND project_id=?').run(lead.id, project.id);
       }
       audit(
@@ -1569,8 +1711,14 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
     db.prepare(
-      "UPDATE leads SET contact_name='',contact_role='',updated_at=? WHERE id=? AND project_id=?",
+      `UPDATE leads SET contact_name='',contact_role='',contact_email='',contact_phone='',
+        updated_at=? WHERE id=? AND project_id=?`,
     ).run(now(), lead.id, project.id);
+    // The stored citation usually contains the personal detail itself, so removing the
+    // contact removes its provenance rows too rather than leaving the quote behind.
+    db.prepare(
+      "DELETE FROM lead_research_citations WHERE project_id=? AND lead_id=? AND field LIKE 'contact_%'",
+    ).run(project.id, lead.id);
     audit(db, project.id, req.user.name, 'lead.contact_removed', lead.name);
     res.json(getLead(db, project, lead.id));
   });

@@ -4,13 +4,37 @@ import { z } from 'zod';
 import { audit, now, type DB, type Secrets } from './database';
 import { adminOnly } from './auth';
 import { HttpError, positiveId, requiredText, text } from './validation';
-import { getEmailConfig, renderEmail } from './email';
-import { applyMerge, mergeContext } from './email-blocks';
+import { getEmailConfig, renderEmail, type SmtpConfig } from './email';
+import {
+  applyMerge,
+  blocksSchema,
+  mergeContext,
+  renderBlocks,
+  validateBlocks,
+} from './email-blocks';
 import { assertCanContact, recipientKey, suppressRecipient, type createOutreach } from './outreach';
 import type { Funnel, FunnelStep } from '../shared/funnels';
 import type { Lead, Project, User } from '../shared/types';
 
 const day = 86_400_000;
+
+/**
+ * Reports a bad block the way the composer does. Left to the schema alone, a designed step
+ * fails with a validator path like "steps.0.blocks.2.url", which means nothing to someone
+ * editing a campaign message; the usual cause is leaving a Button on its placeholder link.
+ */
+function assertDesignedSteps(body: unknown) {
+  if (!body || typeof body !== 'object') return;
+  const steps = (body as { steps?: unknown }).steps;
+  if (!Array.isArray(steps)) return;
+  steps.forEach((step, index) => {
+    const blocks = step && typeof step === 'object' ? (step as { blocks?: unknown }).blocks : null;
+    if (!Array.isArray(blocks) || !blocks.length) return;
+    const { problems } = validateBlocks(blocks);
+    if (problems.length)
+      throw new HttpError(400, 'Message ' + (index + 1) + ' — ' + problems[0].message);
+  });
+}
 export const funnelSchema = z
   .object({
     name: requiredText(120),
@@ -24,9 +48,14 @@ export const funnelSchema = z
               (s) => !/[\r\n]/.test(s),
               'Subject cannot contain line breaks.',
             ),
-            body: requiredText(10000).min(20),
+            body: text(10000).default(''),
+            blocks: blocksSchema.optional(),
           })
-          .strict(),
+          .strict()
+          .refine(
+            (step) => Boolean(step.blocks?.length) || step.body.trim().length >= 20,
+            'Write the message, or design it with blocks.',
+          ),
       )
       .min(1)
       .max(3),
@@ -100,17 +129,33 @@ export function createFunnels(options: {
       throw new HttpError(409, lead.name + ' has a response or stop recorded.');
     return lead;
   }
-  function compose(step: FunnelStep, lead: Lead, sender: string) {
+  function compose(step: FunnelStep, lead: Lead, config: SmtpConfig, sender: string) {
     const context = mergeContext(lead, sender);
-    const subject = applyMerge(step.subject, context),
-      body = applyMerge(step.body, context);
-    const missing = [...new Set([...subject.missing, ...body.missing])];
-    if (missing.length)
-      throw new HttpError(
-        409,
-        'Fill missing merge fields for ' + lead.name + ': ' + missing.join(', '),
-      );
-    return { subject: subject.merged, body: body.merged };
+    const subject = applyMerge(step.subject, context);
+    const refuse = (missing: string[]) => {
+      if (missing.length)
+        throw new HttpError(
+          409,
+          'Fill missing merge fields for ' + lead.name + ': ' + missing.join(', '),
+        );
+    };
+    if (step.blocks?.length) {
+      // Rendered by the same server-side renderer the composer previews, so a designed
+      // funnel message is delivered as the editor showed it, Outlook-safe tables and all.
+      const rendered = renderBlocks(step.blocks, {
+        context,
+        fromName: sender,
+        fromEmail: config.from_email,
+        signature: config.signature,
+        previewText: '',
+        includeFooter: false,
+      });
+      refuse([...new Set([...subject.missing, ...rendered.missingMergeFields])]);
+      return { subject: subject.merged, body: rendered.text, html: rendered.html };
+    }
+    const body = applyMerge(step.body, context);
+    refuse([...new Set([...subject.missing, ...body.missing])]);
+    return { subject: subject.merged, body: body.merged, html: '' };
   }
   function recordOutcome(
     project: Project,
@@ -187,6 +232,7 @@ export function createFunnels(options: {
     });
     app.post(base, adminOnly, (req, res) => {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
+      assertDesignedSteps(req.body);
       const input = funnelSchema.parse(req.body);
       const id = Number(
         db
@@ -210,6 +256,7 @@ export function createFunnels(options: {
           409,
           'This sequence is already in use. Create a new funnel to change its messages.',
         );
+      assertDesignedSteps(body);
       const input = funnelSchema.parse(body);
       db.prepare(
         'UPDATE funnels SET name=?,audience=?,steps_json=?,revision=revision+1 WHERE id=? AND project_id=?',
@@ -294,7 +341,9 @@ export function createFunnels(options: {
           }
           const recipient = recipientKey(lead.contact_email);
           assertCanContact(db, recipient);
-          f.steps.forEach((step) => compose(step, lead, config.from_name || req.user.name));
+          f.steps.forEach((step) =>
+            compose(step, lead, config, config.from_name || req.user.name),
+          );
           if (
             db
               .prepare(
@@ -346,7 +395,7 @@ export function createFunnels(options: {
       if (!f.steps[input.step]) throw new HttpError(400, 'Message not found.');
       const lead = eligible(p, input.lead_id),
         config = getEmailConfig(db, secrets, p.id);
-      const built = compose(f.steps[input.step], lead, config.from_name || req.user.name);
+      const built = compose(f.steps[input.step], lead, config, config.from_name || req.user.name);
       res.json({ to: lead.contact_email, ...built });
     });
     app.post('/api/projects/:projectId/leads/:leadId/outreach-events', (req, res) => {
@@ -449,7 +498,7 @@ export function createFunnels(options: {
           throw new HttpError(409, 'Public origin or copy address is missing.');
         const step = f.steps[job.next_step];
         if (!step) throw new HttpError(409, 'The sequence is complete.');
-        const built = compose(step, lead, config.from_name);
+        const built = compose(step, lead, config, config.from_name);
         await outreach.send({
           projectId: job.project_id,
           leadId: job.lead_id,
@@ -458,14 +507,16 @@ export function createFunnels(options: {
           to: job.recipient,
           subject: built.subject,
           text: built.body,
-          html: renderEmail({
-            body: built.body,
-            fromName: config.from_name,
-            fromEmail: config.from_email,
-            signature: config.signature,
-            leadName: lead.name,
-            includeFooter: false,
-          }),
+          html:
+            built.html ||
+            renderEmail({
+              body: built.body,
+              fromName: config.from_name,
+              fromEmail: config.from_email,
+              signature: config.signature,
+              leadName: lead.name,
+              includeFooter: false,
+            }),
           deliveryKey: 'funnel:' + job.id + ':' + job.next_step,
           beforeSend: () => {
             verify();

@@ -1,8 +1,17 @@
 export interface FunnelStep {
   delay_days: number;
   subject: string;
+  /** Plain text. Also the text alternative when the message is designed with blocks. */
   body: string;
+  /**
+   * A designed message. When present the server renders it to email-safe HTML and derives
+   * the plain-text part from it; absent means this step is plain text, which is what every
+   * funnel stored before designed messages existed.
+   */
+  blocks?: EmailBlock[];
 }
+import type { EmailBlock } from './types';
+
 export type FunnelStatus = 'DRAFT' | 'ACTIVE' | 'PAUSED';
 export interface Funnel {
   id: number;

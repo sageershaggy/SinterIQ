@@ -1184,3 +1184,133 @@ test('interrupted deliveries recover into visible history and are never automati
     f.dispose();
   }
 });
+
+test('a designed funnel message is delivered as email-safe HTML, and every step must say something', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const lead = await f.lead();
+    // A step that is neither written nor designed is refused rather than sent empty.
+    const silent = await f.req('post', `/projects/${f.project.id}/funnels`, {
+      name: 'Neither written nor designed',
+      audience: 'Pump manufacturers',
+      steps: [{ delay_days: 0, subject: 'A question for {{company}}', body: '' }],
+    });
+    assert.equal(silent.status, 400, silent.text);
+    assert.match(silent.text, /Write the message, or design it with blocks/);
+
+    const designed = await f.funnel([
+      {
+        delay_days: 0,
+        subject: 'Bearings for {{company}}',
+        body: '',
+        blocks: [
+          { type: 'heading', text: 'A question about {{company}}', level: 'h1', align: 'left' },
+          {
+            type: 'text',
+            text: 'We supply bearings for duty where steel struggles.',
+            align: 'left',
+          },
+          {
+            type: 'button',
+            label: 'Book a call',
+            url: 'https://research.example.com/book',
+            align: 'left',
+          },
+        ],
+      },
+    ]);
+    // The preview is the same render the worker will send, so it is worth asserting on.
+    const preview = await f.req(
+      'post',
+      `/projects/${f.project.id}/funnels/${designed.id}/preview`,
+      { lead_id: lead.id, step: 0 },
+    );
+    assert.equal(preview.status, 200, preview.text);
+    assert.match(preview.body.html, /<table/);
+    assert.ok(
+      !/display:\s*(flex|grid)|<style|class=/i.test(preview.body.html),
+      'a designed message must not depend on flex, grid, a stylesheet or classes',
+    );
+    assert.match(preview.body.subject, /Pump Company/);
+    assert.doesNotMatch(preview.body.body, /\{\{/);
+
+    assert.equal((await f.status(designed, 'ACTIVE')).status, 200);
+    assert.equal((await f.enroll(designed, lead)).status, 201);
+    await f.worker.tick(Date.now() + 10);
+    const sent = f.messages.at(-1)!;
+    assert.match(String(sent.html), /<table/);
+    assert.doesNotMatch(String(sent.html), /\{\{/);
+    // The plain-text alternative is derived from the blocks, never left empty.
+    assert.match(String(sent.text), /steel struggles/);
+
+    // A designed step is held to the same merge-field rule as a written one.
+    const unresolved = await f.funnel([
+      {
+        delay_days: 0,
+        subject: 'A note for {{company}}',
+        body: '',
+        blocks: [{ type: 'text', text: 'Hello {{contact_first_name}},', align: 'left' }],
+      },
+    ]);
+    const refused = await f.enroll(unresolved, lead);
+    assert.equal(refused.status, 409, refused.text);
+    assert.match(refused.text, /contact_first_name/);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a plain-text funnel step keeps its stored shape and its simple HTML', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const lead = await f.lead();
+    const written = await f.funnel();
+    // Saving a plain step must not invent a blocks array: existing funnels keep their shape.
+    const stored = (
+      f.db.prepare('SELECT steps_json FROM funnels WHERE id=?').get(written.id) as {
+        steps_json: string;
+      }
+    ).steps_json;
+    assert.ok(!stored.includes('blocks'), stored);
+    assert.equal((await f.status(written, 'ACTIVE')).status, 200);
+    assert.equal((await f.enroll(written, lead)).status, 201);
+    await f.worker.tick(Date.now() + 10);
+    const sent = f.messages.at(-1)!;
+    assert.match(String(sent.text), /could our services help Pump Company/);
+    assert.match(String(sent.html), /<p/);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a campaign message names a bad block the way the composer does', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const bad = await f.req('post', `/projects/${f.project.id}/funnels`, {
+      name: 'Designed with a placeholder link',
+      audience: 'Pump manufacturers',
+      steps: [
+        {
+          delay_days: 0,
+          subject: 'A note for {{company}}',
+          body: '',
+          blocks: [
+            { type: 'text', text: 'A short note about bearings.', align: 'left' },
+            { type: 'button', label: 'Book a call', url: 'https://', align: 'left' },
+          ],
+        },
+      ],
+    });
+    assert.equal(bad.status, 400, bad.text);
+    // Not "steps.0.blocks.1.url": the message has to name a block the author can see, and the
+    // placeholder link a fresh Button carries is the most likely way to hit this.
+    assert.match(bad.text, /Message 1/);
+    assert.match(bad.text, /Block 2 \(button\)/);
+    assert.doesNotMatch(bad.text, /steps\.0/);
+  } finally {
+    f.dispose();
+  }
+});

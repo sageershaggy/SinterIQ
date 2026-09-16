@@ -221,6 +221,35 @@ export interface PreservedRecord {
   data: Record<string, unknown>;
   imported_at: string;
 }
+/** A field a research pass may fill in from the company's own website. */
+export type ResearchableField =
+  | 'website'
+  | 'industry'
+  | 'country'
+  | 'city'
+  | 'employee_count'
+  | 'contact_name'
+  | 'contact_role'
+  | 'contact_email'
+  | 'contact_phone';
+export interface FieldProposal {
+  field: ResearchableField;
+  value: string;
+  /** The sentence from the page that supports the value. Checked against the page itself. */
+  evidence: string;
+  source_url: string;
+}
+export interface ResearchOutcome {
+  website: string;
+  discovered: boolean;
+  /** Candidate domains that were fetched and checked, so a repeat run is not a mystery. */
+  tried: string[];
+  proposals: FieldProposal[];
+  /** Values the model offered that were not recorded, with the reason. */
+  refused: Array<{ field: ResearchableField; value: string; reason: string }>;
+  notes: string[];
+  applied?: ResearchableField[];
+}
 /** One project's mailbox. The password is never returned to the browser. */
 export interface EmailSettings {
   /** A mailbox belongs to exactly one project. */

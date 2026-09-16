@@ -1,8 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Plus, Pause, Play, Mail, ArrowLeft, Trash2, Users, GitBranch } from 'lucide-react';
-import type { Lead, Project, User, EmailTemplate } from '../shared/types';
+import {
+  Plus,
+  Pause,
+  Play,
+  Mail,
+  ArrowLeft,
+  Trash2,
+  Users,
+  GitBranch,
+  AlignLeft,
+  LayoutTemplate,
+} from 'lucide-react';
+import type { EmailBlock, Lead, Project, User, EmailTemplate } from '../shared/types';
 import type { Enrollment, Funnel, FunnelStep, OutreachOutcome } from '../shared/funnels';
 import { api, json, label, date } from './api';
+import { BlockEditor, palette } from './BlockEditor';
 import { Alert, Badge, Empty, Modal, Spinner } from './ui';
 
 const starterSteps: FunnelStep[] = [
@@ -22,6 +34,55 @@ const starterSteps: FunnelStep[] = [
     body: 'Hello,\n\nThis is my final follow-up. If a conversation would be useful, please reply whenever it suits you. Otherwise, I will leave it here.\n\nBest regards,\n{{sender_name}}',
   },
 ];
+
+/** The server's ceiling on one designed message. */
+const blockLimit = 60;
+/** Flattens a design to plain text, for the text alternative and for template text. */
+function textFromBlocks(blocks: EmailBlock[]): string {
+  return blocks
+    .map((block) => {
+      if ('text' in block) return block.text;
+      if (block.type === 'button') return block.label + ': ' + block.url;
+      if (block.type === 'image') return block.alt + ': ' + block.url;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+/**
+ * Seeds a design from the text already written, one text block per paragraph, so choosing
+ * to design a message never costs the author what they typed. A long message is folded
+ * into the last block rather than refused by the server for having too many blocks.
+ */
+function blocksFromText(body: string): EmailBlock[] {
+  const paragraphs = body
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (paragraphs.length > blockLimit)
+    paragraphs.splice(blockLimit - 1, Infinity, paragraphs.slice(blockLimit - 1).join('\n\n'));
+  return paragraphs.length
+    ? paragraphs.map((text): EmailBlock => ({ type: 'text', text, align: 'left' }))
+    : [palette[1].make()];
+}
+/**
+ * One message while it is being edited. Both formats sit side by side — the text and the
+ * design — so switching between them is reversible; only the chosen one is sent.
+ */
+interface StepDraft extends FunnelStep {
+  blocks: EmailBlock[];
+  designed: boolean;
+  /** The block the merge-field chips insert into. Editor state, never sent. */
+  selected: number;
+}
+const toDraft = (step: FunnelStep): StepDraft => ({
+  delay_days: step.delay_days,
+  subject: step.subject,
+  body: step.body,
+  blocks: step.blocks?.length ? structuredClone(step.blocks) : [],
+  designed: Boolean(step.blocks?.length),
+  selected: 0,
+});
 
 export default function Funnels({
   project,
@@ -222,6 +283,9 @@ export default function Funnels({
                           ? step.delay_days + ' days after enrollment'
                           : 'When started'
                         : step.delay_days + ' days after the previous email'}
+                      {step.blocks?.length
+                        ? ' · designed with ' + step.blocks.length + ' blocks'
+                        : ''}
                     </small>
                   </span>
                 </summary>
@@ -320,17 +384,22 @@ function FunnelEditor({
 }) {
   const [name, setName] = useState(initial?.name || ''),
     [audience, setAudience] = useState(initial?.audience || '');
-  const [steps, setSteps] = useState<FunnelStep[]>(
-    initial?.steps || starterSteps.map((step) => ({ ...step })),
+  const [steps, setSteps] = useState<StepDraft[]>(() =>
+    (initial?.steps || starterSteps).map(toDraft),
   );
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+  const [mergeFields, setMergeFields] = useState<string[]>([]);
   useEffect(() => {
     let cancelled = false;
-    api<{ templates: EmailTemplate[] }>(base.replace(/\/funnels$/, '') + '/email/templates')
+    api<{ templates: EmailTemplate[]; merge_fields: string[] }>(
+      base.replace(/\/funnels$/, '') + '/email/templates',
+    )
       .then((result) => {
-        if (!cancelled) setTemplates(result.templates);
+        if (cancelled) return;
+        setTemplates(result.templates);
+        setMergeFields(result.merge_fields);
       })
       .catch((e) => {
         if (!cancelled) setError((e as Error).message);
@@ -339,8 +408,25 @@ function FunnelEditor({
       cancelled = true;
     };
   }, [base]);
-  const update = (i: number, value: Partial<FunnelStep>) =>
+  const update = (i: number, value: Partial<StepDraft>) =>
     setSteps((list) => list.map((s, index) => (index === i ? { ...s, ...value } : s)));
+  /** Seeding in both directions is what makes the choice reversible: neither format is lost. */
+  const setFormat = (i: number, designed: boolean) =>
+    setSteps((list) =>
+      list.map((step, index) =>
+        index === i
+          ? {
+              ...step,
+              designed,
+              blocks: designed && !step.blocks.length ? blocksFromText(step.body) : step.blocks,
+              body:
+                !designed && !step.body.trim() && step.blocks.length
+                  ? textFromBlocks(step.blocks)
+                  : step.body,
+            }
+          : step,
+      ),
+    );
   return (
     <Modal
       title={initial ? 'Edit funnel' : 'New email funnel'}
@@ -360,7 +446,18 @@ function FunnelEditor({
                 body: json({
                   name,
                   audience,
-                  steps,
+                  // A plain message must not carry blocks at all, so a funnel written
+                  // before designed messages existed keeps its exact stored shape.
+                  steps: steps.map((step) => ({
+                    delay_days: step.delay_days,
+                    subject: step.subject,
+                    ...(step.designed
+                      ? {
+                          body: step.body.trim() || textFromBlocks(step.blocks),
+                          blocks: step.blocks,
+                        }
+                      : { body: step.body }),
+                  })),
                   ...(initial ? { revision: initial.revision } : {}),
                 }),
               }),
@@ -394,32 +491,37 @@ function FunnelEditor({
           </label>
         </div>
         <p className="muted">
-          Edit the starter messages for this audience. Merge fields:{' '}
-          {
-            '{{company}}, {{contact_name}}, {{contact_first_name}}, {{contact_role}}, {{city}}, {{country}}, {{industry}}, {{sender_name}}'
-          }
-          . Missing fields block enrollment.
+          Edit the starter messages for this audience. Write each one as plain text, or design it
+          with blocks that are delivered as email-safe HTML.{' '}
+          {mergeFields.length
+            ? 'Merge fields work in both: ' +
+              mergeFields.map((field) => '{{' + field + '}}').join(', ') +
+              '. '
+            : ''}
+          Missing fields block enrollment.
         </p>
         {steps.map((step, i) => (
           <fieldset className="form-fieldset" key={i}>
             <legend>Message {i + 1}</legend>
             <label>
-              Use template text
+              {step.designed ? 'Use template design' : 'Use template text'}
               <select
                 value=""
                 onChange={(e) => {
                   const template = templates.find((item) => item.id === e.target.value);
                   if (!template) return;
-                  const body = template.blocks
-                    .map((block) => {
-                      if ('text' in block) return block.text;
-                      if (block.type === 'button') return block.label + ': ' + block.url;
-                      if (block.type === 'image') return block.alt + ': ' + block.url;
-                      return '';
-                    })
-                    .filter(Boolean)
-                    .join('\n\n');
-                  update(i, { subject: template.subject, body });
+                  // A designed message takes the template's own blocks; a plain one takes
+                  // the text and links flattened out of them.
+                  update(
+                    i,
+                    step.designed
+                      ? {
+                          subject: template.subject,
+                          blocks: structuredClone(template.blocks),
+                          selected: 0,
+                        }
+                      : { subject: template.subject, body: textFromBlocks(template.blocks) },
+                  );
                 }}
               >
                 <option value="">Choose a saved or starter template…</option>
@@ -430,7 +532,9 @@ function FunnelEditor({
                 ))}
               </select>
               <small>
-                Copies the text and links into this campaign message. Review it before saving.
+                {step.designed
+                  ? 'Copies the template’s blocks into this campaign message. Review it before saving.'
+                  : 'Copies the text and links into this campaign message. Review it before saving.'}
               </small>
             </label>
             <div className="funnel-editor-heading">
@@ -465,24 +569,69 @@ function FunnelEditor({
                 onChange={(e) => update(i, { subject: e.target.value })}
               />
             </label>
-            <label>
-              Message
-              <textarea
-                rows={7}
-                value={step.body}
-                required
-                minLength={20}
-                maxLength={10000}
-                onChange={(e) => update(i, { body: e.target.value })}
-              />
-            </label>
+            <div
+              className="funnel-format"
+              role="group"
+              aria-label={'Message ' + (i + 1) + ' format'}
+            >
+              <button
+                type="button"
+                className={'chip ' + (step.designed ? '' : 'is-on')}
+                aria-pressed={!step.designed}
+                onClick={() => setFormat(i, false)}
+              >
+                <AlignLeft size={13} />
+                Plain text
+              </button>
+              <button
+                type="button"
+                className={'chip ' + (step.designed ? 'is-on' : '')}
+                aria-pressed={step.designed}
+                onClick={() => setFormat(i, true)}
+              >
+                <LayoutTemplate size={13} />
+                Designed
+              </button>
+              <small>
+                {step.designed
+                  ? 'Delivered as email-safe HTML. Your plain text is kept, so you can switch back.'
+                  : 'Delivered as one plain-text message. Designing it starts from this text.'}
+              </small>
+            </div>
+            {step.designed ? (
+              <div className="form-stack funnel-design">
+                {/* Per-block checks come from the lead-scoped composer preview, which a
+                    sequence has no lead for. The server validates this design on save and
+                    again before every delivery. */}
+                <BlockEditor
+                  blocks={step.blocks}
+                  onChange={(blocks) => update(i, { blocks })}
+                  mergeFields={mergeFields}
+                  problems={[]}
+                  selected={step.selected}
+                  onSelect={(selected) => update(i, { selected })}
+                />
+              </div>
+            ) : (
+              <label>
+                Message
+                <textarea
+                  rows={7}
+                  value={step.body}
+                  required
+                  minLength={20}
+                  maxLength={10000}
+                  onChange={(e) => update(i, { body: e.target.value })}
+                />
+              </label>
+            )}
           </fieldset>
         ))}
         {steps.length < 3 && (
           <button
             type="button"
             className="button secondary"
-            onClick={() => setSteps((list) => [...list, { ...starterSteps[list.length] }])}
+            onClick={() => setSteps((list) => [...list, toDraft(starterSteps[list.length])])}
           >
             <Plus size={15} />
             Add follow-up
@@ -524,9 +673,13 @@ export function EnrollmentPicker({
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState<{ to: string; subject: string; body: string } | null>(
-    null,
-  );
+  const [preview, setPreview] = useState<{
+    to: string;
+    subject: string;
+    body: string;
+    /** The rendered email for a designed message; empty for a plain-text one. */
+    html: string;
+  } | null>(null);
   const active = funnels.find((f) => f.id === funnelId);
   useEffect(() => {
     let cancelled = false;
@@ -647,7 +800,14 @@ export function EnrollmentPicker({
           <div className="funnel-preview">
             <small>To: {preview.to}</small>
             <strong>{preview.subject}</strong>
-            <p className="preserve-text">{preview.body}</p>
+            {preview.html ? (
+              <div className="preview-frame desktop">
+                {/* Sandboxed with no allow-scripts: the rendered email displays, it never executes. */}
+                <iframe title="Message preview" sandbox="" srcDoc={preview.html} />
+              </div>
+            ) : (
+              <p className="preserve-text">{preview.body}</p>
+            )}
             <small>
               The sender signature, copy recipient and unsubscribe footer are added at delivery.
             </small>

@@ -42,6 +42,7 @@ import type {
   CallOutcome,
   EmailMessage,
   User,
+  ResearchOutcome,
 } from '../shared/types';
 import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
@@ -49,7 +50,7 @@ import { PreviousResearch } from './PreviousResearch';
 import { EmailComposer } from './EmailComposer';
 import { IncomingReplies } from './IncomingReplies';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
-import { CompanyOverview } from './CompanyOverview';
+import { CompanyOverview, missingDetails } from './CompanyOverview';
 import { leadLink, type LeadTab } from './navigation';
 
 export default function Leads({
@@ -1222,6 +1223,8 @@ function LeadDetail({
     [decision, setDecision] = useState<Decision>('NEEDS_REVIEW'),
     [reviewNotes, setReviewNotes] = useState('');
   const [enrolling, setEnrolling] = useState(false);
+  const [researching, setResearching] = useState(false),
+    [research, setResearch] = useState<ResearchOutcome | null>(null);
   const ready = project.active_version && project.revision === project.trained_revision;
   useEffect(() => {
     let cancelled = false;
@@ -1253,6 +1256,38 @@ function LeadDetail({
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+  /**
+   * Fills this record's blanks from the company's own website. Applying is a real edit, so the
+   * lead is reloaded and the panel then invites a fresh qualification instead of running one:
+   * the earlier verdict is stale, and spending another analysis is a person's decision.
+   */
+  async function researchLead() {
+    setResearching(true);
+    setError('');
+    try {
+      const outcome = await api<ResearchOutcome>(base + '/research', {
+        method: 'POST',
+        body: json({}),
+      });
+      setResearch(outcome);
+      const filled = outcome.applied?.length || 0;
+      if (filled) {
+        setRefresh((n) => n + 1);
+        onChange();
+        notify(
+          filled === 1
+            ? 'One detail filled in from the website. Qualify again to use it.'
+            : filled + ' details filled in from the website. Qualify again to use them.',
+        );
+      } else notify('Research finished. Nothing could be confirmed, so the lead is unchanged.');
+    } catch (e) {
+      // Clear the previous report: leaving it up would read as "ran again, found nothing".
+      setResearch(null);
+      setError((e as Error).message);
+    } finally {
+      setResearching(false);
     }
   }
   async function eraseContact() {
@@ -1368,7 +1403,11 @@ function LeadDetail({
                   )}
                 </div>
               </div>
-              <button className="button secondary" onClick={() => setEditing(true)} disabled={busy}>
+              <button
+                className="button secondary"
+                onClick={() => setEditing(true)}
+                disabled={busy || researching}
+              >
                 <Pencil size={15} />
                 Edit context
               </button>
@@ -1388,7 +1427,7 @@ function LeadDetail({
               </div>
               <button
                 className="button primary"
-                disabled={busy}
+                disabled={busy || researching}
                 onClick={ready ? qualifyLead : onTraining}
               >
                 {busy ? (
@@ -1454,7 +1493,21 @@ function LeadDetail({
                   </button>
                 ))}
               </div>
-              {tab === 'overview' && <CompanyOverview lead={lead} onTab={setTab} />}
+              {tab === 'overview' && (
+                <CompanyOverview
+                  lead={lead}
+                  onTab={setTab}
+                  research={{
+                    missing: missingDetails(lead),
+                    outcome: research,
+                    running: researching,
+                    busy,
+                    ready: !!ready,
+                    onRun: () => void researchLead(),
+                    onQualify: () => (ready ? void qualifyLead() : onTraining()),
+                  }}
+                />
+              )}
               {tab === 'campaigns' && (
                 <div className="company-campaigns">
                   <div className="section-title">
