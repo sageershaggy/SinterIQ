@@ -84,13 +84,15 @@ export default function Leads({
     [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
-  const exportRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null),
+    filterRef = useRef<HTMLDivElement>(null);
   const detail = detailId;
   const setDetail = (id: number | null, tab: LeadTab = 'overview') => {
     window.location.hash = id
       ? leadLink(project.id, id, tab, queue)
       : `#projects/${project.id}/${queue ? 'review' : 'leads'}`;
   };
+  const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false),
     [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
     [assigning, setAssigning] = useState<number[] | null>(null),
@@ -115,14 +117,17 @@ export default function Leads({
     return () => clearTimeout(timer);
   }, [search]);
   useEffect(() => {
-    if (!exportOpen) return;
+    // Either menu closes on an outside click or Escape.
+    if (!exportOpen && !filterOpen) return;
     const away = (event: MouseEvent) => {
       const target = event.target as Node;
       if (!exportRef.current?.contains(target)) setExportOpen(false);
+      if (!filterRef.current?.contains(target)) setFilterOpen(false);
     };
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setExportOpen(false);
+        setFilterOpen(false);
       }
     };
     document.addEventListener('mousedown', away);
@@ -131,7 +136,7 @@ export default function Leads({
       document.removeEventListener('mousedown', away);
       document.removeEventListener('keydown', key);
     };
-  }, [exportOpen]);
+  }, [exportOpen, filterOpen]);
   useEffect(() => {
     api<User[]>(base + '/assignees')
       .then(setAssignees)
@@ -336,24 +341,46 @@ export default function Leads({
                 placeholder="Search company, industry or country…"
               />
             </div>
-            <label className="lead-filter-control">
-              <Filter size={15} aria-hidden="true" />
-              <select
-                aria-label="Filter leads"
-                value={status}
-                onChange={(e) => {
-                  setStatus(e.target.value);
-                  setPage(1);
+            {/* A real dropdown rather than a native select: the OS popup cannot be aligned
+                or padded, and its hit area does not match the control, which is why it kept
+                reading as unclickable. */}
+            <div className="filter-menu" ref={filterRef}>
+              <button
+                className="table-filter"
+                aria-haspopup="listbox"
+                aria-expanded={filterOpen}
+                onClick={() => {
+                  setFilterOpen((open) => !open);
                   setExportOpen(false);
                 }}
               >
-                {statusFilters(queue).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <Filter size={15} aria-hidden="true" />
+                <span className="filter-value">
+                  {statusFilters(queue).find((o) => o.value === status)?.label || 'All leads'}
+                </span>
+                <ChevronDown size={15} className={'filter-caret ' + (filterOpen ? 'is-open' : '')} />
+              </button>
+              {filterOpen && (
+                <div className="filter-dropdown" role="listbox">
+                  {statusFilters(queue).map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="option"
+                      aria-selected={status === option.value}
+                      className={status === option.value ? 'is-selected' : ''}
+                      onClick={() => {
+                        setStatus(option.value);
+                        setPage(1);
+                        setFilterOpen(false);
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="export-menu" ref={exportRef}>
               <button
                 className="button secondary"
@@ -646,7 +673,7 @@ export default function Leads({
                             ) : (
                               <>
                                 <Sparkles size={14} />
-                                {!ready ? 'Set up' : lead.latest_run_id ? 'Re-run' : 'Qualify'}
+                                {!ready ? 'Set up' : lead.latest_run_id ? 'Re-analyze' : 'Analyze with AI'}
                               </>
                             )}
                           </button>

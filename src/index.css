@@ -2525,6 +2525,9 @@ input::file-selector-button {
   width: 100%;
   font-size: 11px;
 }
+.publish-box .button + .button {
+  margin-top: 9px;
+}
 .source-preview {
   padding: 26px;
 }

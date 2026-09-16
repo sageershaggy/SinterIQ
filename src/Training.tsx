@@ -119,25 +119,38 @@ export default function Training({
     setEditor((current) => ({ ...current, [key]: value }));
     setDirty(true);
   }
-  async function save(e: FormEvent) {
-    e.preventDefault();
+  async function saveRubric(next: Editor, message: string) {
     await perform('save', async () => {
       await api(base + '/training/rubric', {
         method: 'PUT',
         body: json({
           revision: project.revision,
           rubric: {
-            summary: editor.summary,
-            criteria: lines(editor.criteria),
-            exclusions: lines(editor.exclusions),
-            questions: lines(editor.questions),
+            summary: next.summary,
+            criteria: lines(next.criteria),
+            exclusions: lines(next.exclusions),
+            questions: lines(next.questions),
           },
         }),
       });
       onChange();
       setDirty(false);
-      notify('Draft rules saved. Publish them when they are ready.');
+      notify(message);
     });
+  }
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    await saveRubric(editor, 'Draft rules saved. Publish them when they are ready.');
+  }
+  /**
+   * Open questions block publishing on purpose, but a migrated project starts with a seeded
+   * question, so the gate has to be resolvable from where it is reported. Clearing saves the
+   * draft too, because an unsaved draft is itself a second gate.
+   */
+  async function resolveQuestions() {
+    const next = { ...editor, questions: '' };
+    setEditor(next);
+    await saveRubric(next, 'Open questions cleared. You can publish this training version now.');
   }
   async function analyze() {
     await perform('analyze', async () => {
@@ -196,11 +209,13 @@ export default function Training({
           : lines(editor.criteria).length === 0
             ? 'Add at least one positive qualification criterion.'
             : openQuestions > 0
-              ? 'Resolve and clear the ' +
+              ? 'Answer the ' +
                 openQuestions +
                 ' open question' +
                 (openQuestions === 1 ? '' : 's') +
-                ' above — publishing is blocked while any remain.'
+                ' above with your client, then clear ' +
+                (openQuestions === 1 ? 'it' : 'them') +
+                ' below. Publishing is blocked while any remain.'
               : '';
   return (
     <>
@@ -541,6 +556,23 @@ export default function Training({
                       'Confirm that the sources and rules reflect how this project should qualify leads.'}
               </p>
             </div>
+            {!ready && openQuestions > 0 && (
+              <button
+                className="button secondary"
+                type="button"
+                disabled={!!busy}
+                onClick={resolveQuestions}
+              >
+                {busy === 'save' ? (
+                  <Spinner />
+                ) : (
+                  <>
+                    <CheckCircle2 size={15} />
+                    Mark resolved &amp; clear
+                  </>
+                )}
+              </button>
+            )}
             <button
               className="button primary"
               disabled={!!busy || dirty || ready || !checklist.every((c) => c.done)}

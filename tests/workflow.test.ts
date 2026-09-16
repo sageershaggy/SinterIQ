@@ -1874,3 +1874,23 @@ test('the block editor renders email-safe HTML, merges the subject, and names a 
     f.dispose();
   }
 });
+
+/**
+ * The leads status filter must stay an owned dropdown. A native <select> has now shipped twice
+ * and both times users reported it as "not clickable": the OS popup cannot be aligned or padded
+ * and its hit area does not match the control. This asserts the control, not an implementation
+ * detail -- if the filter is deliberately redesigned, update this test in the same commit.
+ */
+test('the leads status filter is an owned dropdown, not a native select', () => {
+  const source = fs.readFileSync(new URL('../src/Leads.tsx', import.meta.url), 'utf8');
+  const start = source.indexOf('className="table-toolbar"');
+  const end = source.indexOf('className="selection-bar"');
+  assert.ok(start > 0 && end > start, 'could not locate the leads table toolbar');
+  const toolbar = source.slice(start, end);
+  assert.match(toolbar, /className="filter-dropdown"/, 'the owned filter menu is missing');
+  assert.ok(
+    !toolbar.includes('<select'),
+    'the status filter is a native <select> again; it reads as unclickable to users',
+  );
+  assert.match(toolbar, /role="listbox"/, 'the filter menu lost its listbox role');
+});
