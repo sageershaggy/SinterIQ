@@ -76,8 +76,7 @@ export function ReplyForm({
             />
           </label>
           <p className="muted">
-            Sends through the configured workspace mailbox. Recipient limits and opt-outs still
-            apply.
+            Sends through this project's mailbox. Recipient limits and opt-outs still apply.
           </p>
           <div className="form-actions">
             <button
@@ -139,8 +138,8 @@ export function IncomingReplies({ base, onSent }: { base: string; onSent: () => 
       ) : (
         !messages.length && (
           <p className="muted">
-            No linked incoming messages yet. An administrator connects the inbox in Workspace
-            settings.
+            No linked incoming messages yet. An administrator connects this project's inbox on its
+            Mailbox screen.
           </p>
         )
       )}

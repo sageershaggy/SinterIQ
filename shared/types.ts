@@ -221,8 +221,10 @@ export interface PreservedRecord {
   data: Record<string, unknown>;
   imported_at: string;
 }
-/** Shared workspace mailbox. The password is never returned to the browser. */
+/** One project's mailbox. The password is never returned to the browser. */
 export interface EmailSettings {
+  /** A mailbox belongs to exactly one project. */
+  project_id: number;
   host: string;
   port: number;
   secure: boolean;

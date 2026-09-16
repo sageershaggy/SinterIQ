@@ -1638,6 +1638,8 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       contact_email: 'dana@mailable.com',
     });
     const leadBase = base + '/leads/' + created.body.id;
+    // The mailbox belongs to this project, so it is where this project's mail is configured.
+    const mailbox = base + '/mailbox/email';
     // Nothing can be sent before a mailbox exists.
     const early = await f.post(leadBase + '/email', {
       to: 'dana@mailable.com',
@@ -1645,10 +1647,10 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       body: 'This body is comfortably longer than the minimum length.',
     });
     assert.equal(early.status, 409);
-    assert.match(early.body.error, /No workspace mailbox is configured/);
+    assert.match(early.body.error, /This project has no mailbox yet/);
     // A private or loopback mail host is refused, like any other outbound target.
     for (const host of ['localhost', '127.0.0.1', '10.0.0.5', 'mail.internal']) {
-      const bad = await f.put('/settings/email', {
+      const bad = await f.put(mailbox, {
         host,
         port: 587,
         from_email: 'research@innovista.example',
@@ -1659,7 +1661,7 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
     // Port 25 is relay, not submission.
     assert.equal(
       (
-        await f.put('/settings/email', {
+        await f.put(mailbox, {
           host: '8.8.8.8',
           port: 25,
           from_email: 'research@innovista.example',
@@ -1668,7 +1670,7 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       ).status,
       400,
     );
-    const saved = await f.put('/settings/email', {
+    const saved = await f.put(mailbox, {
       host: '8.8.8.8',
       port: 587,
       username: 'research@innovista.example',
@@ -1681,8 +1683,9 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
     // The password never comes back out.
     assert.equal(saved.body.has_password, true);
     assert.equal(saved.body.configured, true);
+    assert.equal(saved.body.project_id, project.id);
     assert.ok(!JSON.stringify(saved.body).includes('mailbox-password'));
-    assert.ok(!(await f.agent.get('/api/settings/email')).text.includes('mailbox-password'));
+    assert.ok(!(await f.agent.get('/api' + mailbox)).text.includes('mailbox-password'));
     // A researcher cannot read or change the mailbox.
     const account = await f.post('/users', {
       name: 'Plain Researcher',
@@ -1697,7 +1700,7 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       .set('X-Requested-With', 'Innovista')
       .send({ username: 'plain-researcher', password: 'A-long-researcher-password-2026' });
     assert.equal(login.status, 200);
-    assert.equal((await researcher.get('/api/settings/email')).status, 403);
+    assert.equal((await researcher.get('/api' + mailbox)).status, 403);
     // The draft is built from the qualification.
     assert.equal((await f.post(leadBase + '/qualify', {})).status, 200);
     const draft = await f.agent.get('/api' + leadBase + '/email/draft');
@@ -1785,7 +1788,7 @@ test('the block editor renders email-safe HTML, merges the subject, and names a 
     const leadBase = base + '/leads/' + created.body.id;
     assert.equal(
       (
-        await f.put('/settings/email', {
+        await f.put(base + '/mailbox/email', {
           host: '8.8.8.8',
           port: 587,
           password: 'mailbox-password',

@@ -28,6 +28,8 @@ const views: View[] = [
   'funnels',
   'activity',
   'settings',
+  // A mailbox belongs to a project, so it is only ever reachable under one.
+  'mailbox',
 ];
 export function readRoute(hash = window.location.hash): {
   view: View;
@@ -38,7 +40,7 @@ export function readRoute(hash = window.location.hash): {
   const parts = hash.replace(/^#\/?/, '').split('/');
   if (parts[0] !== 'projects' || !/^[1-9]\d*$/.test(parts[1] || ''))
     return {
-      view: parts[0] === 'mailbox' ? 'mailbox' : parts[0] === 'settings' ? 'settings' : 'projects',
+      view: parts[0] === 'settings' ? 'settings' : 'projects',
       projectId: null,
       leadId: null,
       tab: 'overview',

@@ -12,7 +12,7 @@ Connecting a mailbox does not send drafts. Draft funnels still require administr
 
 ## Connection
 
-In **Workspace settings**, configure the outgoing SMTP submission host, username, password/app password, sender name/address and optional copy address. Set Reply-to to the inbox you intend to receive here.
+Open the project, choose **Mailbox** (administrators only) and then **Configure email**. Each project has its own mailbox: configure the outgoing SMTP submission host, username, password/app password, sender name/address and optional copy address. Set Reply-to to the inbox you intend to receive here. Repeat for every project that sends mail; a project without a configured mailbox cannot send at all, and the screen warns you by name when another project already polls the same inbox.
 
 Under **Incoming mail**, configure the provider's IMAP hostname, username, password/app password and folder (usually `INBOX`). TLS on port 993 is required. Enable automatic sync, save, then click **Verify & sync**. A successful sync verifies the connection without sending an email. Settings never return the password; it is encrypted with the workspace encryption key. Changing the host/account requires a new password. Disable sync and clear the password to disconnect incoming mail.
 

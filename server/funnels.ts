@@ -177,11 +177,12 @@ export function createFunnels(options: {
             .prepare(selectFunnel + ' WHERE f.project_id=? ORDER BY f.id DESC')
             .all(p.id) as StoredFunnel[]
         ).map(serialize),
-        delivery_ready: Boolean(
-          publicOrigin.startsWith('https://') &&
-          getEmailConfig(db, secrets).configured &&
-          getEmailConfig(db, secrets).copy_to,
-        ),
+        delivery_ready: (() => {
+          const config = getEmailConfig(db, secrets, p.id);
+          return Boolean(
+            publicOrigin.startsWith('https://') && config.configured && config.copy_to,
+          );
+        })(),
       });
     });
     app.post(base, adminOnly, (req, res) => {
@@ -225,11 +226,11 @@ export function createFunnels(options: {
       if (input.revision !== f.revision)
         throw new HttpError(409, 'The funnel changed. Refresh before saving.');
       if (input.status === 'ACTIVE') {
-        const config = getEmailConfig(db, secrets);
+        const config = getEmailConfig(db, secrets, p.id);
         if (!publicOrigin.startsWith('https://') || !config.configured || !config.copy_to)
           throw new HttpError(
             409,
-            'Configure a public HTTPS app origin, the workspace mailbox and a copy address before starting.',
+            'Configure a public HTTPS app origin, this project mailbox and a copy address before starting.',
           );
         funnelSchema.parse({ name: f.name, audience: f.audience, steps: f.steps });
       }
@@ -275,7 +276,7 @@ export function createFunnels(options: {
         .object({ lead_ids: z.array(z.number().int().positive()).min(1).max(100) })
         .strict()
         .parse(req.body);
-      const config = getEmailConfig(db, secrets);
+      const config = getEmailConfig(db, secrets, p.id);
       let skipped = 0;
       const enrolled = db.transaction(() => {
         let count = 0;
@@ -344,7 +345,7 @@ export function createFunnels(options: {
         .parse(req.body);
       if (!f.steps[input.step]) throw new HttpError(400, 'Message not found.');
       const lead = eligible(p, input.lead_id),
-        config = getEmailConfig(db, secrets);
+        config = getEmailConfig(db, secrets, p.id);
       const built = compose(f.steps[input.step], lead, config.from_name || req.user.name);
       res.json({ to: lead.contact_email, ...built });
     });
@@ -369,24 +370,48 @@ export function createFunnels(options: {
     try {
       outreach.recover();
       const job = db.transaction(() => {
-        // Across processes/restarts: reserve one slot per minute, even if the previous send failed.
-        const slot = db.prepare("SELECT value FROM meta WHERE key='funnel_last_tick'").get() as
-          { value: string } | undefined;
-        if (slot && time - Number(slot.value) < 60_000) return;
         db.prepare(
           `UPDATE funnel_enrollments SET status='BLOCKED',reason='Delivery interrupted; inspect email history before contacting again.',updated_at=?
           WHERE status='SENDING' AND updated_at<?`,
         ).run(now(), new Date(Date.now() - 10 * 60_000).toISOString());
+        // Across processes/restarts: reserve one slot per minute PER PROJECT, even if the
+        // previous send failed. Each project sends from its own mailbox with its own sending
+        // reputation, so one project's queue must not starve behind another's.
+        const slotKey = (projectId: number) => 'funnel_last_tick:' + projectId;
+        const paced = db.prepare('SELECT value FROM meta WHERE key=?');
+        // Pick the PROJECT first, then its oldest due job. Scanning a window of jobs instead
+        // would let one project with a deep queue fill the window and starve the others.
+        // A project whose own mailbox is enabled but failing does not send at all: its replies
+        // are not being ingested, so the "they already replied" stop cannot fire and a
+        // sequence would keep mailing someone who has already asked to be left alone.
+        const due = db
+          .prepare(
+            `SELECT DISTINCT e.project_id FROM funnel_enrollments e
+            JOIN funnels f ON f.id=e.funnel_id AND f.project_id=e.project_id
+          WHERE f.status='ACTIVE' AND e.status='QUEUED' AND e.next_send_at<=?
+            AND NOT EXISTS (SELECT 1 FROM project_mailboxes m
+              WHERE m.project_id=e.project_id AND m.imap_enabled=1 AND m.last_error<>'')`,
+          )
+          .all(time) as Array<{ project_id: number }>;
+        const ready = due
+          .map((row) => row.project_id)
+          .filter((projectId) => {
+            const slot = paced.get(slotKey(projectId)) as { value: string } | undefined;
+            return !slot || time - Number(slot.value) >= 60_000;
+          });
+        if (!ready.length) return;
         const selected = db
           .prepare(
             `SELECT e.* FROM funnel_enrollments e JOIN funnels f ON f.id=e.funnel_id AND f.project_id=e.project_id
-          WHERE f.status='ACTIVE' AND e.status='QUEUED' AND e.next_send_at<=? ORDER BY e.next_send_at,e.id LIMIT 1`,
+          WHERE f.status='ACTIVE' AND e.status='QUEUED' AND e.next_send_at<=?
+            AND e.project_id IN (${ready.map(() => '?').join(',')})
+          ORDER BY e.next_send_at,e.id LIMIT 1`,
           )
-          .get(time) as Job | undefined;
+          .get(time, ...ready) as Job | undefined;
         if (!selected) return;
         db.prepare(
-          "INSERT INTO meta (key,value) VALUES ('funnel_last_tick',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        ).run(String(time));
+          'INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+        ).run(slotKey(selected.project_id), String(time));
         db.prepare(
           "UPDATE funnel_enrollments SET status='SENDING',updated_at=? WHERE id=? AND project_id=?",
         ).run(now(), selected.id, selected.project_id);
@@ -419,7 +444,7 @@ export function createFunnels(options: {
           return { f, lead };
         };
         const { f, lead } = verify();
-        const config = getEmailConfig(db, secrets);
+        const config = getEmailConfig(db, secrets, job.project_id);
         if (!publicOrigin.startsWith('https://') || !config.copy_to)
           throw new HttpError(409, 'Public origin or copy address is missing.');
         const step = f.steps[job.next_step];

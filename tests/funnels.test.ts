@@ -6,6 +6,7 @@ import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../server/app';
 import { sendMail, type Send, type SmtpConfig } from '../server/email';
+import type { ReadInbox } from '../server/imap';
 import nodemailer from 'nodemailer';
 import type { Lead, Project, TrainingSnapshot } from '../shared/types';
 import type { Enrollment, Funnel, FunnelStep } from '../shared/funnels';
@@ -30,16 +31,24 @@ const steps: FunnelStep[] = [
   },
 ];
 
-async function fixture(origin = 'https://research.example.com', transport?: Send) {
+async function fixture(
+  origin = 'https://research.example.com',
+  transport?: Send,
+  reader?: ReadInbox,
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'innovista-funnels-'));
   const messages: Parameters<Send>[1][] = [];
+  /** The mailbox each message actually left through, recorded alongside the message itself. */
+  const senders: SmtpConfig[] = [];
   const options: Parameters<typeof createApp>[0] = {
     dataDir: dir,
     origin,
+    readInbox: reader,
     sendMail:
       transport ||
-      (async (_config, message) => {
+      (async (config, message) => {
         message.beforeSend?.();
+        senders.push(config);
         messages.push(message);
       }),
     generate: async (_config, _system, input) => {
@@ -90,42 +99,47 @@ async function fixture(origin = 'https://research.example.com', transport?: Send
   });
   assert.equal(setup.status, 201, setup.text);
   csrf = setup.body.csrf_token;
-  const p = (
-    await req('post', '/projects', { name: 'QA Pump Research', website: 'https://example.org' })
-  ).body as Project;
-  const source = await req('post', `/projects/${p.id}/sources`, {
-    revision: p.revision,
-    title: 'Training brief',
-    content:
-      'Find industrial pump manufacturers with engineering teams. Exclude companies manufacturing bearings.',
-  });
-  assert.equal(source.status, 201, source.text);
-  const afterNote = (await req('get', `/projects/${p.id}`)).body.project as Project;
-  const website = await req('post', `/projects/${p.id}/sources/website`, {
-    revision: afterNote.revision,
-    url: 'https://example.org',
-  });
-  assert.equal(website.status, 201, website.text);
-  const current = (await req('get', `/projects/${p.id}`)).body.project as Project;
-  const rubric = await req('put', `/projects/${p.id}/training/rubric`, {
-    revision: current.revision,
-    rubric: {
-      summary: 'Find industrial pump manufacturers with their own engineering teams.',
-      criteria: ['Manufactures industrial pumps'],
-      exclusions: ['Manufactures bearings'],
-      questions: [],
-    },
-  });
-  assert.equal(rubric.status, 200, rubric.text);
-  const published = await req('post', `/projects/${p.id}/training/publish`, {
-    revision: rubric.body.revision,
-  });
-  assert.equal(published.status, 200, published.text);
-  const base = `/projects/${p.id}`;
+  /** A project trained and published far enough to enroll leads, since a mailbox is per project. */
+  async function prepare(name: string) {
+    const p = (await req('post', '/projects', { name, website: 'https://example.org' }))
+      .body as Project;
+    const source = await req('post', `/projects/${p.id}/sources`, {
+      revision: p.revision,
+      title: 'Training brief',
+      content:
+        'Find industrial pump manufacturers with engineering teams. Exclude companies manufacturing bearings.',
+    });
+    assert.equal(source.status, 201, source.text);
+    const afterNote = (await req('get', `/projects/${p.id}`)).body.project as Project;
+    const website = await req('post', `/projects/${p.id}/sources/website`, {
+      revision: afterNote.revision,
+      url: 'https://example.org',
+    });
+    assert.equal(website.status, 201, website.text);
+    const current = (await req('get', `/projects/${p.id}`)).body.project as Project;
+    const rubric = await req('put', `/projects/${p.id}/training/rubric`, {
+      revision: current.revision,
+      rubric: {
+        summary: 'Find industrial pump manufacturers with their own engineering teams.',
+        criteria: ['Manufactures industrial pumps'],
+        exclusions: ['Manufactures bearings'],
+        questions: [],
+      },
+    });
+    assert.equal(rubric.status, 200, rubric.text);
+    const published = await req('post', `/projects/${p.id}/training/publish`, {
+      revision: rubric.body.revision,
+    });
+    assert.equal(published.status, 200, published.text);
+    return published.body as Project;
+  }
+  const project = await prepare('QA Pump Research');
+  const base = `/projects/${project.id}`;
   let leadCounter = 0;
   return {
     req,
     messages,
+    senders,
     base,
     host,
     get db() {
@@ -140,9 +154,11 @@ async function fixture(origin = 'https://research.example.com', transport?: Send
     get csrf() {
       return csrf;
     },
-    project: published.body as Project,
-    async mailbox(copy = 'owner@example.com') {
-      const result = await req('put', '/settings/email', {
+    project,
+    prepare,
+    /** Each project sends from its own mailbox, so this is saved per project. */
+    async mailbox(copy = 'owner@example.com', target = project, values: object = {}) {
+      const result = await req('put', `/projects/${target.id}/mailbox/email`, {
         host: '8.8.8.8',
         port: 587,
         username: 'research@example.com',
@@ -151,22 +167,42 @@ async function fixture(origin = 'https://research.example.com', transport?: Send
         from_name: 'Research Team',
         signature: 'Research Team signature',
         copy_to: copy,
+        ...values,
       });
       assert.equal(result.status, 200, result.text);
     },
-    async lead(email = 'contact@pumps.example') {
-      const created = await req('post', base + '/leads', {
+    /** The receiving half: a project only stops delivering when its OWN inbox is failing. */
+    async incoming(target = project, username = 'inbox@example.com') {
+      const result = await req('put', `/projects/${target.id}/mailbox/settings`, {
+        revision: 0,
+        host: '8.8.8.8',
+        username,
+        folder: 'INBOX',
+        password: 'fake-incoming-password',
+        enabled: true,
+      });
+      assert.equal(result.status, 200, result.text);
+    },
+    poll(target = project) {
+      return req('post', `/projects/${target.id}/mailbox/sync`);
+    },
+    lastError(target = project) {
+      return req('get', `/projects/${target.id}/mailbox/settings`);
+    },
+    async lead(email = 'contact@pumps.example', target = project) {
+      const leads = `/projects/${target.id}/leads`;
+      const created = await req('post', leads, {
         name: 'Pump Company ' + ++leadCounter,
         website: `https://pumps${leadCounter}.example`,
         contact_email: email,
       });
       assert.equal(created.status, 201, created.text);
-      const qualified = await req('post', base + '/leads/' + created.body.id + '/qualify', {});
+      const qualified = await req('post', `${leads}/${created.body.id}/qualify`, {});
       assert.equal(qualified.status, 200, qualified.text);
-      return (await req('get', base + '/leads/' + created.body.id)).body as Lead;
+      return (await req('get', `${leads}/${created.body.id}`)).body as Lead;
     },
-    async funnel(messages = steps) {
-      const result = await req('post', base + '/funnels', {
+    async funnel(messages = steps, target = project) {
+      const result = await req('post', `/projects/${target.id}/funnels`, {
         name: 'Engineering introduction',
         audience: 'Pump manufacturers',
         steps: messages,
@@ -174,19 +210,24 @@ async function fixture(origin = 'https://research.example.com', transport?: Send
       assert.equal(result.status, 201, result.text);
       return result.body as Funnel;
     },
+    // A funnel already names its project, so these follow it instead of the default one.
     async enroll(funnel: Funnel, ...leads: Lead[]) {
-      return req('post', `${base}/funnels/${funnel.id}/enrollments`, {
+      return req('post', `/projects/${funnel.project_id}/funnels/${funnel.id}/enrollments`, {
         lead_ids: leads.map((l) => l.id),
       });
     },
     async status(funnel: Funnel, status: 'ACTIVE' | 'PAUSED') {
-      const latest = ((await req('get', base + '/funnels')).body.funnels as Funnel[]).find(
+      const funnels = `/projects/${funnel.project_id}/funnels`;
+      const latest = ((await req('get', funnels)).body.funnels as Funnel[]).find(
         (f) => f.id === funnel.id,
       )!;
-      return req('patch', `${base}/funnels/${funnel.id}`, { status, revision: latest.revision });
+      return req('patch', `${funnels}/${funnel.id}`, { status, revision: latest.revision });
     },
     async queue(funnel: Funnel) {
-      const response = await req('get', `${base}/funnels/${funnel.id}/enrollments`);
+      const response = await req(
+        'get',
+        `/projects/${funnel.project_id}/funnels/${funnel.id}/enrollments`,
+      );
       assert.equal(response.status, 200, response.text);
       return response.body.enrollments as Enrollment[];
     },
@@ -592,6 +633,192 @@ test('pausing, paced delivery and stale qualifications prevent catch-up bursts a
   }
 });
 
+test('delivery is paced per project, so one queue never starves behind another', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const other = await f.prepare('QA Valve Research');
+    // A mailbox of its own, not a copy of the first project's: the worker has to resolve the
+    // sender from the project that enrolled the lead.
+    await f.mailbox('owner@example.com', other, {
+      host: '9.9.9.9',
+      username: 'valves@example.net',
+      password: 'fake-valve-mail-password',
+      from_email: 'valves@example.net',
+      from_name: 'Valve Team',
+    });
+    const first = await f.lead('first@pumps.example');
+    const second = await f.lead('second@pumps.example');
+    const elsewhere = await f.lead('buyer@valves.example', other);
+    const here = await f.funnel([steps[0]]);
+    const there = await f.funnel([steps[0]], other);
+    await f.enroll(here, first, second);
+    await f.enroll(there, elsewhere);
+    await f.status(here, 'ACTIVE');
+    await f.status(there, 'ACTIVE');
+    const time = Date.now() + 20 * day;
+    await f.worker.tick(time);
+    await f.worker.tick(time);
+    // Each project reserves its own minute, so both projects deliver inside the same one.
+    assert.deepEqual(f.messages.map((m) => m.to).sort(), [
+      'buyer@valves.example',
+      'first@pumps.example',
+    ]);
+    // Each message left through the mailbox of the project that enrolled its lead.
+    const sender = (to: string) => f.senders[f.messages.findIndex((m) => m.to === to)];
+    assert.equal(sender('first@pumps.example').project_id, f.project.id);
+    assert.equal(sender('first@pumps.example').from_email, 'research@example.com');
+    assert.equal(sender('first@pumps.example').host, '8.8.8.8');
+    assert.equal(sender('buyer@valves.example').project_id, other.id);
+    assert.equal(sender('buyer@valves.example').from_email, 'valves@example.net');
+    assert.equal(sender('buyer@valves.example').host, '9.9.9.9');
+    assert.equal(sender('buyer@valves.example').password, 'fake-valve-mail-password');
+    // The second message for this project still waits for this project's next minute.
+    await f.worker.tick(time + 1);
+    assert.equal(f.messages.length, 2);
+    await f.worker.tick(time + 60_000);
+    assert.equal(f.messages.length, 3);
+    assert.equal(f.messages[2].to, 'second@pumps.example');
+    assert.equal(f.senders[2].project_id, f.project.id);
+    assert.equal(f.senders[2].from_email, 'research@example.com');
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a project whose own inbox is failing delivers nothing until the failure clears', async () => {
+  // Only the first project's provider is broken. Its replies are not being ingested, so the
+  // "they already replied" stop cannot fire and its sequence must not keep mailing.
+  const broken = new Set(['pumps-inbox@example.com']);
+  const f = await fixture(undefined, undefined, async (config) => {
+    if (broken.has(config.username)) throw new Error('fixture-only provider outage');
+    return { uid_validity: '1', last_uid: 0, messages: [] };
+  });
+  try {
+    await f.mailbox();
+    const other = await f.prepare('QA Valve Research');
+    await f.mailbox('owner@example.com', other, {
+      host: '9.9.9.9',
+      username: 'valves@example.net',
+      password: 'fake-valve-mail-password',
+      from_email: 'valves@example.net',
+      from_name: 'Valve Team',
+    });
+    const here = await f.lead('failing@pumps.example');
+    const elsewhere = await f.lead('buyer@valves.example', other);
+    const stalled = await f.funnel([steps[0]]);
+    const healthy = await f.funnel([steps[0]], other);
+    await f.enroll(stalled, here);
+    await f.enroll(healthy, elsewhere);
+    await f.status(stalled, 'ACTIVE');
+    await f.status(healthy, 'ACTIVE');
+    await f.incoming(f.project, 'pumps-inbox@example.com');
+    await f.incoming(other, 'valves-inbox@example.com');
+    assert.equal((await f.poll(f.project)).status, 502);
+    assert.equal((await f.poll(other)).status, 200);
+    assert.match((await f.lastError(f.project)).body.last_error, /Incoming connection failed/);
+    assert.equal((await f.lastError(other)).body.last_error, '');
+    const time = Date.now() + 20 * day;
+    await f.worker.tick(time);
+    await f.worker.tick(time);
+    // The healthy project keeps delivering; the failing one is left where it was.
+    assert.deepEqual(
+      f.messages.map((m) => m.to),
+      ['buyer@valves.example'],
+    );
+    assert.equal((await f.queue(stalled))[0].status, 'QUEUED');
+    assert.equal((await f.queue(healthy))[0].status, 'COMPLETED');
+    // A successful poll clears the failure, and the queue resumes from where it stopped.
+    broken.clear();
+    assert.equal((await f.poll(f.project)).status, 200);
+    assert.equal((await f.lastError(f.project)).body.last_error, '');
+    await f.worker.tick(time);
+    assert.deepEqual(
+      f.messages.map((m) => m.to),
+      ['buyer@valves.example', 'failing@pumps.example'],
+    );
+    assert.equal(f.senders[1].project_id, f.project.id);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a project with a deep due queue never starves another project out of its slot', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const other = await f.prepare('QA Valve Research');
+    await f.mailbox('owner@example.com', other, {
+      host: '9.9.9.9',
+      username: 'valves@example.net',
+      password: 'fake-valve-mail-password',
+      from_email: 'valves@example.net',
+      from_name: 'Valve Team',
+    });
+    const deep = await f.lead('deep@pumps.example');
+    const elsewhere = await f.lead('buyer@valves.example', other);
+    const here = await f.funnel([steps[0]]);
+    const there = await f.funnel([steps[0]], other);
+    await f.enroll(here, deep);
+    // A due queue deeper than any single scan window: the first fifty jobs by age all belong
+    // to this one project, so fairness has to come from picking the project first.
+    const stamp = new Date(Date.now() - 1000).toISOString();
+    const backlogFunnel = f.db.prepare(
+      "INSERT INTO funnels (project_id,name,audience,steps_json,status,created_at,created_by) VALUES (?,?,'','[]','ACTIVE',?,'QA')",
+    );
+    const backlogEnrollment = f.db.prepare(
+      `INSERT INTO funnel_enrollments
+      (project_id,funnel_id,lead_id,recipient,lead_revision,training_version,account_id,created_by,next_send_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,1,'QA',?,?,?)`,
+    );
+    for (let index = 0; index < 55; index++)
+      backlogEnrollment.run(
+        f.project.id,
+        Number(backlogFunnel.run(f.project.id, 'Deep queue ' + index, stamp).lastInsertRowid),
+        deep.id,
+        `deep-${index}@pumps.example`,
+        deep.revision,
+        Number(f.project.active_version),
+        Date.now(),
+        stamp,
+        stamp,
+      );
+    await f.enroll(there, elsewhere);
+    await f.status(here, 'ACTIVE');
+    await f.status(there, 'ACTIVE');
+    // Every one of this project's jobs is older than the other project's single message.
+    const due = Date.now() - 60_000;
+    f.db
+      .prepare('UPDATE funnel_enrollments SET next_send_at=? WHERE project_id=?')
+      .run(due, f.project.id);
+    f.db
+      .prepare('UPDATE funnel_enrollments SET next_send_at=? WHERE project_id=?')
+      .run(due + 1000, other.id);
+    assert.equal(
+      (
+        f.db
+          .prepare(
+            "SELECT count(*) n FROM funnel_enrollments WHERE project_id=? AND status='QUEUED'",
+          )
+          .get(f.project.id) as { n: number }
+      ).n,
+      56,
+    );
+    const time = Date.now() + 20 * day;
+    await f.worker.tick(time);
+    await f.worker.tick(time);
+    // The other project delivered inside the same minute instead of queueing behind 55 jobs.
+    assert.deepEqual(
+      f.messages.map((m) => m.to),
+      ['deep@pumps.example', 'buyer@valves.example'],
+    );
+    assert.equal(f.senders[1].project_id, other.id);
+    assert.equal(f.senders[1].from_email, 'valves@example.net');
+  } finally {
+    f.dispose();
+  }
+});
+
 test('SMTP uncertainty is logged, consumes a slot and is never retried automatically', async () => {
   let attempts = 0;
   const f = await fixture(undefined, async (_config, message) => {
@@ -857,6 +1084,7 @@ test('SMTP verifies primary and copy acceptance, pins the host and passes unsubs
     };
   });
   const config: SmtpConfig = {
+    project_id: 1,
     host: '8.8.8.8',
     port: 587,
     secure: false,

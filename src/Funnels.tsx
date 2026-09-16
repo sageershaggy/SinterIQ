@@ -112,8 +112,8 @@ export default function Funnels({
           <div>
             <strong>Delivery setup needed</strong>
             <p>
-              Starting a funnel requires a workspace mailbox, a copy address and a public HTTPS app
-              address. You can prepare sequences and queues now.
+              Starting a funnel requires this project’s mailbox, a copy address and a public HTTPS
+              app address. You can prepare sequences and queues now.
             </p>
           </div>
           {user.role === 'admin' && (
@@ -272,15 +272,16 @@ export default function Funnels({
               message per minute.
             </p>
             <p>
-              Messages include the workspace sender, a copy to the configured address and an
-              unsubscribe link. Record replies from your mailbox here to stop follow-ups; link
-              opt-outs stop them automatically. Messages already handed to the mailbox cannot be
-              recalled.
+              Messages are sent from this project’s mailbox, with a copy to the configured address
+              and an unsubscribe link. Record replies from that mailbox here to stop follow-ups;
+              link opt-outs stop them automatically. Messages already handed to the mailbox cannot
+              be recalled.
             </p>
             {error && <Alert>{error}</Alert>}
             {!ready && (
               <Alert>
-                Finish the mailbox, copy address and public HTTPS origin setup before starting.
+                Finish this project’s mailbox, copy address and public HTTPS origin setup before
+                starting.
               </Alert>
             )}
             <div className="form-actions">
@@ -758,7 +759,7 @@ function FunnelQueue({
         </button>
       </div>
       <p className="muted">
-        Replies arrive in the workspace mailbox. Record a reply, conversion or stop below to cancel
+        Replies arrive in this project’s mailbox. Record a reply, conversion or stop below to cancel
         further follow-ups. The qualification decision stays unchanged.
       </p>
       {error && <Alert>{error}</Alert>}
@@ -865,8 +866,8 @@ export function OutreachOutcomeForm({
         </p>
       )}
       <p className="muted">
-        Record replies from your mailbox here to stop further funnel emails. Unsubscribe also blocks
-        individual emails, even if this address is imported again.
+        Record replies from this project’s mailbox here to stop further funnel emails. Unsubscribe
+        also blocks individual emails, even if this address is imported again.
       </p>
       <form
         className="form-stack"

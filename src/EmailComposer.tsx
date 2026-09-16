@@ -293,7 +293,7 @@ export function EmailComposer({
         {error && <Alert>{error}</Alert>}
         {mailbox && !mailbox.configured && (
           <Alert>
-            No workspace mailbox is configured yet. An administrator sets it up in Workspace
+            This project has no mailbox yet. An administrator sets one up in the project’s Mailbox
             settings, then you can send from here.
           </Alert>
         )}
@@ -391,8 +391,8 @@ export function EmailComposer({
       </div>
       {!mailbox?.configured && (
         <Alert>
-          You can save drafts and templates now. An administrator must connect the workspace mailbox
-          in Settings before sending.
+          You can save drafts and templates now. An administrator must connect this project’s
+          mailbox before sending.
         </Alert>
       )}
       <div className="composer-head">

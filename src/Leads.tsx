@@ -358,7 +358,10 @@ export default function Leads({
                 <span className="filter-value">
                   {statusFilters(queue).find((o) => o.value === status)?.label || 'All leads'}
                 </span>
-                <ChevronDown size={15} className={'filter-caret ' + (filterOpen ? 'is-open' : '')} />
+                <ChevronDown
+                  size={15}
+                  className={'filter-caret ' + (filterOpen ? 'is-open' : '')}
+                />
               </button>
               {filterOpen && (
                 <div className="filter-dropdown" role="listbox">
@@ -673,7 +676,11 @@ export default function Leads({
                             ) : (
                               <>
                                 <Sparkles size={14} />
-                                {!ready ? 'Set up' : lead.latest_run_id ? 'Re-analyze' : 'Analyze with AI'}
+                                {!ready
+                                  ? 'Set up'
+                                  : lead.latest_run_id
+                                    ? 'Re-analyze'
+                                    : 'Analyze with AI'}
                               </>
                             )}
                           </button>

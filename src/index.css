@@ -252,6 +252,35 @@
   display: flex;
   align-items: center;
 }
+/* The project mailbox editor replaces the message list, so it keeps a single readable column. */
+.mailbox-settings {
+  max-width: 780px;
+}
+.mailbox-shared-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 17px 19px;
+  margin-bottom: 21px;
+  border: 1px solid #e7dcb8;
+  border-radius: 9px;
+  background: #fbf7e9;
+  color: #6f6134;
+}
+.mailbox-shared-notice > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #93803f;
+}
+.mailbox-shared-notice strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.mailbox-shared-notice p {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+}
 .mail-thread {
   padding: 18px 20px;
   background: white;

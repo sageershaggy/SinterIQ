@@ -201,7 +201,7 @@ const server = app.listen(3100, '127.0.0.1', async () => {
   const qualified = await api(base + '/leads?status=QUALIFIED');
   await api(base + '/funnels/' + funnel.id + '/enrollments', { lead_ids: [qualified.leads[0].id] });
   await api(
-    '/settings/email',
+    base + '/mailbox/email',
     {
       host: '8.8.8.8',
       port: 587,
@@ -242,7 +242,7 @@ const server = app.listen(3100, '127.0.0.1', async () => {
     body: 'Hello, we have a question about an upcoming project. Please connect us with the right team.\n\nSimulated QA fixture.',
   });
   await api(
-    '/settings/incoming',
+    base + '/mailbox/settings',
     {
       revision: 0,
       host: '8.8.8.8',
@@ -253,7 +253,7 @@ const server = app.listen(3100, '127.0.0.1', async () => {
     },
     'PUT',
   );
-  await api('/mailbox/sync', {});
+  await api(base + '/mailbox/sync', {});
   console.log('Disposable UI test server ready at http://127.0.0.1:3100');
 });
 function shutdown() {

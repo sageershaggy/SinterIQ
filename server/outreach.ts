@@ -88,8 +88,10 @@ export function createOutreach(db: DB, deliver: Send, publicOrigin: string) {
     const subject = options.subject.replace(/[\r\n]+/g, ' ').trim();
     if (!subject || subject.length > 400)
       throw new HttpError(400, 'Use a subject of 1–400 characters.');
+    // from_email is recorded so history still says who sent it after a project's mailbox changes.
     const record = db.prepare(`INSERT INTO email_messages
-      (project_id,lead_id,to_email,subject,body,status,error,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)`);
+      (project_id,lead_id,to_email,subject,body,status,error,created_by,created_at,from_email)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`);
     let pendingMessageId: number | undefined;
     const log = (status: 'SENT' | 'FAILED', error = '') => {
       if (
@@ -120,6 +122,7 @@ export function createOutreach(db: DB, deliver: Send, publicOrigin: string) {
           error,
           options.actor,
           now(),
+          options.config.from_email,
         ).lastInsertRowid,
       );
     };
@@ -135,8 +138,13 @@ export function createOutreach(db: DB, deliver: Send, publicOrigin: string) {
         if (!options.config.configured)
           throw new HttpError(
             409,
-            'No workspace mailbox is configured. Ask an administrator to configure it.',
+            'This project has no mailbox configured. Ask an administrator to configure it.',
           );
+        // Every send passes through here, so this is the one place worth asserting that the
+        // mailbox belongs to the project being sent for: a threading mistake upstream would
+        // otherwise send one project's mail from another project's address.
+        if (options.config.project_id !== options.projectId)
+          throw new HttpError(500, 'The mailbox does not belong to this project.');
         assertAddress(options.config.from_email, 'Sender');
         assertAddress(options.config.reply_to || options.config.from_email, 'Reply-to');
         if (options.config.copy_to) assertAddress(options.config.copy_to, 'Copy address');

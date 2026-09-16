@@ -1,10 +1,21 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Inbox, RefreshCw } from 'lucide-react';
 import type { IncomingSettings as Settings } from '../shared/mailbox';
+import type { Project } from '../shared/types';
 import { api, json } from './api';
 import { Alert, Badge, Spinner } from './ui';
 
-export function IncomingSettings({ notify }: { notify: (message: string) => void }) {
+export function IncomingSettings({
+  project,
+  notify,
+  onLoaded,
+}: {
+  project: Project;
+  notify: (message: string) => void;
+  /** Lets the surrounding editor react to what the server knows, such as a shared inbox. */
+  onLoaded?: (settings: Settings) => void;
+}) {
+  const base = '/projects/' + project.id + '/mailbox';
   const [settings, setSettings] = useState<Settings | null>(null);
   const [password, setPassword] = useState(''),
     [clear, setClear] = useState(false);
@@ -13,11 +24,12 @@ export function IncomingSettings({ notify }: { notify: (message: string) => void
   const [saved, setSaved] = useState('');
   useEffect(() => {
     let cancelled = false;
-    api<Settings>('/settings/incoming')
+    api<Settings>(base + '/settings')
       .then((value) => {
         if (!cancelled) {
           setSettings(value);
           setSaved(JSON.stringify(value));
+          onLoaded?.(value);
         }
       })
       .catch((e) => {
@@ -26,14 +38,16 @@ export function IncomingSettings({ notify }: { notify: (message: string) => void
     return () => {
       cancelled = true;
     };
-  }, []);
+    // Only the project drives a reload: onLoaded reports outwards, so treating it as an
+    // input would refetch on every parent render and discard an in-progress edit.
+  }, [base]);
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!settings) return;
     setBusy(true);
     setError('');
     try {
-      const result = await api<Settings>('/settings/incoming', {
+      const result = await api<Settings>(base + '/settings', {
         method: 'PUT',
         body: json({
           revision: settings.revision,
@@ -49,9 +63,10 @@ export function IncomingSettings({ notify }: { notify: (message: string) => void
       setSaved(JSON.stringify(result));
       setPassword('');
       setClear(false);
+      onLoaded?.(result);
       notify(
         result.enabled
-          ? 'Incoming mail enabled. Sync now to verify the connection.'
+          ? 'Incoming mail enabled for ' + project.name + '. Sync now to verify the connection.'
           : 'Incoming settings saved. Sync is off.',
       );
     } catch (e) {
@@ -71,8 +86,8 @@ export function IncomingSettings({ notify }: { notify: (message: string) => void
         </Badge>
       </div>
       <p className="muted">
-        Connect the inbox that receives replies to your outgoing emails. Messages appear in Mailbox
-        and matched replies appear on their lead.
+        Connect the inbox that receives replies to email sent from {project.name}. Messages appear
+        in this project’s mailbox and matched replies appear on their lead.
       </p>
       {error && <Alert>{error}</Alert>}
       {!settings ? (
@@ -165,9 +180,6 @@ export function IncomingSettings({ notify }: { notify: (message: string) => void
             )}
             {settings.last_error && <Alert>{settings.last_error}</Alert>}
             <div className="form-actions">
-              <a className="button secondary" href="#mailbox">
-                Open mailbox
-              </a>
               <button
                 className="button secondary"
                 type="button"
@@ -178,12 +190,13 @@ export function IncomingSettings({ notify }: { notify: (message: string) => void
                   setBusy(true);
                   setError('');
                   try {
-                    const result = await api<{ received: number }>('/mailbox/sync', {
+                    const result = await api<{ received: number }>(base + '/sync', {
                       method: 'POST',
                     });
-                    const current = await api<Settings>('/settings/incoming');
+                    const current = await api<Settings>(base + '/settings');
                     setSettings(current);
                     setSaved(JSON.stringify(current));
+                    onLoaded?.(current);
                     notify(`Connection verified. ${result.received} new messages received.`);
                   } catch (e) {
                     setError((e as Error).message);

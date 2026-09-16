@@ -55,6 +55,7 @@ import {
   getEmailConfig,
   publicEmailSettings,
   renderEmail,
+  saveEmailConfig,
   sendMail,
   type Send,
 } from './email';
@@ -1647,11 +1648,25 @@ export function createApp(options: {
     })();
     res.json(publicSettings(getAiConfig(db, secrets)));
   });
-  app.get('/api/settings/email', adminOnly, (_req, res) =>
-    res.json(publicEmailSettings(getEmailConfig(db, secrets))),
-  );
-  app.put('/api/settings/email', adminOnly, async (req, res) => {
+  /** Every project sends from its own mailbox, so these routes are project-scoped. */
+  app.get('/api/projects/:projectId/mailbox/email', adminOnly, (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    res.json(publicEmailSettings(getEmailConfig(db, secrets, project.id)));
+  });
+  app.put('/api/projects/:projectId/mailbox/email', adminOnly, async (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
     const input = emailSettingsSchema.parse(req.body);
+    // Keeping the stored password while pointing the host elsewhere would hand the mailbox
+    // credential to whatever host was just typed in.
+    const current = getEmailConfig(db, secrets, project.id);
+    if (
+      (input.host.trim().toLowerCase() !== current.host.trim().toLowerCase() ||
+        input.username !== current.username) &&
+      current.has_password &&
+      !input.password &&
+      !input.clear_password
+    )
+      throw new HttpError(400, 'Enter a new password when changing the host or account.');
     if (input.host) await assertMailHost(input.host, input.port);
     if (input.from_email) assertAddress(input.from_email, 'The sender address');
     if (input.reply_to) assertAddress(input.reply_to, 'The reply-to address');
@@ -1659,41 +1674,49 @@ export function createApp(options: {
     if (input.host && !input.from_email)
       throw new HttpError(400, 'A sender address is required — recipients must see who sent it.');
     db.transaction(() => {
-      const save = db.prepare(
-        'INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-      );
-      save.run('smtp_host', input.host);
-      save.run('smtp_port', String(input.port));
-      save.run('smtp_secure', input.secure ? '1' : '0');
-      save.run('smtp_username', input.username);
-      save.run('smtp_from_name', input.from_name);
-      save.run('smtp_from_email', input.from_email);
-      save.run('smtp_reply_to', input.reply_to);
-      save.run('smtp_copy_to', input.copy_to);
-      save.run('smtp_signature', input.signature);
-      if (input.clear_password) save.run('smtp_password', '');
-      else if (input.password) save.run('smtp_password', secrets.encrypt(input.password));
-      audit(db, null, req.user.name, 'settings.email_updated', 'Workspace mailbox updated.');
+      saveEmailConfig(db, project.id, {
+        host: input.host,
+        port: input.port,
+        secure: input.secure,
+        username: input.username,
+        from_name: input.from_name,
+        from_email: input.from_email,
+        reply_to: input.reply_to,
+        copy_to: input.copy_to,
+        signature: input.signature,
+        // Undefined keeps the stored secret; null clears it.
+        password: input.clear_password
+          ? null
+          : input.password
+            ? secrets.encrypt(input.password)
+            : undefined,
+      });
+      audit(db, project.id, req.user.name, 'settings.email_updated', 'Project mailbox updated.');
     })();
-    res.json(publicEmailSettings(getEmailConfig(db, secrets)));
+    res.json(publicEmailSettings(getEmailConfig(db, secrets, project.id)));
   });
-  /** Sends to the configured sender address, so setup can be proven before any lead is mailed. */
-  app.post('/api/settings/email/test', adminOnly, expensiveLimit, async (req, res) => {
-    const config = getEmailConfig(db, secrets);
-    if (!config.configured)
-      throw new HttpError(409, 'Save the mailbox settings with a password first.');
-    await single('email-test', () =>
-      deliver(config, {
-        to: config.from_email,
-        subject: 'Innovista Research AI — mailbox test',
-        text: 'Your workspace mailbox is configured correctly.',
-        html: '<p>Your workspace mailbox is configured correctly.</p>',
-        replyTo: config.reply_to || config.from_email,
-      }),
-    );
-    audit(db, null, req.user.name, 'settings.email_tested', 'Test message sent.');
-    res.json({ ok: true, sent_to: config.from_email });
-  });
+  /** Sends to the project's own sender address, so setup is proven before any lead is mailed. */
+  app.post(
+    '/api/projects/:projectId/mailbox/email/test',
+    adminOnly,
+    expensiveLimit,
+    async (req, res) => {
+      const project = getProject(db, positiveId(req.params.projectId), req.user);
+      const config = getEmailConfig(db, secrets, project.id);
+      if (!config.configured) throw new HttpError(409, 'Save this mailbox with a password first.');
+      await single('email-test:' + project.id, () =>
+        deliver(config, {
+          to: config.from_email,
+          subject: 'Innovista Research AI — mailbox test',
+          text: 'The mailbox for ' + project.name + ' is configured correctly.',
+          html: '<p>This project mailbox is configured correctly.</p>',
+          replyTo: config.reply_to || config.from_email,
+        }),
+      );
+      audit(db, project.id, req.user.name, 'settings.email_tested', 'Test message sent.');
+      res.json({ ok: true, sent_to: config.from_email });
+    },
+  );
   /** The draft a researcher edits before sending, built from the approved qualification. */
   app.get('/api/projects/:projectId/leads/:leadId/email/draft', (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
@@ -1709,7 +1732,7 @@ export function createApp(options: {
       to: lead.contact_email,
       saved: savedDraft(db, project.id, lead.id, req.user.id),
       mailbox: (() => {
-        const config = getEmailConfig(db, secrets);
+        const config = getEmailConfig(db, secrets, project.id);
         return {
           configured: config.configured,
           from_email: config.from_email,
@@ -1722,11 +1745,11 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
     const input = emailSendSchema.parse(req.body);
-    const config = getEmailConfig(db, secrets);
+    const config = getEmailConfig(db, secrets, project.id);
     if (!config.configured)
       throw new HttpError(
         409,
-        'No workspace mailbox is configured. An administrator sets it up in Workspace settings.',
+        'This project has no mailbox yet. An administrator sets one up in the project Mailbox settings.',
       );
     // One header-safe recipient per request. Bulk sending is a separate, throttled path.
     const to = assertAddress(input.to, 'The recipient address');
@@ -1841,7 +1864,7 @@ export function createApp(options: {
     const { blocks, problems } = validateBlocks(input.blocks);
     if (!blocks.length)
       return void res.json({ html: '', text: '', warnings: [], block_problems: problems });
-    const config = getEmailConfig(db, secrets);
+    const config = getEmailConfig(db, secrets, project.id);
     const rendered = renderBlocks(blocks, {
       context: mergeContext(lead, config.from_name || req.user.name),
       fromName: config.from_name,

@@ -1,4 +1,4 @@
-import type { Express } from 'express';
+import type { Express, Request } from 'express';
 import { z } from 'zod';
 import { adminOnly } from './auth';
 import { audit, hash, now, type DB, type Secrets } from './database';
@@ -57,12 +57,26 @@ export function createMailbox(options: {
 }) {
   const { db, secrets, getProject } = options;
   const receive = options.readInbox || readInbox;
-  let running: Promise<{ received: number }> | null = null;
-  function stored(): StoredSettings {
-    const row = db.prepare("SELECT value FROM settings WHERE key='imap_config'").get() as
-      { value: string } | undefined;
+  // Single-flight per project: one project's slow provider must not block another's poll.
+  const running = new Map<number, Promise<{ received: number }>>();
+  function stored(projectId: number): StoredSettings {
+    const row = db
+      .prepare(
+        `SELECT imap_host host,imap_username username,imap_password password,imap_folder folder,
+          imap_enabled enabled,imap_enabled_by enabled_by,revision,last_sync,last_error
+        FROM project_mailboxes WHERE project_id=?`,
+      )
+      .get(projectId) as
+      | (InboxConfig & {
+          enabled: number;
+          enabled_by: number;
+          revision: number;
+          last_sync: string;
+          last_error: string;
+        })
+      | undefined;
     return row
-      ? JSON.parse(row.value)
+      ? { ...row, enabled: Boolean(row.enabled) }
       : {
           revision: 0,
           host: '',
@@ -75,14 +89,29 @@ export function createMailbox(options: {
           last_error: '',
         };
   }
-  function save(config: StoredSettings) {
-    db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES('imap_config',?)").run(
-      JSON.stringify(config),
+  function save(projectId: number, config: StoredSettings) {
+    db.prepare('INSERT OR IGNORE INTO project_mailboxes(project_id) VALUES(?)').run(projectId);
+    db.prepare(
+      `UPDATE project_mailboxes SET imap_host=?,imap_username=?,imap_password=?,imap_folder=?,
+        imap_enabled=?,imap_enabled_by=?,revision=?,last_sync=?,last_error=? WHERE project_id=?`,
+    ).run(
+      config.host,
+      config.username,
+      config.password,
+      config.folder,
+      config.enabled ? 1 : 0,
+      config.enabled_by,
+      config.revision,
+      config.last_sync,
+      config.last_error,
+      projectId,
     );
   }
-  function publicSettings(): IncomingSettings {
-    const c = stored();
+  function publicSettings(projectId: number): IncomingSettings {
+    const c = stored(projectId);
     return {
+      project_id: projectId,
+      shared_with: c.host ? sharedWith(projectId, c.host, c.username).map((p) => p.name) : [],
       host: c.host,
       username: c.username,
       folder: c.folder,
@@ -92,6 +121,15 @@ export function createMailbox(options: {
       last_sync: c.last_sync,
       last_error: c.last_error,
     };
+  }
+  /** Another project already polling the same inbox would ingest its own copy of every message. */
+  function sharedWith(projectId: number, host: string, username: string) {
+    return db
+      .prepare(
+        `SELECT p.name FROM project_mailboxes m JOIN projects p ON p.id=m.project_id
+        WHERE m.project_id!=? AND m.imap_enabled=1 AND lower(m.imap_host)=? AND lower(m.imap_username)=?`,
+      )
+      .all(projectId, host.toLowerCase(), username.toLowerCase()) as Array<{ name: string }>;
   }
   function requireLead(projectId: number, leadId: number, user: User) {
     getProject(db, projectId, user);
@@ -131,11 +169,11 @@ export function createMailbox(options: {
     ).run(now(), mail.from_email, mail.received_at);
     notifyLead(db, projectId, leadId, 'email', 'New email reply received');
   }
-  async function runSync() {
-    const config = stored();
+  async function runSync(projectId: number) {
+    const config = stored(projectId);
     if (!config.enabled) return { received: 0 };
     const stillAuthorized = () => {
-      if (stored().revision !== config.revision)
+      if (stored(projectId).revision !== config.revision)
         throw new HttpError(
           409,
           'Mailbox settings changed during sync. Retry with the current settings.',
@@ -147,10 +185,14 @@ export function createMailbox(options: {
       )
         throw new HttpError(409, 'An administrator must enable this connection again.');
     };
-    const accountKey = hash(JSON.stringify([config.host, config.username, config.folder]));
+    // The project is part of the identity, so two projects on one inbox keep separate
+    // histories and separate resume points instead of fighting over one cursor.
+    const accountKey = hash(
+      JSON.stringify([projectId, config.host, config.username, config.folder]),
+    );
     const cursor = db
-      .prepare('SELECT uid_validity,last_uid FROM mailbox_cursors WHERE account_key=?')
-      .get(accountKey) as InboxCursor | undefined;
+      .prepare('SELECT uid_validity,last_uid FROM project_mailbox_cursors WHERE project_id=?')
+      .get(projectId) as InboxCursor | undefined;
     try {
       stillAuthorized();
       const batch = await receive(
@@ -166,19 +208,23 @@ export function createMailbox(options: {
             mail.message_id &&
             db
               .prepare(
-                `SELECT 1 FROM incoming_messages WHERE account_key=? AND internet_message_id=?
+                // Keyed on the project rather than on account_key: mail received before
+                // mailboxes became per project carries the old key shape, so keying on the
+                // hash would leave all of it unprotected the next time UID validity changes.
+                `SELECT 1 FROM incoming_messages WHERE mailbox_project_id=? AND internet_message_id=?
             AND from_email=? AND received_at=? AND subject=?`,
               )
-              .get(accountKey, mail.message_id, mail.from_email, mail.received_at, mail.subject)
+              .get(projectId, mail.message_id, mail.from_email, mail.received_at, mail.subject)
           )
             continue;
           const inserted = db
             .prepare(
               `INSERT OR IGNORE INTO incoming_messages
-            (account_key,uid_validity,uid,internet_message_id,references_json,from_email,from_name,to_email,subject,body,received_at,attachment_count,notice,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            (mailbox_project_id,account_key,uid_validity,uid,internet_message_id,references_json,from_email,from_name,to_email,subject,body,received_at,attachment_count,notice,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .run(
+              projectId,
               accountKey,
               batch.uid_validity,
               mail.uid,
@@ -199,13 +245,15 @@ export function createMailbox(options: {
           // Match an app-generated unpredictable Message-ID AND its original recipient. No guessed contact matching.
           const matches = new Map<string, { project_id: number; lead_id: number }>();
           for (const reference of mail.references) {
+            // Only this project's own sent mail can claim the reply: a mailbox must never
+            // link a message to a lead in a project it does not belong to.
             const rows = db
               .prepare(
                 `SELECT DISTINCT m.project_id,m.lead_id FROM email_messages m
               JOIN leads l ON l.project_id=m.project_id AND l.id=m.lead_id
-              WHERE m.internet_message_id=? AND lower(trim(m.to_email))=? AND m.created_at<=?`,
+              WHERE m.project_id=? AND m.internet_message_id=? AND lower(trim(m.to_email))=? AND m.created_at<=?`,
               )
-              .all(reference, mail.from_email, mail.received_at) as Array<{
+              .all(projectId, reference, mail.from_email, mail.received_at) as Array<{
               project_id: number;
               lead_id: number;
             }>;
@@ -217,9 +265,9 @@ export function createMailbox(options: {
           }
         }
         db.prepare(
-          'INSERT OR REPLACE INTO mailbox_cursors(account_key,uid_validity,last_uid) VALUES(?,?,?)',
-        ).run(accountKey, batch.uid_validity, batch.last_uid);
-        save({ ...config, last_sync: now(), last_error: '' });
+          'INSERT OR REPLACE INTO project_mailbox_cursors(project_id,uid_validity,last_uid) VALUES(?,?,?)',
+        ).run(projectId, batch.uid_validity, batch.last_uid);
+        save(projectId, { ...config, last_sync: now(), last_error: '' });
         return { received };
       })();
     } catch (error) {
@@ -227,22 +275,46 @@ export function createMailbox(options: {
         error instanceof HttpError
           ? error.message
           : 'Incoming connection failed. Check the IMAP host, account password and provider settings.';
-      if (stored().revision === config.revision) save({ ...config, last_error: message });
+      if (stored(projectId).revision === config.revision)
+        save(projectId, { ...config, last_error: message });
       throw new HttpError(error instanceof HttpError ? error.status : 502, message);
     }
   }
-  function sync() {
-    if (!running)
-      running = runSync().finally(() => {
-        running = null;
-      });
-    return running;
+  function sync(projectId: number) {
+    const inflight = running.get(projectId);
+    if (inflight) return inflight;
+    const started = runSync(projectId).finally(() => running.delete(projectId));
+    running.set(projectId, started);
+    return started;
+  }
+  /**
+   * Polls every project whose mailbox is enabled. One project's failing provider is reported
+   * and skipped rather than stopping the rest of the workspace.
+   */
+  async function syncAll() {
+    const projects = db
+      .prepare('SELECT project_id FROM project_mailboxes WHERE imap_enabled=1 ORDER BY project_id')
+      .all() as Array<{ project_id: number }>;
+    let received = 0;
+    const failures: string[] = [];
+    for (const { project_id } of projects)
+      try {
+        received += (await sync(project_id)).received;
+      } catch (error) {
+        failures.push(
+          'project ' + project_id + ': ' + (error instanceof Error ? error.message : 'sync failed'),
+        );
+      }
+    return { received, failures };
   }
   function install(app: Express) {
-    app.get('/api/settings/incoming', adminOnly, (_req, res) => res.json(publicSettings()));
-    app.put('/api/settings/incoming', adminOnly, async (req, res) => {
+    const base = '/api/projects/:projectId/mailbox';
+    const owner = (req: Request) => getProject(db, positiveId(req.params.projectId), req.user);
+    app.get(base + '/settings', adminOnly, (req, res) => res.json(publicSettings(owner(req).id)));
+    app.put(base + '/settings', adminOnly, async (req, res) => {
+      const project = owner(req);
       const input = settingsSchema.parse(req.body),
-        current = stored();
+        current = stored(project.id);
       if (input.revision !== current.revision)
         throw new HttpError(409, 'Mailbox settings changed. Reload before saving.');
       const host = input.host.toLowerCase();
@@ -264,7 +336,7 @@ export function createMailbox(options: {
           'Enter the IMAP host, username and password before enabling incoming mail.',
         );
       if (host) await resolveMailHost(host);
-      if (stored().revision !== current.revision)
+      if (stored(project.id).revision !== current.revision)
         throw new HttpError(409, 'Mailbox settings changed. Reload before saving.');
       if (
         !db
@@ -272,7 +344,15 @@ export function createMailbox(options: {
           .get(req.user.id)
       )
         throw new HttpError(403, 'Administrator access required.');
-      save({
+      // A UID cursor belongs to one account and folder. Resuming a different inbox at that
+      // UID would silently skip every message below it, so repointing starts clean.
+      if (
+        host !== current.host ||
+        input.username !== current.username ||
+        input.folder !== current.folder
+      )
+        db.prepare('DELETE FROM project_mailbox_cursors WHERE project_id=?').run(project.id);
+      save(project.id, {
         host,
         username: input.username,
         folder: input.folder,
@@ -285,17 +365,18 @@ export function createMailbox(options: {
       });
       audit(
         db,
-        null,
+        project.id,
         req.user.name,
         'mailbox.incoming_settings',
         input.enabled ? 'Incoming sync enabled.' : 'Incoming sync disabled.',
       );
-      res.json(publicSettings());
+      res.json(publicSettings(project.id));
     });
-    app.post('/api/mailbox/sync', adminOnly, async (req, res) => {
-      if (!stored().enabled)
-        throw new HttpError(409, 'Enable incoming mail in Workspace settings first.');
-      const result = await sync();
+    app.post(base + '/sync', adminOnly, async (req, res) => {
+      const project = owner(req);
+      if (!stored(project.id).enabled)
+        throw new HttpError(409, 'Enable incoming mail for this project first.');
+      const result = await sync(project.id);
       if (
         !db
           .prepare("SELECT 1 FROM accounts WHERE id=? AND active=1 AND role='admin'")
@@ -304,7 +385,8 @@ export function createMailbox(options: {
         throw new HttpError(403, 'Administrator access required.');
       res.json(result);
     });
-    app.get('/api/mailbox', adminOnly, (req, res) => {
+    app.get(base, adminOnly, (req, res) => {
+      const project = owner(req);
       const folder = z
         .enum(['inbox', 'outbox', 'sent', 'drafts'])
         .parse(req.query.folder || 'inbox');
@@ -322,23 +404,25 @@ export function createMailbox(options: {
       const sql: Record<MailFolder, string> = {
         inbox: `SELECT i.id,'incoming' AS kind,i.project_id,i.lead_id,l.name AS company,i.from_email AS address,
           i.subject,i.body,CASE WHEN i.read_at IS NULL THEN 'UNREAD' ELSE 'READ' END AS status,
-          i.received_at AS timestamp,i.notice FROM incoming_messages i LEFT JOIN leads l ON l.project_id=i.project_id AND l.id=i.lead_id`,
+          i.received_at AS timestamp,i.notice FROM incoming_messages i LEFT JOIN leads l ON l.project_id=i.project_id AND l.id=i.lead_id
+          WHERE i.mailbox_project_id=${project.id}`,
         sent: `SELECT m.id,'outgoing' AS kind,m.project_id,m.lead_id,l.name AS company,m.to_email AS address,
           m.subject,m.body,m.status,m.created_at AS timestamp,m.error AS notice FROM email_messages m
-          JOIN leads l ON l.project_id=m.project_id AND l.id=m.lead_id WHERE m.status='SENT'`,
+          JOIN leads l ON l.project_id=m.project_id AND l.id=m.lead_id WHERE m.status='SENT' AND m.project_id=${project.id}`,
         outbox: `SELECT m.id,'outgoing' AS kind,m.project_id,m.lead_id,l.name AS company,m.to_email AS address,
           m.subject,m.body,COALESCE(d.status,m.status) AS status,m.created_at AS timestamp,m.error AS notice
           FROM email_messages m JOIN leads l ON l.project_id=m.project_id AND l.id=m.lead_id
-          LEFT JOIN email_deliveries d ON d.project_id=m.project_id AND d.lead_id=m.lead_id AND d.message_id=m.id WHERE m.status!='SENT'
+          LEFT JOIN email_deliveries d ON d.project_id=m.project_id AND d.lead_id=m.lead_id AND d.message_id=m.id WHERE m.status!='SENT' AND m.project_id=${project.id}
           UNION ALL SELECT e.id,'queue',e.project_id,e.lead_id,l.name,e.recipient,f.name,'',
           CASE WHEN f.status='ACTIVE' THEN e.status ELSE f.status END,
           strftime('%Y-%m-%dT%H:%M:%fZ',e.next_send_at/1000.0,'unixepoch'),e.reason
           FROM funnel_enrollments e JOIN funnels f ON f.project_id=e.project_id AND f.id=e.funnel_id
-          JOIN leads l ON l.project_id=e.project_id AND l.id=e.lead_id WHERE e.status='QUEUED'`,
+          JOIN leads l ON l.project_id=e.project_id AND l.id=e.lead_id WHERE e.status='QUEUED' AND e.project_id=${project.id}`,
         drafts: `SELECT d.lead_id AS id,'draft' AS kind,d.project_id,d.lead_id,l.name AS company,
           json_extract(d.document_json,'$.to') AS address,json_extract(d.document_json,'$.subject') AS subject,
           '' AS body,'DRAFT' AS status,d.updated_at AS timestamp,'' AS notice FROM email_drafts d
-          JOIN leads l ON l.project_id=d.project_id AND l.id=d.lead_id WHERE d.account_id=${req.user.id}`,
+          JOIN leads l ON l.project_id=d.project_id AND l.id=d.lead_id
+          WHERE d.account_id=${req.user.id} AND d.project_id=${project.id}`,
       };
       const counts = Object.fromEntries(
         Object.entries(sql).map(([key, value]) => [
@@ -354,33 +438,38 @@ export function createMailbox(options: {
         items,
         counts,
         total: (db.prepare('SELECT count(*) AS n' + filtered).get(query) as { n: number }).n,
-        incoming: publicSettings(),
-        outgoing_configured: getEmailConfig(db, secrets).configured,
+        incoming: publicSettings(project.id),
+        outgoing_configured: getEmailConfig(db, secrets, project.id).configured,
       });
     });
-    app.post('/api/mailbox/incoming/:id/read', adminOnly, (req, res) => {
+    app.post(base + '/incoming/:id/read', adminOnly, (req, res) => {
+      const project = owner(req);
       if (
         !db
-          .prepare('UPDATE incoming_messages SET read_at=COALESCE(read_at,?) WHERE id=?')
-          .run(now(), positiveId(req.params.id)).changes
+          .prepare(
+            'UPDATE incoming_messages SET read_at=COALESCE(read_at,?) WHERE id=? AND mailbox_project_id=?',
+          )
+          .run(now(), positiveId(req.params.id), project.id).changes
       )
         throw new HttpError(404, 'Message not found.');
       res.json({ ok: true });
     });
-    app.post('/api/mailbox/incoming/:id/link', adminOnly, (req, res) => {
-      const input = z
-        .object({ project_id: z.number().int().positive(), lead_id: z.number().int().positive() })
-        .strict()
-        .parse(req.body);
-      requireLead(input.project_id, input.lead_id, req.user);
+    app.post(base + '/incoming/:id/link', adminOnly, (req, res) => {
+      const project = owner(req);
+      const input = z.object({ lead_id: z.number().int().positive() }).strict().parse(req.body);
+      // The lead must live in the project whose mailbox received the message: linking is
+      // never a way to move mail across the project boundary.
+      requireLead(project.id, input.lead_id, req.user);
       const id = positiveId(req.params.id);
       const mail = db
-        .prepare('SELECT from_email,received_at,project_id FROM incoming_messages WHERE id=?')
-        .get(id) as
+        .prepare(
+          'SELECT from_email,received_at,project_id FROM incoming_messages WHERE id=? AND mailbox_project_id=?',
+        )
+        .get(id, project.id) as
         { from_email: string; received_at: string; project_id: number | null } | undefined;
       if (!mail) throw new HttpError(404, 'Message not found.');
       if (mail.project_id !== null) throw new HttpError(409, 'This message is already linked.');
-      db.transaction(() => linkedReply(id, input.project_id, input.lead_id, mail))();
+      db.transaction(() => linkedReply(id, project.id, input.lead_id, mail))();
       res.json({ ok: true });
     });
     app.get('/api/projects/:projectId/leads/:leadId/incoming', (req, res) => {
@@ -403,5 +492,5 @@ export function createMailbox(options: {
       );
     });
   }
-  return { install, sync };
+  return { install, sync, syncAll };
 }
