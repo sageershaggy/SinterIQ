@@ -108,10 +108,11 @@ function columnIndex(reference: string) {
   return index - 1;
 }
 function readZipEntries(buffer: Buffer, wanted: (name: string) => boolean) {
-  return new Promise<Record<string, string>>((resolve, reject) => {
+  return new Promise<{ files: Record<string, string>; names: string[] }>((resolve, reject) => {
     yauzl.fromBuffer(buffer, { lazyEntries: true }, (error, zip) => {
       if (error || !zip) return reject(new HttpError(400, 'That file is not a readable workbook.'));
       const found: Record<string, string> = {};
+      const names: string[] = [];
       let total = 0,
         entries = 0;
       zip.on('error', () => reject(new HttpError(400, 'That workbook could not be read.')));
@@ -123,6 +124,7 @@ function readZipEntries(buffer: Buffer, wanted: (name: string) => boolean) {
           zip.close();
           return reject(new HttpError(413, 'That workbook exceeds the supported size.'));
         }
+        names.push(entry.fileName);
         if (!wanted(entry.fileName)) return zip.readEntry();
         zip.openReadStream(entry, (streamError, stream) => {
           if (streamError || !stream)
@@ -144,10 +146,46 @@ function readZipEntries(buffer: Buffer, wanted: (name: string) => boolean) {
           });
         });
       });
-      zip.on('end', () => resolve(found));
+      zip.on('end', () => resolve({ files: found, names }));
       zip.readEntry();
     });
   });
+}
+/** A relationship target ("worksheets/sheet4.xml") as a part name inside the archive. */
+function partName(target: string) {
+  const cleaned = target.replace(/^\.\//, '');
+  if (cleaned.startsWith('/')) return cleaned.slice(1);
+  // Workbook relationship targets are relative to the workbook's own directory.
+  const segments: string[] = [];
+  for (const segment of ('xl/' + cleaned).split('/'))
+    if (segment === '..') segments.pop();
+    else if (segment && segment !== '.') segments.push(segment);
+  return segments.join('/');
+}
+/**
+ * The part holding the workbook's first worksheet. It is only called sheet1.xml in a
+ * workbook nobody has touched: Excel keeps a part's original name when sheets are added,
+ * renamed or reordered, so the ordered <sheet> list in xl/workbook.xml has to be resolved
+ * through the workbook relationships. Where those parts are missing or unreadable, the
+ * lowest-numbered worksheet is the best guess left.
+ */
+function firstWorksheet(workbook: string | undefined, rels: string | undefined, names: string[]) {
+  const sheetNumber = (name: string) =>
+    Number(/(\d+)\.xml$/.exec(name)?.[1] ?? Number.MAX_SAFE_INTEGER);
+  const worksheets = names
+    .filter((name) => /^xl\/worksheets\/[^/]+\.xml$/.test(name))
+    .sort((a, b) => sheetNumber(a) - sheetNumber(b) || a.localeCompare(b));
+  // Any prefix, because a generator may bind the relationship namespace under its own name.
+  const relationship = /<(?:\w+:)?sheet\s[^>]*?\b\w+:id="([^"]+)"/.exec(workbook || '')?.[1];
+  // Matched by scanning rather than by a built regex: the archive is untrusted, and an id
+  // interpolated into a pattern is an id that can rewrite the pattern.
+  const target = relationship
+    ? [...(rels || '').matchAll(/<(?:\w+:)?Relationship\s[^>]*?>/g)].find(
+        (match) => /\bId="([^"]*)"/.exec(match[0])?.[1] === relationship,
+      )?.[0]
+    : undefined;
+  const resolved = target && partName(unescapeXml(/\bTarget="([^"]*)"/.exec(target)?.[1] || ''));
+  return resolved && worksheets.includes(resolved) ? resolved : worksheets[0];
 }
 /**
  * Reads the first worksheet of an XLSX. Parsed here rather than through a spreadsheet
@@ -156,17 +194,28 @@ function readZipEntries(buffer: Buffer, wanted: (name: string) => boolean) {
 export async function parseWorkbook(buffer: Buffer) {
   if (!buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])))
     throw new HttpError(400, 'That file is not a valid .xlsx workbook.');
-  const files = await readZipEntries(
+  // Which part is the first worksheet is only known once the workbook index has been read,
+  // so the archive is walked again for that one part rather than held in memory wholesale.
+  const index = await readZipEntries(
     buffer,
-    (name) => name === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet1\.xml$/.test(name),
+    (name) =>
+      name === 'xl/sharedStrings.xml' ||
+      name === 'xl/workbook.xml' ||
+      name === 'xl/_rels/workbook.xml.rels',
   );
-  const sheet = files['xl/worksheets/sheet1.xml'];
+  const part = firstWorksheet(
+    index.files['xl/workbook.xml'],
+    index.files['xl/_rels/workbook.xml.rels'],
+    index.names,
+  );
+  const sheet = part ? (await readZipEntries(buffer, (name) => name === part)).files[part] : '';
   if (!sheet) throw new HttpError(400, 'That workbook has no readable first worksheet.');
-  const shared = [...(files['xl/sharedStrings.xml'] || '').matchAll(/<si>([\s\S]*?)<\/si>/g)].map(
-    (match) =>
-      unescapeXml(
-        [...match[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((piece) => piece[1]).join(''),
-      ),
+  const shared = [
+    ...(index.files['xl/sharedStrings.xml'] || '').matchAll(/<si>([\s\S]*?)<\/si>/g),
+  ].map((match) =>
+    unescapeXml(
+      [...match[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((piece) => piece[1]).join(''),
+    ),
   );
   const rows: string[][] = [];
   for (const rowMatch of sheet.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {

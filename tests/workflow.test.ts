@@ -2718,3 +2718,88 @@ test('a citation has to contain the value it is offered for', () => {
     false,
   );
 });
+
+test('the gap filters find the leads worth researching, and the export agrees with the list', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const leads = '/projects/' + project.id + '/leads';
+    const complete = await f.post(leads, {
+      name: 'Complete Pumps',
+      website: 'https://complete-pumps.example.com',
+      industry: 'pump manufacturing',
+      country: 'Netherlands',
+      city: 'Rotterdam',
+    });
+    assert.equal(complete.status, 201, JSON.stringify(complete.body));
+    const noSite = await f.post(leads, {
+      name: 'Blank Site Trading',
+      industry: 'bearing distribution',
+      country: 'United Arab Emirates',
+      city: 'Dubai',
+    });
+    assert.equal(noSite.status, 201, JSON.stringify(noSite.body));
+    const noPlace = await f.post(leads, {
+      name: 'Placeless Maintenance',
+      website: 'https://placeless.example.com',
+      industry: 'maintenance',
+    });
+    assert.equal(noPlace.status, 201, JSON.stringify(noPlace.body));
+
+    const names = async (status: string) =>
+      (
+        (await f.agent.get('/api' + leads + '?status=' + status)).body.leads as Lead[]
+      )
+        .map((lead) => lead.name)
+        .sort();
+    // Only the lead with no website at all.
+    assert.deepEqual(await names('NO_WEBSITE'), ['Blank Site Trading']);
+    // A missing website, industry, or both city and country. Not "any blank field": the complete
+    // lead has no contact role either, and it must not appear here.
+    assert.deepEqual(await names('NEEDS_RESEARCH'), [
+      'Blank Site Trading',
+      'Placeless Maintenance',
+    ]);
+    assert.deepEqual(await names('ALL'), [
+      'Blank Site Trading',
+      'Complete Pumps',
+      'Placeless Maintenance',
+    ]);
+    // The export shares leadFilter, so it must select exactly the same rows.
+    const exported = await f.agent.get('/api' + leads + '/export?status=NEEDS_RESEARCH');
+    assert.equal(exported.status, 200, exported.text);
+    assert.ok(exported.text.includes('Blank Site Trading'), exported.text);
+    assert.ok(exported.text.includes('Placeless Maintenance'), exported.text);
+    assert.ok(!exported.text.includes('Complete Pumps'), exported.text);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a duplicate is still caught by name or by website after the probe was split in two', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const leads = '/projects/' + project.id + '/leads';
+    assert.equal((await f.post(leads, { name: 'Meridian Vacuum', website: 'https://meridian.example.com' })).status, 201);
+    // Same name, no website.
+    const byName = await f.post(leads, { name: 'meridian vacuum' });
+    assert.equal(byName.status, 409, byName.text);
+    // Same website, a different name — this is the half an OR-to-AND mistake would silently lose.
+    const byWebsite = await f.post(leads, {
+      name: 'Something Else Entirely',
+      website: 'https://meridian.example.com',
+    });
+    assert.equal(byWebsite.status, 409, byWebsite.text);
+    // A lead with neither key in common is accepted.
+    assert.equal(
+      (await f.post(leads, { name: 'Unrelated Works', website: 'https://unrelated.example.com' }))
+        .status,
+      201,
+    );
+  } finally {
+    f.dispose();
+  }
+});

@@ -31,7 +31,9 @@ export default function Settings({
     [clearKey, setClearKey] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]),
     [adding, setAdding] = useState(false),
-    [assigning, setAssigning] = useState<Account | null>(null);
+    [assigning, setAssigning] = useState<Account | null>(null),
+    // Held only until the administrator closes the dialog: the server will not show it again.
+    [issued, setIssued] = useState<{ name: string; password: string } | null>(null);
   const [busy, setBusy] = useState(''),
     [error, setError] = useState('');
   const loadUsers = () => api<typeof accounts>('/users').then(setAccounts);
@@ -352,6 +354,30 @@ export default function Settings({
                       Assign projects
                     </button>
                   )}
+                  {account.id !== user.id && account.active && (
+                    <button
+                      className="text-button"
+                      disabled={!!busy}
+                      onClick={async () => {
+                        setBusy('users');
+                        setError('');
+                        try {
+                          const result = await api<{ name: string; password: string }>(
+                            '/users/' + account.id + '/password',
+                            { method: 'POST' },
+                          );
+                          setIssued({ name: result.name, password: result.password });
+                        } catch (e) {
+                          setError((e as Error).message);
+                        } finally {
+                          setBusy('');
+                        }
+                      }}
+                    >
+                      <LockKeyhole size={15} />
+                      Reset password
+                    </button>
+                  )}
                   {account.id !== user.id && (
                     <button
                       className="text-button"
@@ -360,14 +386,14 @@ export default function Settings({
                         setBusy('users');
                         setError('');
                         try {
-                          await api('/users/' + account.id, {
+                          const result = await api<{ released: number }>('/users/' + account.id, {
                             method: 'PATCH',
                             body: json({ active: !account.active }),
                           });
                           await loadUsers();
                           notify(
                             account.active
-                              ? 'Access removed and sessions revoked.'
+                              ? 'Access removed and sessions revoked.' + released(result.released)
                               : 'Team member activated.',
                           );
                         } catch (e) {
@@ -418,17 +444,41 @@ export default function Settings({
             account={assigning}
             projects={projects}
             onClose={() => setAssigning(null)}
-            onSaved={() => {
+            onSaved={(count) => {
               setAssigning(null);
               void loadUsers().catch((e) => setError(e.message));
-              notify('Project access updated.');
+              notify('Project access updated.' + released(count));
             }}
           />
+        </Modal>
+      )}
+      {issued && (
+        <Modal title={'New password for ' + issued.name} onClose={() => setIssued(null)}>
+          <div className="form-stack">
+            <label>
+              Password
+              <input value={issued.password} readOnly onFocus={(e) => e.target.select()} />
+              <small>
+                Hand it to {issued.name} yourself and ask them to change it. It cannot be shown
+                again — if it is lost, reset the password once more. Their other sessions are signed
+                out.
+              </small>
+            </label>
+            <div className="form-actions">
+              <button className="button primary" onClick={() => setIssued(null)}>
+                <CheckCircle2 size={16} />
+                Done
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </>
   );
 }
+/** Revoked access takes the calling assignments with it, so say how many leads came back. */
+const released = (count: number) =>
+  count ? ' ' + count + ' assigned lead(s) returned to the calling pool.' : '';
 function AssignProjects({
   account,
   projects,
@@ -438,7 +488,7 @@ function AssignProjects({
   account: Account;
   projects: Project[];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (count: number) => void;
 }) {
   const [selected, setSelected] = useState<number[]>(account.project_ids);
   const [error, setError] = useState(''),
@@ -455,11 +505,11 @@ function AssignProjects({
         setBusy(true);
         setError('');
         try {
-          await api('/users/' + account.id + '/projects', {
+          const result = await api<{ released: number }>('/users/' + account.id + '/projects', {
             method: 'PUT',
             body: json({ project_ids: selected }),
           });
-          onSaved();
+          onSaved(result.released);
         } catch (err) {
           setError((err as Error).message);
         } finally {

@@ -117,7 +117,14 @@ export const generate: Generate = async (config, system, input) => {
     return parseJson(output);
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    // Provider errors may contain credentials or prompt contents. Never return or log the raw error.
+    // Provider errors may contain credentials or prompt contents, so only the discriminator
+    // is logged — enough to tell a timeout from a refused key without printing either.
+    console.error(
+      '[ai] Provider call failed:',
+      (error as { code?: string; name?: string })?.code ||
+        (error as { name?: string })?.name ||
+        'UnknownError',
+    );
     throw new HttpError(
       502,
       'AI analysis failed or timed out. Check your provider settings and retry. No result was saved.',

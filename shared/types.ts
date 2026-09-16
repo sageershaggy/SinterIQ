@@ -221,6 +221,29 @@ export interface PreservedRecord {
   data: Record<string, unknown>;
   imported_at: string;
 }
+/**
+ * The lead-list filters, in the order they are offered. One list, because the server enum, the
+ * client options and the filter state drifted apart as bands and assignment were added.
+ * NEEDS_RESEARCH and NO_WEBSITE describe a gap in the record rather than a qualification state.
+ */
+export const leadStatusFilters = [
+  'ALL',
+  'REVIEW_QUEUE',
+  'UNREVIEWED',
+  'QUALIFIED',
+  'CALL_READY',
+  'SEND_EMAIL',
+  'REVIEW_WITH_CLIENT',
+  'ASSIGNED',
+  'UNASSIGNED',
+  'NEEDS_REVIEW',
+  'NOT_A_TARGET',
+  'STALE',
+  'NEEDS_RESEARCH',
+  'NO_WEBSITE',
+] as const;
+export type LeadStatusFilter = (typeof leadStatusFilters)[number];
+
 /** A field a research pass may fill in from the company's own website. */
 export type ResearchableField =
   | 'website'

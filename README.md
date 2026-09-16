@@ -59,11 +59,52 @@ Sintertechnik's overview retains its brand, product families and target applicat
 
 The original qualification handbook is attached to Sintertechnik. Its official website is captured on first startup when reachable. The migrated rubric requires review and publication before qualification; old qualification statuses are not treated as results of the new training.
 
-The active database is `data/innovista.db`. API keys use AES-256-GCM encryption with `data/.innovista-encryption-key`, unless a master key is configured in the environment. **Back up the database and its encryption key together.** Losing the key makes stored provider credentials unreadable. Stop the app before copying the data directory, or use SQLite's online backup API; do not copy just a live WAL-mode database file.
+The active database is `data/innovista.db`. API keys use AES-256-GCM encryption with `data/.innovista-encryption-key`, unless a master key is configured in the environment. **Back up the database and its encryption key together.** Losing the key makes stored provider credentials unreadable. Use `scripts/backup.ts` below; do not copy just a live WAL-mode database file.
 
 Legacy provider settings are migrated when possible. An encrypted legacy key needs the previous system’s own key, which is still named `.sinteriq-encryption-key` / `SINTERIQ_ENCRYPTION_KEY` because that is what exists on disk and in existing environments. If it cannot be decrypted, re-enter the provider key in settings. The original database remains unchanged.
 
 `GET /api/health` queries the active database's initialization record. It returns HTTP 200 with `database: "connected"` when readable, or HTTP 503 with `database: "unavailable"` if that check fails. It does not expose file paths, records or raw database errors.
+
+## Backups and restore
+
+`data/innovista.db` and `data/.innovista-encryption-key` are the only copy of every project's research, uploaded documents, mailbox passwords and provider key. Back them up together, off this host:
+
+```sh
+npx tsx scripts/backup.ts /srv/backups/innovista             # keeps the newest 7 backups
+npx tsx scripts/backup.ts /srv/backups/innovista --keep=30
+```
+
+No downtime is needed. The script asks SQLite itself for a consistent copy with `VACUUM INTO`, so that copy already contains everything sitting in `innovista.db-wal`; in WAL mode the recent commits live in that file, which is why copying `innovista.db` alone gives you a stale or entirely empty database. It then runs `PRAGMA integrity_check` on the copy and refuses to report success unless the answer is `ok`, adds the encryption key, applies the retention limit, prints exactly what it wrote and removed, and exits non-zero on any failure so a scheduler notices. Each run writes `innovista-backup-<UTC stamp>/` containing `innovista.db` and `.innovista-encryption-key`; retention only ever deletes directories with that name, so anything else you keep in the destination is left alone.
+
+**Every backup set contains the key that decrypts each project's SMTP/IMAP password and the AI provider key.** Treat it as a secret: encrypt it before it leaves the host, and keep it off the volume it was taken from — a backup beside the live data does not survive losing that volume. A master key supplied through `INNOVISTA_ENCRYPTION_KEY` is deliberately not written into the backup; keep it with the deployment, because a restore cannot read a single stored password without it.
+
+### Schedule it
+
+This host runs Alpine, so use busybox `crond` rather than a systemd timer:
+
+```sh
+cat > /etc/periodic/daily/innovista-backup <<'SH'
+#!/bin/sh
+cd /app && exec npx tsx scripts/backup.ts /srv/backups/innovista --keep=14
+SH
+chmod +x /etc/periodic/daily/innovista-backup
+rc-update add crond default && rc-service crond start
+run-parts --test /etc/periodic/daily     # confirm the job is picked up
+```
+
+`/srv/backups/innovista` must be a mount that is not the app's own data volume. `crond` reports the output of anything it runs, so the non-zero exit and its message are visible; read that report after the first night instead of assuming the job works. When the app runs in a container, either run the same command inside it (`docker exec innovista npx tsx scripts/backup.ts /backups --keep=14`) or run it on the host with `INNOVISTA_DATA_DIR` pointing at the mounted volume.
+
+### Restore
+
+Restore into a copy, verify the copy, and only then point the app at it.
+
+1. Stop the app, so nothing writes to the data directory while you work.
+2. Take the set you want aside and decrypt it if you encrypted it: `cp -r /srv/backups/innovista/innovista-backup-20260917T010203Z /tmp/restore`.
+3. Verify it before trusting it — `INNOVISTA_DATA_DIR=/tmp/restore npx tsx scripts/backup.ts /tmp/restore-check` reads the whole file, copies it and runs `integrity_check`, and fails loudly if any of that does not hold. With the `sqlite3` CLI available, `sqlite3 /tmp/restore/innovista.db 'PRAGMA integrity_check; SELECT COUNT(*) FROM leads;'` also shows you that the rows are really there.
+4. Move the old data directory aside rather than writing over it: `mv data data.broken`. Keep it until the restore is proven — it may still hold newer rows in its `-wal` file.
+5. Put **both** files in place: `mkdir -p data && cp /tmp/restore/innovista.db /tmp/restore/.innovista-encryption-key data/`, then `chmod 700 data && chmod 600 data/.innovista-encryption-key`. Never copy a `-wal` or `-shm` file from the old directory next to a restored database: SQLite would try to replay a log belonging to a different file.
+6. Start the app and check `GET /api/health` reports `database: "connected"`, then sign in and confirm a project's leads and training sources are present.
+7. Prove the key matches the database: open a project's **Mailbox** and use **Send a test**. A database restored with the wrong key looks healthy but cannot decrypt a single mailbox password or provider key, and this is the only check that says so. If it fails, the research data is still fine — re-enter each project's mailbox password and the provider key in settings.
 
 ## Security and deployment
 

@@ -43,6 +43,7 @@ import type {
   EmailMessage,
   User,
   ResearchOutcome,
+  LeadStatusFilter,
 } from '../shared/types';
 import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
@@ -2062,11 +2063,21 @@ function FeedbackTab({
   );
 }
 
-/** Status filters shared by the table dropdown and the export menu. */
-function statusFilters(queue: boolean) {
+/**
+ * Status filters shared by the table dropdown and the export menu. The values come from the
+ * shared vocabulary so the server enum and this list cannot drift; ASSIGNED_TO_ME is the one
+ * client-only value, being the ASSIGNED view narrowed to the signed-in account, which the
+ * server expresses as status=ASSIGNED&assigned_to=me.
+ */
+type FilterValue = LeadStatusFilter | 'ASSIGNED_TO_ME';
+type FilterOption = { value: FilterValue; label: string };
+function statusFilters(queue: boolean): FilterOption[] {
+  const reviewQueue: FilterOption[] = queue
+    ? [{ value: 'REVIEW_QUEUE', label: 'All awaiting research' }]
+    : [];
   return [
     { value: 'ALL', label: 'All leads' },
-    ...(queue ? [{ value: 'REVIEW_QUEUE', label: 'All awaiting research' }] : []),
+    ...reviewQueue,
     { value: 'UNREVIEWED', label: 'Unreviewed' },
     { value: 'QUALIFIED', label: 'Qualified' },
     { value: 'CALL_READY', label: 'Call ready (' + nextStepBands.call + '–100)' },
@@ -2085,6 +2096,8 @@ function statusFilters(queue: boolean) {
     { value: 'NEEDS_REVIEW', label: 'Needs review' },
     { value: 'NOT_A_TARGET', label: 'Not a target' },
     { value: 'STALE', label: 'Training or lead changed' },
+    { value: 'NEEDS_RESEARCH', label: 'Missing website, industry or location' },
+    { value: 'NO_WEBSITE', label: 'No website yet' },
   ];
 }
 

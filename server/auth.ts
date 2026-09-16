@@ -32,6 +32,36 @@ export async function passwordHash(password: string) {
   const key = await derivePasswordKey(password, salt);
   return 'scrypt:v1:' + salt + ':' + key.toString('hex');
 }
+/** 144 bits of entropy: the only kind of password this workspace hands out, and only once. */
+export function generatedPassword() {
+  return crypto.randomBytes(18).toString('base64url');
+}
+/**
+ * One reset path for the administrator route and the shell recovery script alike, so either way
+ * the new password is hashed the same way, every session of that account is gone before the
+ * password is handed over, and the reset is on the record. The plaintext is returned for a single
+ * response and is never logged, audited or stored anywhere but the hash.
+ */
+export async function resetAccountPassword(
+  db: DB,
+  account: { id: number; name: string },
+  actor: string,
+) {
+  const password = generatedPassword();
+  const encoded = await passwordHash(password);
+  db.transaction(() => {
+    db.prepare('UPDATE accounts SET password_hash=? WHERE id=?').run(encoded, account.id);
+    db.prepare('DELETE FROM sessions WHERE account_id=?').run(account.id);
+    audit(
+      db,
+      null,
+      actor,
+      'account.password_reset',
+      'New password issued for ' + account.name + '. Existing sessions were revoked.',
+    );
+  })();
+  return password;
+}
 export async function createInitialAdministrator(db: DB, value: unknown): Promise<User> {
   const ensureEmpty = () => {
     if (db.prepare('SELECT 1 FROM accounts LIMIT 1').get())
@@ -77,6 +107,38 @@ export function adminOnly(req: Request, _res: Response, next: NextFunction) {
   if (req.user.role !== 'admin') throw new HttpError(403, 'Administrator access required.');
   next();
 }
+/**
+ * A calling assignment never outlives the access it was granted under. Only an account that can
+ * reach a project may be given one, so when that access goes away the lead returns to the pool
+ * instead of waiting in the queue of someone who can no longer open it. A null projectIds means
+ * every project, for an account that has just lost the workspace altogether. Past calls are
+ * history: releasing an assignment never touches the call log.
+ */
+function releaseAssignments(
+  db: DB,
+  account: { id: number; name: string },
+  projectIds: number[] | null,
+  actor: string,
+) {
+  if (projectIds && !projectIds.length) return 0;
+  const scope = projectIds
+    ? ' AND project_id IN (' + projectIds.map(() => '?').join(',') + ')'
+    : '';
+  const released = db
+    .prepare(
+      'UPDATE leads SET assigned_to=NULL,assigned_at=NULL,updated_at=? WHERE assigned_to=?' + scope,
+    )
+    .run(now(), account.id, ...(projectIds || [])).changes;
+  if (released)
+    audit(
+      db,
+      null,
+      actor,
+      'leads.assignments_released',
+      account.name + ': ' + released + ' lead(s) returned to the calling pool.',
+    );
+  return released;
+}
 export function installAuth(app: Express, db: DB, production: boolean) {
   const cookieOptions = {
     httpOnly: true,
@@ -103,6 +165,18 @@ export function installAuth(app: Express, db: DB, production: boolean) {
     legacyHeaders: false,
     message: {
       error: 'Too many password change attempts. Please retry in 15 minutes.',
+    },
+  });
+  // Issuing a login is an authentication path too, so it gets the same budget, per administrator
+  // rather than per address: one administrator resetting accounts must not spend a colleague's.
+  const resetLimiter = rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 15,
+    keyGenerator: (req: Request) => String(req.user.id),
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+      error: 'Too many password resets. Please retry in 15 minutes.',
     },
   });
   const createSession = (res: Response, user: User) => {
@@ -249,10 +323,18 @@ export function installAuth(app: Express, db: DB, production: boolean) {
       { id: number; name: string; role: User['role'] } | undefined;
     if (!account) throw new HttpError(404, 'Account not found.');
     const wanted = [...new Set(input.project_ids)];
+    let released = 0;
     db.transaction(() => {
       for (const projectId of wanted)
         if (!db.prepare('SELECT 1 FROM projects WHERE id=?').get(projectId))
           throw new HttpError(404, 'Project ' + projectId + ' not found.');
+      const lost = (
+        db.prepare('SELECT project_id FROM project_members WHERE account_id=?').all(id) as Array<{
+          project_id: number;
+        }>
+      )
+        .map((row) => row.project_id)
+        .filter((projectId) => !wanted.includes(projectId));
       db.prepare('DELETE FROM project_members WHERE account_id=?').run(id);
       const add = db.prepare(
         'INSERT INTO project_members (project_id,account_id,assigned_by,assigned_at) VALUES (?,?,?,?)',
@@ -265,8 +347,10 @@ export function installAuth(app: Express, db: DB, production: boolean) {
         'account.projects_assigned',
         account.name + ': ' + (wanted.length ? wanted.join(', ') : 'no projects'),
       );
+      // An administrator reaches every project by role, so a membership change takes nothing away.
+      if (account.role !== 'admin') released = releaseAssignments(db, account, lost, req.user.name);
     })();
-    res.json({ id, project_ids: wanted });
+    res.json({ id, project_ids: wanted, released });
   });
   app.post('/api/users', adminOnly, async (req, res) => {
     const input = credentialsSchema
@@ -283,16 +367,42 @@ export function installAuth(app: Express, db: DB, production: boolean) {
     audit(db, null, req.user.name, 'account.created', input.username);
     res.status(201).json({ id: Number(id) });
   });
+  /**
+   * An account has no email address, so there is no self-service reset: a colleague who forgets
+   * their password needs an administrator to issue a new one. The server generates it and accepts
+   * nothing from the caller, because a supplied value would let an administrator quietly plant a
+   * password they know on someone else's account. It is in this one response and nowhere else.
+   */
+  app.post('/api/users/:id/password', adminOnly, resetLimiter, async (req, res) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    z.object({})
+      .strict()
+      .parse(req.body || {});
+    if (id === req.user.id)
+      throw new HttpError(400, 'Change your own password under Your password instead.');
+    const account = db.prepare('SELECT id,name,active FROM accounts WHERE id=?').get(id) as
+      { id: number; name: string; active: number } | undefined;
+    if (!account) throw new HttpError(404, 'Account not found.');
+    if (!account.active)
+      throw new HttpError(400, 'Activate this account before issuing a new password.');
+    const password = await resetAccountPassword(db, account, req.user.name);
+    res.json({ id: account.id, name: account.name, password });
+  });
   app.patch('/api/users/:id', adminOnly, (req, res) => {
     const id = z.coerce.number().int().positive().parse(req.params.id);
     const input = z.object({ active: z.boolean() }).strict().parse(req.body);
     if (id === req.user.id) throw new HttpError(400, 'You cannot deactivate your own account.');
-    const result = db
-      .prepare('UPDATE accounts SET active=? WHERE id=?')
-      .run(Number(input.active), id);
-    if (!result.changes) throw new HttpError(404, 'Account not found.');
-    db.prepare('DELETE FROM sessions WHERE account_id=?').run(id);
-    audit(db, null, req.user.name, 'account.access_changed', String(id) + ': ' + input.active);
-    res.json({ ok: true });
+    const account = db.prepare('SELECT id,name FROM accounts WHERE id=?').get(id) as
+      { id: number; name: string } | undefined;
+    if (!account) throw new HttpError(404, 'Account not found.');
+    let released = 0;
+    db.transaction(() => {
+      db.prepare('UPDATE accounts SET active=? WHERE id=?').run(Number(input.active), id);
+      db.prepare('DELETE FROM sessions WHERE account_id=?').run(id);
+      audit(db, null, req.user.name, 'account.access_changed', String(id) + ': ' + input.active);
+      // A deactivated account cannot reach any project, not even one it administers.
+      if (!input.active) released = releaseAssignments(db, account, null, req.user.name);
+    })();
+    res.json({ ok: true, released });
   });
 }

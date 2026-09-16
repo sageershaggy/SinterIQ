@@ -60,7 +60,7 @@ import {
   sendMail,
   type Send,
 } from './email';
-import { nextStepFor, nextStepBands } from '../shared/types';
+import { nextStepFor, nextStepBands, leadStatusFilters } from '../shared/types';
 import type {
   Lead,
   Project,
@@ -159,22 +159,7 @@ function serializeLead(row: Lead, project: Project): Lead {
 }
 export const leadQuerySchema = z.object({
   search: text(200).default(''),
-  status: z
-    .enum([
-      'ALL',
-      'REVIEW_QUEUE',
-      'UNREVIEWED',
-      'QUALIFIED',
-      'NOT_A_TARGET',
-      'NEEDS_REVIEW',
-      'STALE',
-      'CALL_READY',
-      'SEND_EMAIL',
-      'REVIEW_WITH_CLIENT',
-      'ASSIGNED',
-      'UNASSIGNED',
-    ])
-    .default('ALL'),
+  status: z.enum(leadStatusFilters).default('ALL'),
   assigned_to: z.enum(['any', 'me']).default('any'),
 });
 /**
@@ -202,6 +187,13 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, vi
   } else if (input.status === 'STALE') {
     where += ' AND l.latest_run_id IS NOT NULL AND ' + stale;
     params.push(...current);
+  } else if (input.status === 'NO_WEBSITE') {
+    where += " AND l.website=''";
+  } else if (input.status === 'NEEDS_RESEARCH') {
+    // The facts a qualification actually leans on. Deliberately not "any blank field": a
+    // blank contact role is normal on a good record, so that would match almost everything
+    // and tell nobody anything.
+    where += " AND (l.website='' OR l.industry='' OR (l.city='' AND l.country=''))";
   } else if (input.status === 'ASSIGNED') {
     where += ' AND l.assigned_to IS NOT NULL';
   } else if (input.status === 'UNASSIGNED') {
@@ -271,11 +263,17 @@ function getLead(db: DB, project: Project, id: number) {
 function insertLead(db: DB, projectId: number, lead: z.infer<typeof leadSchema>) {
   const nKey = nameKey(lead.name),
     wKey = websiteKey(lead.website);
-  const duplicate = db
-    .prepare(
-      "SELECT id,name FROM leads WHERE project_id=? AND ((name_key=? AND name_key<>'') OR (website_key=? AND website_key<>'')) LIMIT 1",
-    )
-    .get(projectId, nKey, wKey) as { id: number; name: string } | undefined;
+  // Two indexed probes rather than one OR across two columns: SQLite cannot use either of
+  // leads_project_name / leads_project_website for the OR, so it scanned the whole project
+  // once per imported row — 5,000 rows against 1,200 existing leads is six million rows of
+  // scanning inside a single transaction.
+  const byKey = (column: string, value: string) =>
+    value
+      ? (db
+          .prepare('SELECT id,name FROM leads WHERE project_id=? AND ' + column + '=? LIMIT 1')
+          .get(projectId, value) as { id: number; name: string } | undefined)
+      : undefined;
+  const duplicate = byKey('name_key', nKey) || byKey('website_key', wKey);
   if (duplicate) return { duplicate };
   const id = Number(
     db

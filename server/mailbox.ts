@@ -275,6 +275,16 @@ export function createMailbox(options: {
         error instanceof HttpError
           ? error.message
           : 'Incoming connection failed. Check the IMAP host, account password and provider settings.';
+      if (!(error instanceof HttpError))
+        // The mailbox keeps that fixed sentence, so without this a provider failing every
+        // poll leaves no diagnostic at all. Only the discriminator is logged: a transport
+        // error carries the host, the account, the password and the message with it.
+        console.error(
+          '[mail] Incoming sync failed for project ' + projectId + ':',
+          (error as { code?: string; name?: string })?.code ||
+            (error as { name?: string })?.name ||
+            'UnknownError',
+        );
       if (stored(projectId).revision === config.revision)
         save(projectId, { ...config, last_error: message });
       throw new HttpError(error instanceof HttpError ? error.status : 502, message);
@@ -424,20 +434,65 @@ export function createMailbox(options: {
           JOIN leads l ON l.project_id=d.project_id AND l.id=d.lead_id
           WHERE d.account_id=${req.user.id} AND d.project_id=${project.id}`,
       };
+      /**
+       * Inbox and Sent grow with every message this team ever exchanges, so neither may be
+       * read whole to show 30 rows. Newest first by id is the order the timestamp already
+       * puts them in — incoming mail is ingested in ascending UID order, and an outgoing row
+       * is stamped by the insert that creates it — and it is the order the per-lead reply
+       * list has always used, so an index delivers the page instead of the history being
+       * sorted and thrown away. The two small folders keep their own order: the outbox
+       * interleaves refused sends with queue rows dated in the future, and a draft is keyed
+       * by its lead rather than by when it was written.
+       */
+      const order: Record<MailFolder, string> = {
+        inbox: 'id DESC',
+        sent: 'id DESC',
+        outbox: 'timestamp DESC,id DESC',
+        drafts: 'timestamp DESC,id DESC',
+      };
+      /**
+       * Every folder counts its own table and its own predicates. count(*) around the folder
+       * query built each joined row of all four folders on every request, and those joins
+       * cannot change a count: each matches a primary key, and a message, draft or enrollment
+       * always has its lead — and an enrollment its funnel — inside the same project.
+       */
+      const totals: Record<MailFolder, [string, number[]]> = {
+        inbox: [
+          'SELECT count(*) AS n FROM incoming_messages WHERE mailbox_project_id=?',
+          [project.id],
+        ],
+        sent: [
+          "SELECT count(*) AS n FROM email_messages WHERE project_id=? AND status='SENT'",
+          [project.id],
+        ],
+        outbox: [
+          `SELECT (SELECT count(*) FROM email_messages WHERE project_id=? AND status!='SENT')
+            +(SELECT count(*) FROM funnel_enrollments WHERE project_id=? AND status='QUEUED') AS n`,
+          [project.id, project.id],
+        ],
+        drafts: [
+          'SELECT count(*) AS n FROM email_drafts WHERE project_id=? AND account_id=?',
+          [project.id, req.user.id],
+        ],
+      };
       const counts = Object.fromEntries(
-        Object.entries(sql).map(([key, value]) => [
+        Object.entries(totals).map(([key, [count, values]]) => [
           key,
-          (db.prepare('SELECT count(*) AS n FROM (' + value + ')').get() as { n: number }).n,
+          (db.prepare(count).get(...values) as { n: number }).n,
         ]),
-      );
+      ) as Record<MailFolder, number>;
       const filtered = ` FROM (${sql[folder]}) WHERE instr(lower(coalesce(subject,'')||' '||coalesce(company,'')||' '||address),?)>0`;
       const items = db
-        .prepare('SELECT *' + filtered + ' ORDER BY timestamp DESC,id DESC LIMIT 30 OFFSET ?')
+        .prepare('SELECT *' + filtered + ' ORDER BY ' + order[folder] + ' LIMIT 30 OFFSET ?')
         .all(query, (page - 1) * 30) as MailRow[];
       res.json({
         items,
         counts,
-        total: (db.prepare('SELECT count(*) AS n' + filtered).get(query) as { n: number }).n,
+        // An empty search matches the whole folder, so its own count is the total: the one
+        // scan no index can serve is paid for only when somebody really is searching.
+        total: query
+          ? (db.prepare('SELECT count(*) AS n' + filtered).get(query) as { n: number }).n
+          : counts[folder],
         incoming: publicSettings(project.id),
         outgoing_configured: getEmailConfig(db, secrets, project.id).configured,
       });

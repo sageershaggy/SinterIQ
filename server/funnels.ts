@@ -535,10 +535,20 @@ export function createFunnels(options: {
           job.project_id,
         );
       } catch (error) {
-        db.prepare(
+        const blocked = db.prepare(
           `UPDATE funnel_enrollments SET status='BLOCKED',reason=?,updated_at=?
           WHERE id=? AND project_id=? AND status='SENDING'`,
-        ).run(
+        );
+        if (!(error instanceof HttpError))
+          // The enrollment keeps a generic reason, but an unexpected cause must not vanish:
+          // without this, a blocked sequence has no explanation anywhere.
+          console.error(
+            '[mail] Delivery failed for enrollment ' + job.id + ':',
+            (error as { code?: string; name?: string })?.code ||
+              (error as { name?: string })?.name ||
+              'UnknownError',
+          );
+        blocked.run(
           error instanceof HttpError
             ? error.message
             : 'Delivery stopped. Check mailbox settings and lead eligibility.',

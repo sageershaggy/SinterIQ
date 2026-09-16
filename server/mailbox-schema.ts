@@ -53,6 +53,12 @@ export function installMailboxSchema(db: DB) {
     CREATE INDEX IF NOT EXISTS incoming_mailbox ON incoming_messages(mailbox_project_id,id DESC);
     CREATE INDEX IF NOT EXISTS incoming_project_identity
       ON incoming_messages(mailbox_project_id,internet_message_id,from_email,received_at);
+    -- The mail folders page every project mailbox: without these, opening the mailbox sorted
+    -- and counted the whole history on each request and grew slower with every message sent.
+    CREATE INDEX IF NOT EXISTS email_messages_project_status
+      ON email_messages(project_id,status,id DESC);
+    CREATE INDEX IF NOT EXISTS enrollments_project_status
+      ON funnel_enrollments(project_id,status);
   `);
 }
 

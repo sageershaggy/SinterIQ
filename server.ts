@@ -61,7 +61,12 @@ const funnelTimer = setInterval(() => {
       if (result.failures.length) console.error('[mail] ' + result.failures.join(' · '));
     })
     .then(() => funnels.tick())
-    .catch(() => console.error('[mail] Processing paused. Check incoming settings and the outbox.'))
+    .catch((error) =>
+      console.error(
+        '[mail] Processing paused. Check incoming settings and the outbox.',
+        error?.code || error?.name || 'UnknownError',
+      ),
+    )
     .finally(() => {
       delivering = false;
     });
