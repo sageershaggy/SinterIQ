@@ -42,6 +42,7 @@ import type {
   CallOutcome,
   EmailMessage,
   User,
+  ResearchOutcome,
 } from '../shared/types';
 import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
@@ -49,7 +50,7 @@ import { PreviousResearch } from './PreviousResearch';
 import { EmailComposer } from './EmailComposer';
 import { IncomingReplies } from './IncomingReplies';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
-import { CompanyOverview } from './CompanyOverview';
+import { CompanyOverview, missingDetails } from './CompanyOverview';
 import { leadLink, type LeadTab } from './navigation';
 
 export default function Leads({
@@ -84,13 +85,15 @@ export default function Leads({
     [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
-  const exportRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null),
+    filterRef = useRef<HTMLDivElement>(null);
   const detail = detailId;
   const setDetail = (id: number | null, tab: LeadTab = 'overview') => {
     window.location.hash = id
       ? leadLink(project.id, id, tab, queue)
       : `#projects/${project.id}/${queue ? 'review' : 'leads'}`;
   };
+  const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false),
     [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
     [assigning, setAssigning] = useState<number[] | null>(null),
@@ -115,14 +118,17 @@ export default function Leads({
     return () => clearTimeout(timer);
   }, [search]);
   useEffect(() => {
-    if (!exportOpen) return;
+    // Either menu closes on an outside click or Escape.
+    if (!exportOpen && !filterOpen) return;
     const away = (event: MouseEvent) => {
       const target = event.target as Node;
       if (!exportRef.current?.contains(target)) setExportOpen(false);
+      if (!filterRef.current?.contains(target)) setFilterOpen(false);
     };
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setExportOpen(false);
+        setFilterOpen(false);
       }
     };
     document.addEventListener('mousedown', away);
@@ -131,7 +137,7 @@ export default function Leads({
       document.removeEventListener('mousedown', away);
       document.removeEventListener('keydown', key);
     };
-  }, [exportOpen]);
+  }, [exportOpen, filterOpen]);
   useEffect(() => {
     api<User[]>(base + '/assignees')
       .then(setAssignees)
@@ -336,24 +342,49 @@ export default function Leads({
                 placeholder="Search company, industry or country…"
               />
             </div>
-            <label className="lead-filter-control">
-              <Filter size={15} aria-hidden="true" />
-              <select
-                aria-label="Filter leads"
-                value={status}
-                onChange={(e) => {
-                  setStatus(e.target.value);
-                  setPage(1);
+            {/* A real dropdown rather than a native select: the OS popup cannot be aligned
+                or padded, and its hit area does not match the control, which is why it kept
+                reading as unclickable. */}
+            <div className="filter-menu" ref={filterRef}>
+              <button
+                className="table-filter"
+                aria-haspopup="listbox"
+                aria-expanded={filterOpen}
+                onClick={() => {
+                  setFilterOpen((open) => !open);
                   setExportOpen(false);
                 }}
               >
-                {statusFilters(queue).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <Filter size={15} aria-hidden="true" />
+                <span className="filter-value">
+                  {statusFilters(queue).find((o) => o.value === status)?.label || 'All leads'}
+                </span>
+                <ChevronDown
+                  size={15}
+                  className={'filter-caret ' + (filterOpen ? 'is-open' : '')}
+                />
+              </button>
+              {filterOpen && (
+                <div className="filter-dropdown" role="listbox">
+                  {statusFilters(queue).map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="option"
+                      aria-selected={status === option.value}
+                      className={status === option.value ? 'is-selected' : ''}
+                      onClick={() => {
+                        setStatus(option.value);
+                        setPage(1);
+                        setFilterOpen(false);
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="export-menu" ref={exportRef}>
               <button
                 className="button secondary"
@@ -646,7 +677,11 @@ export default function Leads({
                             ) : (
                               <>
                                 <Sparkles size={14} />
-                                {!ready ? 'Set up' : lead.latest_run_id ? 'Re-run' : 'Qualify'}
+                                {!ready
+                                  ? 'Set up'
+                                  : lead.latest_run_id
+                                    ? 'Re-analyze'
+                                    : 'Analyze with AI'}
                               </>
                             )}
                           </button>
@@ -1188,6 +1223,8 @@ function LeadDetail({
     [decision, setDecision] = useState<Decision>('NEEDS_REVIEW'),
     [reviewNotes, setReviewNotes] = useState('');
   const [enrolling, setEnrolling] = useState(false);
+  const [researching, setResearching] = useState(false),
+    [research, setResearch] = useState<ResearchOutcome | null>(null);
   const ready = project.active_version && project.revision === project.trained_revision;
   useEffect(() => {
     let cancelled = false;
@@ -1219,6 +1256,38 @@ function LeadDetail({
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+  /**
+   * Fills this record's blanks from the company's own website. Applying is a real edit, so the
+   * lead is reloaded and the panel then invites a fresh qualification instead of running one:
+   * the earlier verdict is stale, and spending another analysis is a person's decision.
+   */
+  async function researchLead() {
+    setResearching(true);
+    setError('');
+    try {
+      const outcome = await api<ResearchOutcome>(base + '/research', {
+        method: 'POST',
+        body: json({}),
+      });
+      setResearch(outcome);
+      const filled = outcome.applied?.length || 0;
+      if (filled) {
+        setRefresh((n) => n + 1);
+        onChange();
+        notify(
+          filled === 1
+            ? 'One detail filled in from the website. Qualify again to use it.'
+            : filled + ' details filled in from the website. Qualify again to use them.',
+        );
+      } else notify('Research finished. Nothing could be confirmed, so the lead is unchanged.');
+    } catch (e) {
+      // Clear the previous report: leaving it up would read as "ran again, found nothing".
+      setResearch(null);
+      setError((e as Error).message);
+    } finally {
+      setResearching(false);
     }
   }
   async function eraseContact() {
@@ -1334,7 +1403,11 @@ function LeadDetail({
                   )}
                 </div>
               </div>
-              <button className="button secondary" onClick={() => setEditing(true)} disabled={busy}>
+              <button
+                className="button secondary"
+                onClick={() => setEditing(true)}
+                disabled={busy || researching}
+              >
                 <Pencil size={15} />
                 Edit context
               </button>
@@ -1354,7 +1427,7 @@ function LeadDetail({
               </div>
               <button
                 className="button primary"
-                disabled={busy}
+                disabled={busy || researching}
                 onClick={ready ? qualifyLead : onTraining}
               >
                 {busy ? (
@@ -1420,7 +1493,21 @@ function LeadDetail({
                   </button>
                 ))}
               </div>
-              {tab === 'overview' && <CompanyOverview lead={lead} onTab={setTab} />}
+              {tab === 'overview' && (
+                <CompanyOverview
+                  lead={lead}
+                  onTab={setTab}
+                  research={{
+                    missing: missingDetails(lead),
+                    outcome: research,
+                    running: researching,
+                    busy,
+                    ready: !!ready,
+                    onRun: () => void researchLead(),
+                    onQualify: () => (ready ? void qualifyLead() : onTraining()),
+                  }}
+                />
+              )}
               {tab === 'campaigns' && (
                 <div className="company-campaigns">
                   <div className="section-title">

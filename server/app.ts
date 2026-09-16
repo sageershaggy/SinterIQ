@@ -22,6 +22,7 @@ import {
   qualify,
   type Generate,
 } from './ai';
+import { researchMissing, researchableFields } from './enrich';
 import {
   HttpError,
   positiveId,
@@ -55,11 +56,20 @@ import {
   getEmailConfig,
   publicEmailSettings,
   renderEmail,
+  saveEmailConfig,
   sendMail,
   type Send,
 } from './email';
 import { nextStepFor, nextStepBands } from '../shared/types';
-import type { Lead, Project, Source, TrainingSnapshot, Evidence, User } from '../shared/types';
+import type {
+  Lead,
+  Project,
+  ResearchableField,
+  Source,
+  TrainingSnapshot,
+  Evidence,
+  User,
+} from '../shared/types';
 
 const sourceColumns = 'id,project_id,kind,title,url,content,filename,sha256,created_at';
 const projectSelect = `SELECT p.*,
@@ -1137,6 +1147,128 @@ export function createApp(options: {
     );
     res.json(getLead(db, project, lead.id));
   });
+  /**
+   * Researches what a lead record is missing, from the company's own website. Values arrive
+   * with a citation that has been checked against the fetched page, so writing them is an
+   * ordinary recorded edit: the lead revision moves and any previous qualification becomes
+   * stale. That is what makes "fill the gaps, then analyze again" a safe sequence rather than
+   * a way to quietly rewrite a record under an old verdict.
+   */
+  app.post('/api/projects/:projectId/leads/:leadId/research', expensiveLimit, async (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const outcome = await single('lead-research:' + lead.id, async () => {
+      const config = getAiConfig(db, secrets);
+      if (!config.api_key && !options.generate)
+        throw new HttpError(409, 'Configure an AI provider in Settings first.');
+      return researchMissing({
+        lead,
+        config,
+        generate: options.generate || generate,
+        fetchPage: options.fetchWebsite,
+      });
+    });
+    const applied: ResearchableField[] = [];
+    const fieldSchemas = leadSchema.shape as Record<string, z.ZodTypeAny>;
+    if (outcome.proposals.length)
+      db.transaction(() => {
+        // Re-read inside the transaction. The pass spends real time on the network, and
+        // someone may have typed the very value we are about to write: research fills gaps,
+        // it never overwrites what a person entered.
+        const current = db
+          .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
+          .get(lead.id, project.id) as Record<string, string> | undefined;
+        if (!current) throw new HttpError(404, 'Lead not found in this project.');
+        const site = outcome.proposals.find((proposal) => proposal.field === 'website');
+        const clash = site
+          ? (db
+              .prepare(
+                "SELECT name FROM leads WHERE project_id=? AND id<>? AND website_key=? AND website_key<>''",
+              )
+              .get(project.id, lead.id, websiteKey(site.value)) as { name: string } | undefined)
+          : undefined;
+        if (clash) {
+          // The site belongs to another lead here, so this record is most likely a duplicate
+          // of that one. Nothing read from that page is written, not merely the address.
+          for (const proposal of outcome.proposals)
+            outcome.refused.push({
+              field: proposal.field,
+              value: proposal.value,
+              reason:
+                'That website already belongs to ' +
+                clash.name +
+                ' in this project, so this lead may be a duplicate of it. Nothing was saved.',
+            });
+          return;
+        }
+        for (const proposal of outcome.proposals) {
+          // The column name comes from this closed list, never from the response.
+          if (!researchableFields.includes(proposal.field)) continue;
+          if (String(current[proposal.field] ?? '').trim()) {
+            outcome.refused.push({
+              field: proposal.field,
+              value: proposal.value,
+              reason: 'This was filled in while the research was running, so it was left alone.',
+            });
+            continue;
+          }
+          // The same validator the edit form uses, so research can never write a value a
+          // person could not have typed, and the lead stays saveable afterwards.
+          const parsed = fieldSchemas[proposal.field]?.safeParse(proposal.value);
+          if (!parsed?.success) {
+            outcome.refused.push({
+              field: proposal.field,
+              value: proposal.value,
+              reason: 'The lead form would not accept that value, so it was not saved.',
+            });
+            continue;
+          }
+          const value = parsed.data as string;
+          if (proposal.field === 'website')
+            db.prepare('UPDATE leads SET website=?,website_key=? WHERE id=? AND project_id=?').run(
+              value,
+              websiteKey(value),
+              lead.id,
+              project.id,
+            );
+          else
+            db.prepare('UPDATE leads SET ' + proposal.field + '=? WHERE id=? AND project_id=?').run(
+              value,
+              lead.id,
+              project.id,
+            );
+          // Keep the provenance with the value, not only in this response.
+          db.prepare(
+            `INSERT INTO lead_research_citations
+              (project_id,lead_id,field,value,evidence,source_url,created_at,created_by)
+            VALUES (?,?,?,?,?,?,?,?)`,
+          ).run(
+            project.id,
+            lead.id,
+            proposal.field,
+            value,
+            proposal.evidence,
+            proposal.source_url,
+            now(),
+            req.user.name,
+          );
+          applied.push(proposal.field);
+        }
+        if (applied.length) {
+          db.prepare(
+            'UPDATE leads SET revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+          ).run(now(), lead.id, project.id);
+          audit(
+            db,
+            project.id,
+            req.user.name,
+            'lead.researched',
+            'Filled ' + applied.join(', ') + ' for ' + lead.name + ' from ' + outcome.website + '.',
+          );
+        }
+      })();
+    res.json({ ...outcome, applied });
+  });
   app.post('/api/projects/:projectId/leads/:leadId/qualify', expensiveLimit, async (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
@@ -1236,8 +1368,13 @@ export function createApp(options: {
               req.user.name,
             ).lastInsertRowid,
         );
+        // A run that found no contact must not erase one that is already on the record: the
+        // panel invites a re-run straight after research, and that would undo it.
         db.prepare(
-          'UPDATE leads SET status=?,score=?,confidence=?,latest_run_id=?,training_version=?,qualified_revision=?,contact_name=?,contact_role=?,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+          `UPDATE leads SET status=?,score=?,confidence=?,latest_run_id=?,training_version=?,qualified_revision=?,
+            contact_name=CASE WHEN ?<>'' THEN ? ELSE contact_name END,
+            contact_role=CASE WHEN ?<>'' THEN ? ELSE contact_role END,
+            reviewed=0,updated_at=? WHERE id=? AND project_id=?`,
         ).run(
           qualified.decision,
           qualified.score,
@@ -1246,6 +1383,8 @@ export function createApp(options: {
           project.active_version,
           lead.revision,
           qualified.outreach.contact_name,
+          qualified.outreach.contact_name,
+          qualified.outreach.contact_role,
           qualified.outreach.contact_role,
           now(),
           lead.id,
@@ -1530,6 +1669,10 @@ export function createApp(options: {
           lead.id,
           project.id,
         );
+        db.prepare('DELETE FROM lead_research_citations WHERE lead_id=? AND project_id=?').run(
+          lead.id,
+          project.id,
+        );
         db.prepare('DELETE FROM leads WHERE id=? AND project_id=?').run(lead.id, project.id);
       }
       audit(
@@ -1568,8 +1711,14 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
     db.prepare(
-      "UPDATE leads SET contact_name='',contact_role='',updated_at=? WHERE id=? AND project_id=?",
+      `UPDATE leads SET contact_name='',contact_role='',contact_email='',contact_phone='',
+        updated_at=? WHERE id=? AND project_id=?`,
     ).run(now(), lead.id, project.id);
+    // The stored citation usually contains the personal detail itself, so removing the
+    // contact removes its provenance rows too rather than leaving the quote behind.
+    db.prepare(
+      "DELETE FROM lead_research_citations WHERE project_id=? AND lead_id=? AND field LIKE 'contact_%'",
+    ).run(project.id, lead.id);
     audit(db, project.id, req.user.name, 'lead.contact_removed', lead.name);
     res.json(getLead(db, project, lead.id));
   });
@@ -1647,11 +1796,25 @@ export function createApp(options: {
     })();
     res.json(publicSettings(getAiConfig(db, secrets)));
   });
-  app.get('/api/settings/email', adminOnly, (_req, res) =>
-    res.json(publicEmailSettings(getEmailConfig(db, secrets))),
-  );
-  app.put('/api/settings/email', adminOnly, async (req, res) => {
+  /** Every project sends from its own mailbox, so these routes are project-scoped. */
+  app.get('/api/projects/:projectId/mailbox/email', adminOnly, (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    res.json(publicEmailSettings(getEmailConfig(db, secrets, project.id)));
+  });
+  app.put('/api/projects/:projectId/mailbox/email', adminOnly, async (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
     const input = emailSettingsSchema.parse(req.body);
+    // Keeping the stored password while pointing the host elsewhere would hand the mailbox
+    // credential to whatever host was just typed in.
+    const current = getEmailConfig(db, secrets, project.id);
+    if (
+      (input.host.trim().toLowerCase() !== current.host.trim().toLowerCase() ||
+        input.username !== current.username) &&
+      current.has_password &&
+      !input.password &&
+      !input.clear_password
+    )
+      throw new HttpError(400, 'Enter a new password when changing the host or account.');
     if (input.host) await assertMailHost(input.host, input.port);
     if (input.from_email) assertAddress(input.from_email, 'The sender address');
     if (input.reply_to) assertAddress(input.reply_to, 'The reply-to address');
@@ -1659,41 +1822,49 @@ export function createApp(options: {
     if (input.host && !input.from_email)
       throw new HttpError(400, 'A sender address is required — recipients must see who sent it.');
     db.transaction(() => {
-      const save = db.prepare(
-        'INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-      );
-      save.run('smtp_host', input.host);
-      save.run('smtp_port', String(input.port));
-      save.run('smtp_secure', input.secure ? '1' : '0');
-      save.run('smtp_username', input.username);
-      save.run('smtp_from_name', input.from_name);
-      save.run('smtp_from_email', input.from_email);
-      save.run('smtp_reply_to', input.reply_to);
-      save.run('smtp_copy_to', input.copy_to);
-      save.run('smtp_signature', input.signature);
-      if (input.clear_password) save.run('smtp_password', '');
-      else if (input.password) save.run('smtp_password', secrets.encrypt(input.password));
-      audit(db, null, req.user.name, 'settings.email_updated', 'Workspace mailbox updated.');
+      saveEmailConfig(db, project.id, {
+        host: input.host,
+        port: input.port,
+        secure: input.secure,
+        username: input.username,
+        from_name: input.from_name,
+        from_email: input.from_email,
+        reply_to: input.reply_to,
+        copy_to: input.copy_to,
+        signature: input.signature,
+        // Undefined keeps the stored secret; null clears it.
+        password: input.clear_password
+          ? null
+          : input.password
+            ? secrets.encrypt(input.password)
+            : undefined,
+      });
+      audit(db, project.id, req.user.name, 'settings.email_updated', 'Project mailbox updated.');
     })();
-    res.json(publicEmailSettings(getEmailConfig(db, secrets)));
+    res.json(publicEmailSettings(getEmailConfig(db, secrets, project.id)));
   });
-  /** Sends to the configured sender address, so setup can be proven before any lead is mailed. */
-  app.post('/api/settings/email/test', adminOnly, expensiveLimit, async (req, res) => {
-    const config = getEmailConfig(db, secrets);
-    if (!config.configured)
-      throw new HttpError(409, 'Save the mailbox settings with a password first.');
-    await single('email-test', () =>
-      deliver(config, {
-        to: config.from_email,
-        subject: 'Innovista Research AI — mailbox test',
-        text: 'Your workspace mailbox is configured correctly.',
-        html: '<p>Your workspace mailbox is configured correctly.</p>',
-        replyTo: config.reply_to || config.from_email,
-      }),
-    );
-    audit(db, null, req.user.name, 'settings.email_tested', 'Test message sent.');
-    res.json({ ok: true, sent_to: config.from_email });
-  });
+  /** Sends to the project's own sender address, so setup is proven before any lead is mailed. */
+  app.post(
+    '/api/projects/:projectId/mailbox/email/test',
+    adminOnly,
+    expensiveLimit,
+    async (req, res) => {
+      const project = getProject(db, positiveId(req.params.projectId), req.user);
+      const config = getEmailConfig(db, secrets, project.id);
+      if (!config.configured) throw new HttpError(409, 'Save this mailbox with a password first.');
+      await single('email-test:' + project.id, () =>
+        deliver(config, {
+          to: config.from_email,
+          subject: 'Innovista Research AI — mailbox test',
+          text: 'The mailbox for ' + project.name + ' is configured correctly.',
+          html: '<p>This project mailbox is configured correctly.</p>',
+          replyTo: config.reply_to || config.from_email,
+        }),
+      );
+      audit(db, project.id, req.user.name, 'settings.email_tested', 'Test message sent.');
+      res.json({ ok: true, sent_to: config.from_email });
+    },
+  );
   /** The draft a researcher edits before sending, built from the approved qualification. */
   app.get('/api/projects/:projectId/leads/:leadId/email/draft', (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
@@ -1709,7 +1880,7 @@ export function createApp(options: {
       to: lead.contact_email,
       saved: savedDraft(db, project.id, lead.id, req.user.id),
       mailbox: (() => {
-        const config = getEmailConfig(db, secrets);
+        const config = getEmailConfig(db, secrets, project.id);
         return {
           configured: config.configured,
           from_email: config.from_email,
@@ -1722,11 +1893,11 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
     const input = emailSendSchema.parse(req.body);
-    const config = getEmailConfig(db, secrets);
+    const config = getEmailConfig(db, secrets, project.id);
     if (!config.configured)
       throw new HttpError(
         409,
-        'No workspace mailbox is configured. An administrator sets it up in Workspace settings.',
+        'This project has no mailbox yet. An administrator sets one up in the project Mailbox settings.',
       );
     // One header-safe recipient per request. Bulk sending is a separate, throttled path.
     const to = assertAddress(input.to, 'The recipient address');
@@ -1841,7 +2012,7 @@ export function createApp(options: {
     const { blocks, problems } = validateBlocks(input.blocks);
     if (!blocks.length)
       return void res.json({ html: '', text: '', warnings: [], block_problems: problems });
-    const config = getEmailConfig(db, secrets);
+    const config = getEmailConfig(db, secrets, project.id);
     const rendered = renderBlocks(blocks, {
       context: mergeContext(lead, config.from_name || req.user.name),
       fromName: config.from_name,

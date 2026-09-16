@@ -252,6 +252,35 @@
   display: flex;
   align-items: center;
 }
+/* The project mailbox editor replaces the message list, so it keeps a single readable column. */
+.mailbox-settings {
+  max-width: 780px;
+}
+.mailbox-shared-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 17px 19px;
+  margin-bottom: 21px;
+  border: 1px solid #e7dcb8;
+  border-radius: 9px;
+  background: #fbf7e9;
+  color: #6f6134;
+}
+.mailbox-shared-notice > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #93803f;
+}
+.mailbox-shared-notice strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.mailbox-shared-notice p {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+}
 .mail-thread {
   padding: 18px 20px;
   background: white;
@@ -440,6 +469,9 @@
   border-radius: 12px;
   margin-bottom: 22px;
   min-width: 0;
+}
+.company-card p.fine-print {
+  font-size: 11px;
 }
 .company-card p {
   font-size: 14px;
@@ -900,6 +932,29 @@
 }
 .funnel-preview small {
   color: #687364;
+}
+/* A designed message previews in the same frame the composer uses, sized for the modal. */
+.funnel-preview .preview-frame iframe {
+  height: 360px;
+}
+/* Every campaign message is either written or designed; the choice sits above the field. */
+.funnel-format {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 15px 0 12px;
+}
+.funnel-format small {
+  flex: 1 1 100%;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #717668;
+}
+/* The block editor takes the place of the message textarea inside the message fieldset,
+   at the same rhythm it has in the one-off composer rather than the wider form spacing. */
+.form-stack.funnel-design {
+  gap: 12px;
 }
 .funnel-queue {
   padding: 22px;
@@ -2524,6 +2579,9 @@ input::file-selector-button {
 .publish-box .button {
   width: 100%;
   font-size: 11px;
+}
+.publish-box .button + .button {
+  margin-top: 9px;
 }
 .source-preview {
   padding: 26px;

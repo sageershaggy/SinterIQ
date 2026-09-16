@@ -47,14 +47,24 @@ server.requestTimeout = 120000;
 // Funnels remain drafts until explicitly activated in the app. Persisted due times
 // and delivery keys make this bounded worker safe across normal restarts.
 let pendingDelivery = Promise.resolve();
+// syncAll polls every enabled mailbox in turn, so a slow provider can outlast the interval.
+// Skipping a cycle keeps the chain from growing faster than it drains.
+let delivering = false;
 const funnelTimer = setInterval(() => {
+  if (delivering) return;
+  delivering = true;
   pendingDelivery = pendingDelivery
-    .then(() => mailbox.sync())
-    .then(() => {})
+    // Every project with an enabled mailbox is polled. syncAll reports a failing provider
+    // instead of throwing, so one project's mailbox cannot pause delivery for the rest.
+    .then(() => mailbox.syncAll())
+    .then((result) => {
+      if (result.failures.length) console.error('[mail] ' + result.failures.join(' · '));
+    })
     .then(() => funnels.tick())
-    .catch(() =>
-      console.error('[mail] Processing paused. Check incoming settings and the outbox.'),
-    );
+    .catch(() => console.error('[mail] Processing paused. Check incoming settings and the outbox.'))
+    .finally(() => {
+      delivering = false;
+    });
 }, 60_000);
 funnelTimer.unref();
 function shutdown() {

@@ -12,29 +12,88 @@ const allowedPorts = [465, 587, 2525];
 export interface SmtpConfig extends EmailSettings {
   password: string;
 }
-export function getEmailConfig(db: DB, secrets: Secrets): SmtpConfig {
-  const saved = Object.fromEntries(
-    (
-      db.prepare("SELECT key,value FROM settings WHERE key LIKE 'smtp_%'").all() as Array<{
-        key: string;
-        value: string;
-      }>
-    ).map((row) => [row.key, row.value]),
-  );
+interface MailboxRow {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_secure: number;
+  smtp_username: string;
+  smtp_password: string;
+  from_name: string;
+  from_email: string;
+  reply_to: string;
+  copy_to: string;
+  signature: string;
+}
+/**
+ * The sending half of one project's mailbox. The project is a required argument because there
+ * is no workspace sender to fall back to: a caller cannot accidentally send one project's mail
+ * from another project's address.
+ */
+export function getEmailConfig(db: DB, secrets: Secrets, projectId: number): SmtpConfig {
+  const row = db
+    .prepare(
+      `SELECT smtp_host,smtp_port,smtp_secure,smtp_username,smtp_password,
+        from_name,from_email,reply_to,copy_to,signature
+      FROM project_mailboxes WHERE project_id=?`,
+    )
+    .get(projectId) as MailboxRow | undefined;
   return {
-    host: saved.smtp_host || '',
-    port: Number(saved.smtp_port || 587),
-    secure: saved.smtp_secure === '1',
-    username: saved.smtp_username || '',
-    from_name: saved.smtp_from_name || '',
-    from_email: saved.smtp_from_email || '',
-    reply_to: saved.smtp_reply_to || '',
-    copy_to: saved.smtp_copy_to || '',
-    signature: saved.smtp_signature || '',
-    configured: Boolean(saved.smtp_host && saved.smtp_from_email && saved.smtp_password),
-    has_password: Boolean(saved.smtp_password),
-    password: saved.smtp_password ? secrets.decrypt(saved.smtp_password) : '',
+    project_id: projectId,
+    host: row?.smtp_host || '',
+    port: Number(row?.smtp_port || 587),
+    secure: Boolean(row?.smtp_secure),
+    username: row?.smtp_username || '',
+    from_name: row?.from_name || '',
+    from_email: row?.from_email || '',
+    reply_to: row?.reply_to || '',
+    copy_to: row?.copy_to || '',
+    signature: row?.signature || '',
+    configured: Boolean(row?.smtp_host && row?.from_email && row?.smtp_password),
+    has_password: Boolean(row?.smtp_password),
+    password: row?.smtp_password ? secrets.decrypt(row.smtp_password) : '',
   };
+}
+/**
+ * Writes the sending half. A password of null clears it and undefined keeps the stored one, so
+ * saving settings never round-trips the secret through the browser.
+ */
+export function saveEmailConfig(
+  db: DB,
+  projectId: number,
+  values: {
+    host: string;
+    port: number;
+    secure: boolean;
+    username: string;
+    from_name: string;
+    from_email: string;
+    reply_to: string;
+    copy_to: string;
+    signature: string;
+    password?: string | null;
+  },
+) {
+  db.prepare('INSERT OR IGNORE INTO project_mailboxes(project_id) VALUES(?)').run(projectId);
+  db.prepare(
+    `UPDATE project_mailboxes SET smtp_host=?,smtp_port=?,smtp_secure=?,smtp_username=?,
+      from_name=?,from_email=?,reply_to=?,copy_to=?,signature=? WHERE project_id=?`,
+  ).run(
+    values.host,
+    values.port,
+    values.secure ? 1 : 0,
+    values.username,
+    values.from_name,
+    values.from_email,
+    values.reply_to,
+    values.copy_to,
+    values.signature,
+    projectId,
+  );
+  if (values.password !== undefined)
+    db.prepare('UPDATE project_mailboxes SET smtp_password=? WHERE project_id=?').run(
+      values.password || '',
+      projectId,
+    );
 }
 export function publicEmailSettings(config: SmtpConfig): EmailSettings {
   const { password: _password, ...rest } = config;

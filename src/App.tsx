@@ -101,9 +101,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
   }
   function navigate(next: View) {
     window.location.hash =
-      next === 'projects' || next === 'settings' || next === 'mailbox'
-        ? next
-        : `projects/${selected}/${next}`;
+      next === 'projects' || next === 'settings' ? next : `projects/${selected}/${next}`;
     setView(next);
     setMenu(false);
   }
@@ -115,14 +113,19 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     setMenu(false);
   }
   const ready = project && project.revision === project.trained_revision;
-  const nav = [
-    { id: 'overview', label: 'Project overview', icon: LayoutGrid },
-    { id: 'training', label: 'Training library', icon: BookOpen },
-    { id: 'leads', label: 'Lead research', icon: ScanLine },
-    { id: 'review', label: 'Review queue', icon: ShieldCheck },
-    { id: 'funnels', label: 'Email funnels', icon: GitBranch },
-    { id: 'activity', label: 'Research history', icon: History },
-  ] as const;
+  // Every mailbox route is administrator-only, so a researcher is never offered a screen
+  // that would answer 403.
+  const nav = (
+    [
+      { id: 'overview', label: 'Project overview', icon: LayoutGrid },
+      { id: 'training', label: 'Training library', icon: BookOpen },
+      { id: 'leads', label: 'Lead research', icon: ScanLine },
+      { id: 'review', label: 'Review queue', icon: ShieldCheck },
+      { id: 'funnels', label: 'Email funnels', icon: GitBranch },
+      { id: 'mailbox', label: 'Mailbox', icon: Mail },
+      { id: 'activity', label: 'Research history', icon: History },
+    ] as const
+  ).filter((item) => item.id !== 'mailbox' || user.role === 'admin');
   const headings: Record<View, string> = {
     projects: 'Your workspace',
     overview: 'Project overview',
@@ -132,7 +135,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     funnels: 'Email funnels',
     activity: 'Research history',
     settings: 'Workspace settings',
-    mailbox: 'Mailbox',
+    mailbox: 'Project mailbox',
   };
   return (
     <div className="app-shell">
@@ -161,14 +164,6 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             <FolderOpen size={18} />
             All projects<span className="nav-count">{projects.length}</span>
           </button>
-          {user.role === 'admin' && (
-            <button
-              className={'nav-item ' + (view === 'mailbox' ? 'active' : '')}
-              onClick={() => navigate('mailbox')}
-            >
-              <Mail size={18} /> Mailbox
-            </button>
-          )}
         </nav>
         <div className="nav-divider" />
         <div className="nav-caption">PROJECTS</div>
@@ -298,15 +293,6 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             <Spinner text="Loading projects…" />
           ) : (
             <Suspense fallback={<Spinner text="Opening workspace…" />}>
-              {view === 'mailbox' &&
-                (user.role === 'admin' ? (
-                  <Mailbox projects={projects} notify={setNotice} />
-                ) : (
-                  <Alert>
-                    Ask an administrator to manage the shared mailbox. Your project’s incoming
-                    replies are available on each company’s Email tab.
-                  </Alert>
-                ))}
               {selected && !project && view !== 'projects' && view !== 'settings' && (
                 <Alert>
                   This project is unavailable.{' '}
@@ -500,13 +486,23 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                   <Activity projectId={project.id} compact refresh={refresh} />
                 </>
               )}
+              {project &&
+                view === 'mailbox' &&
+                (user.role === 'admin' ? (
+                  <Mailbox key={project.id} project={project} notify={setNotice} />
+                ) : (
+                  <Alert>
+                    The mailbox for {project.name} is managed by administrators. Replies matched to
+                    a company are available on that company’s Email tab.
+                  </Alert>
+                ))}
               {project && view === 'funnels' && (
                 <Funnels
                   key={project.id}
                   project={project}
                   user={user}
                   notify={setNotice}
-                  onSettings={() => navigate('settings')}
+                  onSettings={() => navigate('mailbox')}
                 />
               )}
               {project && view === 'training' && (

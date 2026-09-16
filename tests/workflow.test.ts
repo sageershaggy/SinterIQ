@@ -5,8 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../server/app';
+import { citationSupports, pageNamesCompany, sameSite } from '../server/enrich';
 import { type Generate } from '../server/ai';
-import type { Project, TrainingSnapshot, Qualification, Evidence } from '../shared/types';
+import type { WebsitePage } from '../server/network';
+import type {
+  Project,
+  TrainingSnapshot,
+  Qualification,
+  Evidence,
+  Lead,
+  ResearchOutcome,
+} from '../shared/types';
 
 process.env.GEMINI_API_KEY = '';
 process.env.LLM_API_KEY = '';
@@ -150,22 +159,27 @@ const generated: Generate = async (_config, system, input) => {
   };
 };
 function fixture(
-  call: Generate = generated,
+  // A null model means the app is built with no model at all, which is how an unconfigured
+  // provider is driven; research tests also need exact page text, so the site is injectable.
+  call: Generate | null = generated,
   mail?: (config: unknown, message: SentMail) => Promise<void>,
+  fetchPage?: (url: string) => Promise<WebsitePage>,
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'innovista-test-'));
   const { app, db } = createApp({
     dataDir: dir,
-    generate: call,
+    generate: call ?? undefined,
     sendMail: mail as never,
-    fetchWebsite: async (url) => ({
-      url,
-      content:
-        'Example company designs and manufactures industrial pumps. Its engineering team specifies third-party bearings, and it does not manufacture bearings. ' +
+    fetchWebsite:
+      fetchPage ||
+      (async (url) => ({
         url,
-      truncated: false,
-      links: [new URL('/about', url).href, new URL('/products', url).href],
-    }),
+        content:
+          'Example company designs and manufactures industrial pumps. Its engineering team specifies third-party bearings, and it does not manufacture bearings. ' +
+          url,
+        truncated: false,
+        links: [new URL('/about', url).href, new URL('/products', url).href],
+      })),
   });
   const agent = request.agent(app);
   let csrf = '';
@@ -1081,6 +1095,528 @@ test('a website-cited contact is stored, exported, and erasable', async () => {
     f.dispose();
   }
 });
+/**
+ * Exact page text per address. A research test has to be able to say what a site does NOT
+ * say, so an address with no entry here fails to load instead of quietly returning something
+ * plausible — which is also how an unreachable website is driven.
+ */
+function pageSet(pages: Record<string, string>) {
+  return async (url: string): Promise<WebsitePage> => {
+    const content = pages[url];
+    if (content === undefined) throw new Error('This website could not be reached.');
+    return { url, content, truncated: false, links: [] };
+  };
+}
+interface ResearchReply {
+  domains?: string[];
+  fields?: Array<{ field: string; value: string; evidence: string }>;
+  notes?: string[];
+}
+/**
+ * A model that answers only the two research prompts. Rubric and qualification prompts fall
+ * through to the ordinary stub, so a research test can set its lead up the way the product
+ * does — qualified and reviewed, and therefore able to go stale.
+ */
+function researchModel(reply: (company: string) => ResearchReply): Generate {
+  return async (config, system, input) => {
+    const answer = reply(String((input as { company?: string }).company ?? ''));
+    if (system.includes('candidate official website domains'))
+      return { domains: answer.domains || [] };
+    if (system.includes('extract company facts'))
+      return { fields: answer.fields || [], notes: answer.notes || [] };
+    return generated(config, system, input);
+  };
+}
+const pumpSite =
+  'Rotterdam Pump Works designs and manufactures industrial pumps. Its engineering team specifies third-party bearings, and it does not manufacture bearings. ' +
+  'Rotterdam Pump Works is a specialist in chemical process pumps for the chemical industry. It has worked from Rotterdam since 1962.';
+const pumpHome = 'https://rotterdam-pumps.example.com';
+/** A qualified, reviewed lead, so that research can be seen to unsettle it — or not. */
+async function reviewedPumpLead(f: ReturnType<typeof fixture>) {
+  const project = await readyProject(f);
+  const created = await f.post('/projects/' + project.id + '/leads', {
+    name: 'Rotterdam Pump Works',
+    website: pumpHome,
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const base = '/projects/' + project.id + '/leads/' + created.body.id;
+  const run = await f.post(base + '/qualify', {});
+  assert.equal(run.status, 200, JSON.stringify(run.body));
+  const reviewed = await f.post(base + '/review', {
+    run_id: run.body.run_id,
+    decision: 'QUALIFIED',
+    notes: 'Confirmed against the captured website evidence.',
+  });
+  assert.equal(reviewed.status, 200, JSON.stringify(reviewed.body));
+  const lead = reviewed.body as Lead;
+  assert.equal(lead.reviewed, true);
+  assert.equal(lead.stale, false);
+  assert.equal(lead.industry, '');
+  return { project, base, lead };
+}
+test('a cited research value is written, and applying it makes the previous qualification stale', async () => {
+  const f = fixture(
+    researchModel(() => ({
+      fields: [
+        {
+          field: 'industry',
+          value: 'Chemical process pumps',
+          // Quoted from the fetched page, punctuation and all.
+          evidence:
+            'Rotterdam Pump Works is a specialist in chemical process pumps for the chemical industry.',
+        },
+      ],
+    })),
+    undefined,
+    pageSet({ 'https://example.org': pumpSite, [pumpHome]: pumpSite }),
+  );
+  try {
+    await f.setup();
+    const { project, base, lead } = await reviewedPumpLead(f);
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    assert.deepEqual(outcome.applied, ['industry']);
+    assert.deepEqual(outcome.refused, []);
+    assert.equal(outcome.discovered, false);
+    assert.equal(outcome.website, pumpHome);
+    assert.equal(outcome.proposals.length, 1);
+    assert.equal(outcome.proposals[0].field, 'industry');
+    assert.equal(outcome.proposals[0].source_url, pumpHome);
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.industry, 'Chemical process pumps');
+    // Applying is an ordinary recorded edit: the revision moves, the review is cleared and the
+    // earlier verdict is stale until the lead is analyzed again.
+    assert.equal(after.revision, lead.revision + 1);
+    assert.equal(after.reviewed, false);
+    assert.equal(after.stale, true);
+    assert.equal(after.next_step, 'NONE');
+    assert.ok(
+      (await f.agent.get('/api/projects/' + project.id + '/activity')).text.includes(
+        'Filled industry',
+      ),
+    );
+  } finally {
+    f.dispose();
+  }
+});
+test('an uncited research value is refused and the lead does not move at all', async () => {
+  const f = fixture(
+    researchModel(() => ({
+      fields: [
+        {
+          field: 'industry',
+          // Plausible, well shaped, and cited to a sentence that is nowhere in the page.
+          value: 'Aerospace fasteners',
+          evidence: 'Rotterdam Pump Works is a leading supplier of aerospace fasteners in Europe.',
+        },
+        {
+          field: 'city',
+          // On the page, but too short to be a citation of anything.
+          value: 'Rotterdam',
+          evidence: 'Rotterdam',
+        },
+      ],
+    })),
+    undefined,
+    pageSet({ 'https://example.org': pumpSite, [pumpHome]: pumpSite }),
+  );
+  try {
+    await f.setup();
+    const { base, lead } = await reviewedPumpLead(f);
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    assert.deepEqual(outcome.applied, []);
+    assert.deepEqual(outcome.proposals, []);
+    assert.equal(outcome.refused.length, 2);
+    assert.deepEqual(
+      outcome.refused.map((entry) => entry.field),
+      ['industry', 'city'],
+    );
+    assert.equal(outcome.refused[0].value, 'Aerospace fasteners');
+    assert.match(outcome.refused[0].reason, /No supporting sentence from the page was provided/);
+    assert.match(outcome.refused[1].reason, /No supporting sentence from the page was provided/);
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    // The anti-fabrication guarantee: the invented fact reached the record nowhere at all.
+    assert.equal(after.industry, '');
+    assert.equal(after.city, '');
+    assert.ok(!JSON.stringify(after).includes('Aerospace fasteners'));
+    assert.equal(after.revision, lead.revision);
+    assert.equal(after.reviewed, true);
+    assert.equal(after.stale, false);
+  } finally {
+    f.dispose();
+  }
+});
+test('a proposed website is recorded only once its own page names the company', async () => {
+  const site =
+    'Meridian Vacuum Systems builds vacuum pump skids in Lyon. Meridian Vacuum Systems has served the process industry since 1974.';
+  const f = fixture(
+    researchModel(() => ({ domains: ['meridianvacuum.example.com'] })),
+    undefined,
+    pageSet({ 'https://meridianvacuum.example.com': site }),
+  );
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Vacuum Research' });
+    assert.equal(project.status, 201);
+    const created = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Meridian Vacuum Systems',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.equal(created.body.website, '');
+    const base = '/projects/' + project.body.id + '/leads/' + created.body.id;
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    assert.equal(outcome.discovered, true);
+    // Every candidate that was actually fetched is reported, so a repeat run is not a mystery.
+    assert.deepEqual(outcome.tried, ['meridianvacuum.example.com']);
+    assert.equal(outcome.website, 'https://meridianvacuum.example.com');
+    assert.deepEqual(outcome.applied, ['website']);
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.website, 'https://meridianvacuum.example.com');
+    assert.equal(after.revision, created.body.revision + 1);
+  } finally {
+    f.dispose();
+  }
+});
+test('an unverifiable website is left blank, and the notes say which way it failed', async () => {
+  const f = fixture(
+    researchModel((company) => ({
+      // Only the first company gets a candidate; the second is the model correctly declining.
+      domains: company.startsWith('Parked') ? ['parked-holding.example.com'] : [],
+    })),
+    undefined,
+    pageSet({
+      'https://parked-holding.example.com':
+        'This domain may be for sale. Inquire with the registrar for pricing and availability.',
+    }),
+  );
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Discovery Research' });
+    assert.equal(project.status, 201);
+    const parked = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Parked Pumps International',
+    });
+    assert.equal(parked.status, 201, JSON.stringify(parked.body));
+    const parkedBase = '/projects/' + project.body.id + '/leads/' + parked.body.id;
+    const reachable = await f.post(parkedBase + '/research', {});
+    assert.equal(reachable.status, 200, JSON.stringify(reachable.body));
+    const first = reachable.body as ResearchOutcome;
+    assert.equal(first.discovered, false);
+    assert.equal(first.website, '');
+    assert.deepEqual(first.applied, []);
+    assert.deepEqual(first.proposals, []);
+    assert.deepEqual(first.tried, ['parked-holding.example.com']);
+    assert.ok(
+      first.notes.some(
+        (note) =>
+          note.includes('parked-holding.example.com') &&
+          /parked, for-sale or placeholder|does not name this company/.test(note),
+      ),
+      JSON.stringify(first.notes),
+    );
+    assert.equal(((await f.agent.get('/api' + parkedBase)).body as Lead).website, '');
+    // A model with no basis for a candidate proposes none, and that is reported as a result.
+    const silent = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Silent Valve Works',
+    });
+    assert.equal(silent.status, 201, JSON.stringify(silent.body));
+    const silentBase = '/projects/' + project.body.id + '/leads/' + silent.body.id;
+    const none = await f.post(silentBase + '/research', {});
+    assert.equal(none.status, 200, JSON.stringify(none.body));
+    const second = none.body as ResearchOutcome;
+    assert.deepEqual(second.tried, []);
+    assert.deepEqual(second.applied, []);
+    assert.equal(second.discovered, false);
+    assert.ok(
+      second.notes.some((note) => note.includes('No candidate website could be proposed')),
+      JSON.stringify(second.notes),
+    );
+    const afterSilent = (await f.agent.get('/api' + silentBase)).body as Lead;
+    assert.equal(afterSilent.website, '');
+    assert.equal(afterSilent.revision, silent.body.revision);
+  } finally {
+    f.dispose();
+  }
+});
+test('a discovered website another lead in the project already holds is refused', async () => {
+  const shared = 'https://sharedsite.example.com';
+  const f = fixture(
+    researchModel(() => ({ domains: ['sharedsite.example.com'] })),
+    undefined,
+    pageSet({ [shared]: 'Sharedsite Pumps manufactures process pumps for water utilities.' }),
+  );
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Duplicate Research' });
+    assert.equal(project.status, 201);
+    const holder = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Original Holder Works',
+      website: shared,
+    });
+    assert.equal(holder.status, 201, JSON.stringify(holder.body));
+    const created = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Sharedsite Pumps',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const base = '/projects/' + project.body.id + '/leads/' + created.body.id;
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    // The page verified, so it is reported as discovered — and still not written.
+    assert.equal(outcome.discovered, true);
+    assert.deepEqual(outcome.applied, []);
+    const refusal = outcome.refused.find((entry) => entry.field === 'website');
+    assert.ok(refusal, JSON.stringify(outcome));
+    assert.equal(refusal.value, shared);
+    assert.match(refusal.reason, /already belongs to .* in this project/);
+    // Everything read from that page is refused, not just the address: a lead sharing another
+    // lead's website is most likely a duplicate of it.
+    assert.equal(outcome.refused.length, outcome.proposals.length, JSON.stringify(outcome.refused));
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.website, '');
+    assert.equal(after.revision, created.body.revision);
+    // The lead that does hold the website is untouched.
+    assert.equal(
+      (
+        (await f.agent.get('/api/projects/' + project.body.id + '/leads/' + holder.body.id))
+          .body as Lead
+      ).website,
+      shared,
+    );
+  } finally {
+    f.dispose();
+  }
+});
+test('a cited value that is not shaped like the field it claims is refused', async () => {
+  const site =
+    'Kestrel Filtration Systems builds filtration skids in Porto. Ask us on the contact page for the right department. ' +
+    'We have grown to several hundred people across three sites.';
+  const home = 'https://kestrel-filtration.example.com';
+  const f = fixture(
+    researchModel(() => ({
+      fields: [
+        {
+          field: 'contact_email',
+          value: 'ask us on the contact page',
+          evidence: 'Ask us on the contact page for the right department.',
+        },
+        {
+          field: 'employee_count',
+          value: 'several hundred',
+          evidence: 'We have grown to several hundred people across three sites.',
+        },
+        {
+          field: 'industry',
+          value: 'Filtration skids and housings for industrial process water treatment '.repeat(3),
+          evidence: 'Kestrel Filtration Systems builds filtration skids in Porto.',
+        },
+      ],
+    })),
+    undefined,
+    pageSet({ [home]: site }),
+  );
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Filtration Research' });
+    assert.equal(project.status, 201);
+    const created = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Kestrel Filtration Systems',
+      website: home,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const base = '/projects/' + project.body.id + '/leads/' + created.body.id;
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    // Every quote here really is on the page: the shape is the only thing rejecting them.
+    assert.deepEqual(outcome.applied, []);
+    assert.deepEqual(outcome.proposals, []);
+    assert.equal(outcome.refused.length, 3);
+    const reason = (field: string) =>
+      outcome.refused.find((entry) => entry.field === field)?.reason ?? '';
+    assert.match(reason('contact_email'), /not shaped like a contact email/);
+    assert.match(reason('employee_count'), /not shaped like a employee count/);
+    assert.match(reason('industry'), /longer than the field allows/);
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.contact_email, '');
+    assert.equal(after.employee_count, '');
+    assert.equal(after.industry, '');
+    assert.equal(after.revision, created.body.revision);
+  } finally {
+    f.dispose();
+  }
+});
+test('research fills gaps only: a value a person entered is never asked about or overwritten', async () => {
+  const site =
+    'Baltic Sealing Works manufactures mechanical seals. Baltic Sealing Works operates from Gdansk, Poland. Our industry is aerospace tooling.';
+  const home = 'https://baltic-sealing.example.com';
+  let requested: string[] = [];
+  const f = fixture(
+    async (config, system, input) => {
+      if (system.includes('extract company facts')) {
+        requested = (input as { requested_fields: string[] }).requested_fields;
+        return {
+          fields: [
+            {
+              field: 'city',
+              value: 'Gdansk',
+              evidence: 'Baltic Sealing Works operates from Gdansk, Poland.',
+            },
+            // Offered for a field the record already holds, and cited from the page.
+            {
+              field: 'industry',
+              value: 'Aerospace tooling',
+              evidence: 'Our industry is aerospace tooling.',
+            },
+          ],
+          notes: [],
+        };
+      }
+      return generated(config, system, input);
+    },
+    undefined,
+    pageSet({ [home]: site }),
+  );
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Sealing Research' });
+    assert.equal(project.status, 201);
+    const created = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Baltic Sealing Works',
+      website: home,
+      industry: 'Mechanical seals',
+      country: 'Poland',
+      contact_email: 'known.contact@example.com',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const base = '/projects/' + project.body.id + '/leads/' + created.body.id;
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    // Only the gaps were even put to the model.
+    assert.ok(requested.includes('city'), JSON.stringify(requested));
+    assert.ok(!requested.includes('industry'));
+    assert.ok(!requested.includes('country'));
+    assert.ok(!requested.includes('contact_email'));
+    assert.ok(!requested.includes('website'));
+    assert.deepEqual(outcome.applied, ['city']);
+    assert.ok(!outcome.proposals.some((proposal) => proposal.field === 'industry'));
+    assert.ok(!outcome.refused.some((entry) => entry.field === 'industry'));
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.city, 'Gdansk');
+    assert.equal(after.industry, 'Mechanical seals');
+    assert.equal(after.country, 'Poland');
+    assert.equal(after.contact_email, 'known.contact@example.com');
+  } finally {
+    f.dispose();
+  }
+});
+test('research answers 409 until an AI provider is configured', async () => {
+  const f = fixture(null, undefined, pageSet({}));
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Unconfigured Research' });
+    assert.equal(project.status, 201);
+    const created = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Anywhere Pumps',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const research = await f.post(
+      '/projects/' + project.body.id + '/leads/' + created.body.id + '/research',
+      {},
+    );
+    assert.equal(research.status, 409, JSON.stringify(research.body));
+    assert.match(research.body.error, /Configure an AI provider/);
+  } finally {
+    f.dispose();
+  }
+});
+test('research stays behind the project access boundary', async () => {
+  const home = 'https://boundary-pumps.example.com';
+  const f = fixture(
+    researchModel(() => ({})),
+    undefined,
+    pageSet({ [home]: 'Boundary Pumps manufactures industrial pumps.' }),
+  );
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Closed Research' });
+    assert.equal(project.status, 201);
+    const created = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Boundary Pumps',
+      website: home,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const account = await f.post('/users', {
+      name: 'Outside Researcher',
+      username: 'outside-researcher',
+      password: 'A-long-researcher-password-2026',
+      role: 'researcher',
+    });
+    assert.equal(account.status, 201);
+    const outsider = request.agent(f.app);
+    const login = await outsider
+      .post('/api/auth/login')
+      .set('X-Requested-With', 'Innovista')
+      .send({ username: 'outside-researcher', password: 'A-long-researcher-password-2026' });
+    assert.equal(login.status, 200);
+    const blocked = await outsider
+      .post('/api/projects/' + project.body.id + '/leads/' + created.body.id + '/research')
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', login.body.csrf_token)
+      .send({});
+    // 404, not 403: membership must not be probeable by ID.
+    assert.equal(blocked.status, 404);
+    const after = (
+      await f.agent.get('/api/projects/' + project.body.id + '/leads/' + created.body.id)
+    ).body as Lead;
+    assert.equal(after.revision, created.body.revision);
+  } finally {
+    f.dispose();
+  }
+});
+test('nothing is written when the saved website cannot be read, and the outcome says so', async () => {
+  const f = fixture(
+    researchModel(() => ({
+      // Never reached: with no page there is nothing to cite against.
+      fields: [{ field: 'city', value: 'Bilbao', evidence: 'Offices in Bilbao, Spain.' }],
+    })),
+    undefined,
+    pageSet({}),
+  );
+  try {
+    await f.setup();
+    const project = await f.post('/projects', { name: 'Unreachable Research' });
+    assert.equal(project.status, 201);
+    const created = await f.post('/projects/' + project.body.id + '/leads', {
+      name: 'Offline Valves',
+      website: 'https://offline-valves.example.com',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const base = '/projects/' + project.body.id + '/leads/' + created.body.id;
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    assert.deepEqual(outcome.applied, []);
+    assert.deepEqual(outcome.proposals, []);
+    assert.deepEqual(outcome.refused, []);
+    assert.deepEqual(outcome.tried, []);
+    assert.equal(outcome.discovered, false);
+    assert.equal(outcome.notes.length, 1);
+    assert.match(outcome.notes[0], /The saved website could not be read/);
+    assert.match(outcome.notes[0], /This website could not be reached/);
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.city, '');
+    assert.equal(after.revision, created.body.revision);
+  } finally {
+    f.dispose();
+  }
+});
 test('lead feedback becomes project training without rewriting the original result', async () => {
   const f = fixture();
   try {
@@ -1638,6 +2174,8 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       contact_email: 'dana@mailable.com',
     });
     const leadBase = base + '/leads/' + created.body.id;
+    // The mailbox belongs to this project, so it is where this project's mail is configured.
+    const mailbox = base + '/mailbox/email';
     // Nothing can be sent before a mailbox exists.
     const early = await f.post(leadBase + '/email', {
       to: 'dana@mailable.com',
@@ -1645,10 +2183,10 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       body: 'This body is comfortably longer than the minimum length.',
     });
     assert.equal(early.status, 409);
-    assert.match(early.body.error, /No workspace mailbox is configured/);
+    assert.match(early.body.error, /This project has no mailbox yet/);
     // A private or loopback mail host is refused, like any other outbound target.
     for (const host of ['localhost', '127.0.0.1', '10.0.0.5', 'mail.internal']) {
-      const bad = await f.put('/settings/email', {
+      const bad = await f.put(mailbox, {
         host,
         port: 587,
         from_email: 'research@innovista.example',
@@ -1659,7 +2197,7 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
     // Port 25 is relay, not submission.
     assert.equal(
       (
-        await f.put('/settings/email', {
+        await f.put(mailbox, {
           host: '8.8.8.8',
           port: 25,
           from_email: 'research@innovista.example',
@@ -1668,7 +2206,7 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       ).status,
       400,
     );
-    const saved = await f.put('/settings/email', {
+    const saved = await f.put(mailbox, {
       host: '8.8.8.8',
       port: 587,
       username: 'research@innovista.example',
@@ -1681,8 +2219,9 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
     // The password never comes back out.
     assert.equal(saved.body.has_password, true);
     assert.equal(saved.body.configured, true);
+    assert.equal(saved.body.project_id, project.id);
     assert.ok(!JSON.stringify(saved.body).includes('mailbox-password'));
-    assert.ok(!(await f.agent.get('/api/settings/email')).text.includes('mailbox-password'));
+    assert.ok(!(await f.agent.get('/api' + mailbox)).text.includes('mailbox-password'));
     // A researcher cannot read or change the mailbox.
     const account = await f.post('/users', {
       name: 'Plain Researcher',
@@ -1697,7 +2236,7 @@ test('email sending is gated, header-safe, escaped and logged whether it succeed
       .set('X-Requested-With', 'Innovista')
       .send({ username: 'plain-researcher', password: 'A-long-researcher-password-2026' });
     assert.equal(login.status, 200);
-    assert.equal((await researcher.get('/api/settings/email')).status, 403);
+    assert.equal((await researcher.get('/api' + mailbox)).status, 403);
     // The draft is built from the qualification.
     assert.equal((await f.post(leadBase + '/qualify', {})).status, 200);
     const draft = await f.agent.get('/api' + leadBase + '/email/draft');
@@ -1785,7 +2324,7 @@ test('the block editor renders email-safe HTML, merges the subject, and names a 
     const leadBase = base + '/leads/' + created.body.id;
     assert.equal(
       (
-        await f.put('/settings/email', {
+        await f.put(base + '/mailbox/email', {
           host: '8.8.8.8',
           port: 587,
           password: 'mailbox-password',
@@ -1873,4 +2412,309 @@ test('the block editor renders email-safe HTML, merges the subject, and names a 
   } finally {
     f.dispose();
   }
+});
+
+/**
+ * The leads status filter must stay an owned dropdown. A native <select> has now shipped twice
+ * and both times users reported it as "not clickable": the OS popup cannot be aligned or padded
+ * and its hit area does not match the control. This asserts the control, not an implementation
+ * detail -- if the filter is deliberately redesigned, update this test in the same commit.
+ */
+test('the leads status filter is an owned dropdown, not a native select', () => {
+  const source = fs.readFileSync(new URL('../src/Leads.tsx', import.meta.url), 'utf8');
+  const start = source.indexOf('className="table-toolbar"');
+  const end = source.indexOf('className="selection-bar"');
+  assert.ok(start > 0 && end > start, 'could not locate the leads table toolbar');
+  const toolbar = source.slice(start, end);
+  assert.match(toolbar, /className="filter-dropdown"/, 'the owned filter menu is missing');
+  assert.ok(
+    !toolbar.includes('<select'),
+    'the status filter is a native <select> again; it reads as unclickable to users',
+  );
+  assert.match(toolbar, /role="listbox"/, 'the filter menu lost its listbox role');
+});
+
+test('a real page sentence does not authorize an invented value', async () => {
+  // The whole page text is in the model's prompt, so quoting the page is free. These two values
+  // are cited to sentences that genuinely appear on the site and are still fabrications: the
+  // page contains no email address and no telephone number at all.
+  const f = fixture(
+    researchModel(() => ({
+      fields: [
+        {
+          field: 'contact_email',
+          value: 'procurement@rotterdam-pumps.example.com',
+          evidence: 'It has worked from Rotterdam since 1962.',
+        },
+        {
+          field: 'contact_phone',
+          value: '+31 10 555 0142',
+          evidence:
+            'Rotterdam Pump Works is a specialist in chemical process pumps for the chemical industry.',
+        },
+        {
+          field: 'employee_count',
+          value: '1962',
+          evidence: 'It has worked from Rotterdam since 1962.',
+        },
+      ],
+    })),
+    undefined,
+    pageSet({ 'https://example.org': pumpSite, [pumpHome]: pumpSite }),
+  );
+  try {
+    await f.setup();
+    const { base, lead } = await reviewedPumpLead(f);
+    const research = await f.post(base + '/research', {});
+    assert.equal(research.status, 200, JSON.stringify(research.body));
+    const outcome = research.body as ResearchOutcome;
+    assert.deepEqual(outcome.applied, []);
+    assert.deepEqual(outcome.proposals, []);
+    assert.equal(outcome.refused.length, 3, JSON.stringify(outcome.refused));
+    for (const refusal of outcome.refused)
+      assert.match(refusal.reason, /does not contain this value|not shaped like/);
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.contact_email, '');
+    assert.equal(after.contact_phone, '');
+    assert.equal(after.employee_count, '');
+    // Nothing moved, so the earlier verdict still stands.
+    assert.equal(after.revision, lead.revision);
+    assert.equal(after.reviewed, true);
+    assert.equal(after.stale, false);
+    assert.equal(
+      (f.db.prepare('SELECT count(*) AS n FROM lead_research_citations').get() as { n: number }).n,
+      0,
+    );
+  } finally {
+    f.dispose();
+  }
+});
+
+test('an applied value keeps its citation, and erasing the contact erases the provenance too', async () => {
+  const site =
+    'Harborline Filtration builds filtration skids in Porto. ' +
+    'Write to sales@harborline.example.com or call +31 10 4455 66 for the engineering desk. ' +
+    'The company employs 80 people across two sites.';
+  const home = 'https://harborline.example.com';
+  const f = fixture(
+    researchModel(() => ({
+      fields: [
+        {
+          field: 'contact_email',
+          value: 'sales@harborline.example.com',
+          evidence:
+            'Write to sales@harborline.example.com or call +31 10 4455 66 for the engineering desk.',
+        },
+        {
+          field: 'employee_count',
+          value: '80',
+          evidence: 'The company employs 80 people across two sites.',
+        },
+      ],
+    })),
+    undefined,
+    pageSet({ 'https://example.org': site, [home]: site }),
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const created = await f.post('/projects/' + project.id + '/leads', {
+      name: 'Harborline Filtration',
+      website: home,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const base = '/projects/' + project.id + '/leads/' + created.body.id;
+    const outcome = (await f.post(base + '/research', {})).body as ResearchOutcome;
+    assert.deepEqual((outcome.applied ?? []).sort(), ['contact_email', 'employee_count']);
+    const stored = f.db
+      .prepare('SELECT field,value,evidence,source_url FROM lead_research_citations ORDER BY field')
+      .all() as Array<{ field: string; value: string; evidence: string; source_url: string }>;
+    assert.equal(stored.length, 2, JSON.stringify(stored));
+    assert.equal(stored[0].field, 'contact_email');
+    assert.equal(stored[0].source_url, home);
+    assert.match(stored[0].evidence, /sales@harborline\.example\.com/);
+    // Removing the contact removes the quote that contains the personal detail.
+    const erased = await f.agent
+      .delete('/api' + base + '/contact')
+      .set('X-Requested-With', 'Innovista')
+      .set('X-CSRF-Token', f.csrf);
+    assert.equal(erased.status, 200, JSON.stringify(erased.body));
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.contact_email, '');
+    assert.equal(after.contact_phone, '');
+    const left = f.db
+      .prepare("SELECT field FROM lead_research_citations WHERE field LIKE 'contact_%'")
+      .all() as Array<{ field: string }>;
+    assert.deepEqual(left, []);
+    // The headcount is not personal data, so its provenance stays.
+    assert.equal(
+      (
+        f.db
+          .prepare("SELECT count(*) AS n FROM lead_research_citations WHERE field='employee_count'")
+          .get() as { n: number }
+      ).n,
+      1,
+    );
+  } finally {
+    f.dispose();
+  }
+});
+
+test('research never overwrites a value typed while the pass was running', async () => {
+  const site =
+    'Tideway Compressors assembles compressors in Ghent. Its market is marine compression equipment.';
+  const home = 'https://tideway.example.com';
+  let base = '';
+  let leadId = 0;
+  const f = fixture(
+    // The model call stands in for the slow part of the pass. Someone fills the field in while
+    // it is in flight, which is exactly the race the write-back has to lose gracefully.
+    async (config, system, input) => {
+      if (system.includes('extract company facts')) {
+        f.db.prepare("UPDATE leads SET industry='Typed by a colleague' WHERE id=?").run(leadId);
+        return {
+          fields: [
+            {
+              field: 'industry',
+              value: 'Marine compression equipment',
+              evidence: 'Its market is marine compression equipment.',
+            },
+          ],
+          notes: [],
+        };
+      }
+      if (system.includes('candidate official website domains')) return { domains: [] };
+      return generated(config, system, input);
+    },
+    undefined,
+    pageSet({ 'https://example.org': site, [home]: site }),
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const created = await f.post('/projects/' + project.id + '/leads', {
+      name: 'Tideway Compressors',
+      website: home,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    leadId = created.body.id;
+    base = '/projects/' + project.id + '/leads/' + leadId;
+    const outcome = (await f.post(base + '/research', {})).body as ResearchOutcome;
+    assert.deepEqual(outcome.applied, []);
+    const refusal = outcome.refused.find((entry) => entry.field === 'industry');
+    assert.ok(refusal, JSON.stringify(outcome));
+    assert.match(refusal.reason, /filled in while the research was running/);
+    const after = (await f.agent.get('/api' + base)).body as Lead;
+    assert.equal(after.industry, 'Typed by a colleague');
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a later qualification run does not erase a researched contact', async () => {
+  const site =
+    'Kestrel Filtration Systems builds filtration skids. ' +
+    'Our head of engineering is Pieter de Vries, who specifies bearings for every skid.';
+  const home = 'https://kestrel-filtration.example.com';
+  const f = fixture(
+    async (config, system, input) => {
+      if (system.includes('candidate official website domains')) return { domains: [] };
+      if (system.includes('extract company facts'))
+        return {
+          fields: [
+            {
+              field: 'contact_name',
+              value: 'Pieter de Vries',
+              evidence:
+                'Our head of engineering is Pieter de Vries, who specifies bearings for every skid.',
+            },
+          ],
+          notes: [],
+        };
+      // A qualification that finds no contact of its own must leave the record's contact alone.
+      const result = (await generated(config, system, input)) as {
+        outreach: { contact_name: string; contact_role: string };
+      };
+      return { ...result, outreach: { ...result.outreach, contact_name: '', contact_role: '' } };
+    },
+    undefined,
+    pageSet({ 'https://example.org': site, [home]: site }),
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const created = await f.post('/projects/' + project.id + '/leads', {
+      name: 'Kestrel Filtration Systems',
+      website: home,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const base = '/projects/' + project.id + '/leads/' + created.body.id;
+    const outcome = (await f.post(base + '/research', {})).body as ResearchOutcome;
+    assert.deepEqual(outcome.applied, ['contact_name']);
+    assert.equal(((await f.agent.get('/api' + base)).body as Lead).contact_name, 'Pieter de Vries');
+    const run = await f.post(base + '/qualify', {});
+    assert.equal(run.status, 200, JSON.stringify(run.body));
+    assert.equal(((await f.agent.get('/api' + base)).body as Lead).contact_name, 'Pieter de Vries');
+  } finally {
+    f.dispose();
+  }
+});
+
+test('website verification needs whole words and a page that is not a placeholder', () => {
+  // Substring matching let "maintenance" inside "maintenance-free" identify a company, and half
+  // of a two-word name is one word, so "General Maintenance" matched any page saying "general".
+  assert.equal(
+    pageNamesCompany('Ali Saeed General Maintenance Est.', 'We supply maintenance-free bearings.'),
+    false,
+  );
+  assert.equal(
+    pageNamesCompany('Ali Saeed General Maintenance Est.', 'General enquiries are welcome.'),
+    false,
+  );
+  assert.equal(
+    pageNamesCompany(
+      'Ali Saeed General Maintenance Est.',
+      'Ali Saeed Maintenance keeps plant running in Dubai.',
+    ),
+    true,
+  );
+  // A redirect away from the guessed domain is not this company proving itself.
+  assert.equal(
+    sameSite('acmebuilders.com', 'https://www.hugedomains.com/domain_profile.cfm'),
+    false,
+  );
+  assert.equal(sameSite('acmebuilders.com', 'https://www.acmebuilders.com/en/home'), true);
+});
+
+test('a citation has to contain the value it is offered for', () => {
+  assert.equal(
+    citationSupports('contact_email', 'sales@x.example.com', 'Write to sales@x.example.com today.'),
+    true,
+  );
+  assert.equal(
+    citationSupports('contact_email', 'sales@x.example.com', 'Contact us today.'),
+    false,
+  );
+  // Phones are compared digit by digit, so formatting differences do not matter.
+  assert.equal(citationSupports('contact_phone', '+31 10 4455 66', 'Call +31 (10) 4455-66.'), true);
+  assert.equal(
+    citationSupports('contact_phone', '+31 10 555 0142', 'Call our office today.'),
+    false,
+  );
+  // A year is not a headcount, however genuine the sentence.
+  assert.equal(citationSupports('employee_count', '1962', 'It has worked here since 1962.'), false);
+  assert.equal(citationSupports('employee_count', '80', 'The company employs 80 people.'), true);
+  // Summaries need most of their words, not the whole phrase.
+  assert.equal(
+    citationSupports(
+      'industry',
+      'Chemical process pumps',
+      'A specialist in chemical process pumps.',
+    ),
+    true,
+  );
+  assert.equal(
+    citationSupports('industry', 'Aerospace fasteners', 'A specialist in chemical process pumps.'),
+    false,
+  );
 });

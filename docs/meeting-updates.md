@@ -16,7 +16,7 @@ The supplied transcript contains unrelated conversation and transcription errors
 ## Delivery contract
 
 - Creating a funnel leaves it in draft. An administrator must explicitly start a reviewed funnel; enrollment in an already active funnel can schedule delivery immediately. This implementation is tested with disposable databases and fake transports; it sends no real campaign emails during development.
-- A public HTTPS application origin, configured mailbox and copy address are required for activation. The server processes at most one due message per minute. There is no catch-up burst after downtime.
+- A public HTTPS application origin, a configured mailbox for that project and a copy address are required for activation. The server processes at most one due message per minute per project, choosing the project first so one busy project cannot starve another, and it stops sending for a project whose own inbox is failing. There is no catch-up burst after downtime.
 - Each recipient receives at most three accepted or uncertain sends across the workspace, including individual outreach and other funnels. Suppression and counters survive lead deletion and reimport.
 - Each enrollment/step has a unique delivery key. Concurrent workers cannot reserve it twice. An ambiguous SMTP result is held for review, never retried automatically.
 - Recheck project membership, lead revision, qualification, recipient and opt-out before sending. Editing a lead, removing access or recording a response blocks further automatic delivery.

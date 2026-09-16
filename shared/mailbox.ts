@@ -1,4 +1,8 @@
 export interface IncomingSettings {
+  /** A mailbox belongs to exactly one project. */
+  project_id: number;
+  /** Other projects polling this same inbox; each would ingest its own copy of every message. */
+  shared_with: string[];
   host: string;
   username: string;
   folder: string;
