@@ -70,6 +70,11 @@ services:
       # THE DATABASE. innovista.db (+ -wal/-shm) and .innovista-encryption-key.
       - innovista-research-ai_data:/app/data
 
+      # Where scripts/backup.ts writes. A host directory rather than a named volume, so the
+      # archives can be copied off the box — a backup that only exists inside Docker on the
+      # same disk as the database is not a backup. Must be writable by uid 1000.
+      - ${BACKUP_HOST_PATH:-/srv/innovista-research-ai/backups}:/app/backups
+
       # ---- OPTIONAL: one-time SinterIQ -> Innovista legacy migration ----
       # Disabled by default. server.ts looks for ./sintertechnik.db in the
       # working directory and SKIPS the import when the file is absent, so

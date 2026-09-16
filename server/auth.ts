@@ -222,7 +222,12 @@ export function installAuth(app: Express, db: DB, production: boolean) {
     const loopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(
       req.socket.remoteAddress || '',
     );
-    const configured = process.env.INNOVISTA_SETUP_TOKEN;
+    // A token still shaped like the one in .env.production.example is published in this
+    // repository, so honouring it would let anyone who reaches the sign-in page create the
+    // first administrator. Treat it as unset and refuse setup rather than open the door.
+    const supplied = (process.env.INNOVISTA_SETUP_TOKEN || '').trim();
+    const configured =
+      supplied && !/^__.*__$/.test(supplied) && supplied.length >= 24 ? supplied : undefined;
     const token = typeof req.body.setup_token === 'string' ? req.body.setup_token : '';
     if (
       (production || !loopback || configured) &&

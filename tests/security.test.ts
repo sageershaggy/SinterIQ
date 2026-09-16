@@ -297,6 +297,54 @@ test('production requires an HTTPS origin and setup token; cookies and headers a
   }
 });
 
+test('a placeholder setup token is refused, so a half-configured deploy fails closed', async () => {
+  // .env.production.example ships a placeholder, and that file is public. Honouring a token of
+  // that shape would let anyone who reaches the sign-in page of a freshly deployed instance
+  // create the first administrator with a value they can read in the repository.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'innovista-placeholder-'));
+  const original = process.env.INNOVISTA_SETUP_TOKEN;
+  process.env.INNOVISTA_SETUP_TOKEN = '__replace_me_openssl_rand_base64_48__';
+  const { app, db } = createApp({
+    dataDir: dir,
+    production: true,
+    origin: 'https://research.example.com',
+  });
+  try {
+    const setup = (body: object) =>
+      request(app)
+        .post('/api/auth/setup')
+        .set('Host', 'research.example.com')
+        .set('Origin', 'https://research.example.com')
+        .set('X-Requested-With', 'Innovista')
+        .send(body);
+    const input = {
+      name: 'Placeholder Test',
+      username: 'placeholder-test',
+      password: 'very-long-new-password',
+    };
+    // Offering the placeholder itself must not work...
+    assert.equal(
+      (await setup({ ...input, setup_token: '__replace_me_openssl_rand_base64_48__' })).status,
+      403,
+    );
+    // ...and neither does omitting it: with no usable token, setup is closed, not open.
+    assert.equal((await setup(input)).status, 403);
+    assert.equal(
+      (db.prepare('SELECT count(*) AS n FROM accounts').get() as { n: number }).n,
+      0,
+      'no administrator may exist after a refused setup',
+    );
+    // A token that is too short to be a generated secret is refused for the same reason.
+    process.env.INNOVISTA_SETUP_TOKEN = 'short-token';
+    assert.equal((await setup({ ...input, setup_token: 'short-token' })).status, 403);
+  } finally {
+    db.close();
+    if (original === undefined) delete process.env.INNOVISTA_SETUP_TOKEN;
+    else process.env.INNOVISTA_SETUP_TOKEN = original;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function crc32(buffer: Buffer) {
   let crc = 0xffffffff;
   for (const b of buffer) {

@@ -1,4 +1,4 @@
-# Creating the SinterIQ Jenkins job
+# Creating the Innovista Research AI Jenkins job
 
 `job-config.xml` in this directory is a **Pipeline script from SCM** job. Jenkins clones the repo and runs the root `Jenkinsfile`, so the pipeline is version-controlled with the app.
 

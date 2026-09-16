@@ -1,4 +1,4 @@
-# Deployment Runbook — SinterIQ on the Shared Hostinger VPS
+# Deployment Runbook — Innovista Research AI on the Shared Hostinger VPS
 
 How **Innovista Research AI** (repo `SinterIQ`) runs as one isolated Docker stack behind the host's nginx + TLS, deployed by the existing **Jenkins** pipeline — beside Pomotoro, Tawazun and Sentry, touching none of them.
 
@@ -274,30 +274,84 @@ Then sign in and confirm the Sintertechnik starter project is present with its q
 
 ---
 
-## 8. Backups — the one thing you must not skip
+## 8. Backups and TLS renewal — the two scheduled jobs
 
-The volume holds everything: the database, the uploaded source documents, and the encryption key for provider credentials.
+The volume holds everything: the database, the uploaded source documents, and the encryption key that decrypts every stored provider key and every project mailbox password. There is one copy of all of it.
+
+### Install the nightly job (once)
 
 ```sh
-# Consistent snapshot. Stop the app first: SQLite runs in WAL mode, and copying
-# a live WAL database file alone yields a corrupt backup.
-docker stop innovista-research-ai-app
+# on the VPS, as root
+mkdir -p /srv/innovista-research-ai/backups
 
-docker run --rm \
-  -v innovista-research-ai_data:/data:ro \
-  -v /srv/innovista-research-ai/backups:/backup \
-  alpine tar czf /backup/sinteriq-$(date +%F-%H%M).tgz -C /data .
+# the container runs unprivileged as uid 1000, so it must be able to write here
+chown 1000:1000 /srv/innovista-research-ai/backups
 
-docker start innovista-research-ai-app
+# BACKUP_HOST_PATH in the Jenkins env credential must name this directory; it is
+# bind-mounted at /app/backups by docker-compose.prod.yml. Redeploy once after
+# adding it so the mount exists.
+
+install -m 0755 deploy/host/periodic-daily-innovista /etc/periodic/daily/innovista
+run-parts --test /etc/periodic/daily        # the file must be listed
+/etc/periodic/daily/innovista               # run it once, now, and read the output
+ls -l /srv/innovista-research-ai/backups    # an archive must be there
 ```
 
-The archive contains `innovista.db` **and** `.innovista-encryption-key` — keep them together, and keep the archive encrypted at rest. Restore by extracting into a fresh `innovista-research-ai_data` volume before the first `up`.
+The job backs up first and renews TLS second, and exits non-zero if either fails. It logs through `logger`, so `tail /var/log/messages` is where you check it the next morning — `run-parts` mails nothing on this host.
+
+### What the backup does, and why not `tar`
+
+`scripts/backup.ts` runs inside the running container and uses SQLite `VACUUM INTO`, which writes one consistent file that already contains everything in the write-ahead log. No downtime, and no WAL trap: the database file on its own is routinely a fraction of the real data (4 KB of `innovista.db` beside a 1.1 MB `innovista.db-wal` is normal), so **copying `innovista.db` alone gives you an empty database**. It then runs `PRAGMA integrity_check` on the copy and fails loudly if it is not `ok`, so a corrupt backup is never reported as a success, and it keeps the newest seven sets.
+
+Each archive contains `.innovista-encryption-key`, so **an archive decrypts every stored password**. Copy them off this host and keep them encrypted at rest; a backup sitting next to the database on the same disk protects you from almost nothing.
+
+### Restore
+
+Do this against a scratch volume first and look at the result before pointing the app at it.
+
+```sh
+# 1. pick an archive and unpack it somewhere temporary
+cd /srv/innovista-research-ai/backups && ls -l
+mkdir -p /tmp/restore && tar xzf innovista-backup-<stamp>.tgz -C /tmp/restore
+
+# 2. verify the copy BEFORE trusting it
+docker run --rm -v /tmp/restore:/r node:22-bookworm-slim \
+  node -e "const d=new (require('/r/node_modules/better-sqlite3'))('/r/innovista.db',{readonly:true});console.log(d.pragma('integrity_check'));console.log(d.prepare('SELECT count(*) n FROM leads').get())" \
+  || echo "if better-sqlite3 is not in the archive, run the check inside the app container instead:"
+
+# simpler, using the app image itself:
+docker run --rm -v /tmp/restore:/r -w /app \
+  docker.io/yasinshaikh111/innovista-research-ai:app-latest \
+  node --import tsx -e "const D=require('better-sqlite3');const d=new D('/r/innovista.db',{readonly:true});console.log(d.pragma('integrity_check'),d.prepare('SELECT count(*) n FROM leads').get())"
+
+# 3. only then swap it in
+docker compose -p innovista-research-ai -f docker-compose.prod.yml down
+docker volume rm innovista-research-ai_data          # destroys the current data
+docker volume create innovista-research-ai_data
+docker run --rm -v innovista-research-ai_data:/data -v /tmp/restore:/r alpine \
+  sh -c "cp /r/innovista.db /r/.innovista-encryption-key /data/ && chown -R 1000:1000 /data"
+
+# 4. bring it up and check health
+docker compose -p innovista-research-ai -f docker-compose.prod.yml --env-file <env> up -d
+curl -fsS https://innovista-research-ai.zengineeringapp.com/api/health
+```
+
+The database and the key must be restored **together**: a database without its key cannot decrypt the stored provider key or any mailbox password, and the app will report those as unreadable rather than crashing.
+
+### TLS renewal
+
+Section 3 issues the certificate with `certbot --nginx`. On Debian the certbot package installs a renewal timer; **this host is Alpine, where nothing does** — which is why renewal is part of the nightly job above. Confirm the current state once:
+
+```sh
+certbot certificates          # expiry date for innovista-research-ai.zengineeringapp.com
+ls -l /etc/periodic/daily/    # innovista must be there
+```
 
 ---
 
 ## 9. Adding a staging stack later
 
-Same recipe on a second port: a `Jenkinsfile.staging`, a `docker-compose.staging.yml` with `sinteriq-staging-*` names and a `sinteriq_staging_data` volume, a `staging-innovista-research-ai-env` credential, and a second vhost + cert for `staging-innovista-research-ai.zengineeringapp.com`. This is how `staging-pomotoro.zengineeringapp.com` runs on port `8096`.
+Same recipe on a second port: a `Jenkinsfile.staging`, a `docker-compose.staging.yml` with `innovista-research-ai-staging-*` names and an `innovista-research-ai-staging_data` volume, a `staging-innovista-research-ai-env` credential, and a second vhost + cert for `staging-innovista-research-ai.zengineeringapp.com`. This is how `staging-pomotoro.zengineeringapp.com` runs on port `8096`.
 
 Note that "refresh staging from prod" is a **volume copy** here, not a `mysqldump`:
 

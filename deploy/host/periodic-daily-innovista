@@ -1,0 +1,56 @@
+#!/bin/sh
+# ============================================================
+# Nightly maintenance for Innovista Research AI on the Alpine VPS.
+#
+# Install as /etc/periodic/daily/innovista (no extension — run-parts on Alpine
+# ignores files with a dot in the name) and make it executable:
+#
+#     install -m 0755 deploy/host/periodic-daily-innovista \
+#         /etc/periodic/daily/innovista
+#     run-parts --test /etc/periodic/daily      # confirm it is listed
+#
+# Two jobs, deliberately in this order: back the data up first, so a renewal
+# that restarts anything happens after there is a copy to fall back on.
+#
+# Output goes to the system log via logger, because run-parts mails nothing on
+# this host: check it with `tail /var/log/messages` after the first night.
+# ============================================================
+set -eu
+
+CONTAINER=innovista-research-ai-app
+KEEP=7
+say() { logger -t innovista "$1"; echo "innovista: $1"; }
+
+# ---- 1. Backup ---------------------------------------------------------------
+# Runs inside the container so the database is copied with VACUUM INTO while the
+# app keeps serving. /app/backups is the host directory bound in
+# docker-compose.prod.yml, so the archives land outside Docker where they can be
+# copied off the box. Each archive contains the encryption key and therefore
+# decrypts every stored password: move them somewhere encrypted, off this host.
+if docker ps --filter "name=^${CONTAINER}$" --filter status=running --quiet | grep -q .; then
+  if docker exec "$CONTAINER" node --import tsx scripts/backup.ts /app/backups --keep="$KEEP"; then
+    say "backup ok"
+  else
+    say "BACKUP FAILED — investigate today; there may be no recent copy of the database"
+    exit 1
+  fi
+else
+  say "BACKUP SKIPPED — ${CONTAINER} is not running"
+  exit 1
+fi
+
+# ---- 2. TLS renewal ----------------------------------------------------------
+# The runbook used to say the certificate "auto-renews thereafter". That is true
+# on Debian, where the certbot package installs a systemd timer; this host is
+# Alpine, where nothing schedules renewal and the certificate simply expires.
+# certbot exits 0 when the certificate is not yet due, so this is safe nightly.
+if command -v certbot >/dev/null 2>&1; then
+  if certbot renew --quiet --deploy-hook "nginx -s reload"; then
+    say "certbot renew ok"
+  else
+    say "CERTBOT RENEW FAILED — the site will start failing TLS when the certificate expires"
+    exit 1
+  fi
+else
+  say "certbot is not installed; skipping renewal"
+fi

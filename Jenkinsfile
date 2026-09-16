@@ -95,6 +95,10 @@ pipeline {
               "docker inspect --format '{{.Config.Image}}' innovista-research-ai-app 2>/dev/null || true").trim()
           }
           sh '''
+            # The env file carries the setup token, the encryption key and the provider keys.
+            # Removing it only after `compose up` left it in the workspace whenever the pull or
+            # the deploy failed, on a Jenkins shared with other jobs. A trap covers every exit.
+            trap 'rm -f .env.deploy' EXIT INT TERM
             cp "$ENV_SRC" .env.deploy
 
             # Force the tag we just built/pushed into the env used for this deploy.
@@ -117,7 +121,6 @@ pipeline {
 
             docker compose -p ${PROJECT} -f ${COMPOSE_FILE} --env-file .env.deploy pull
             docker compose -p ${PROJECT} -f ${COMPOSE_FILE} --env-file .env.deploy up -d
-            rm -f .env.deploy
 
             # Prune ONLY this app's dangling images — never touches pomotoro/tawazun.
             docker image prune -f --filter "label=com.zengineering.app=innovista-research-ai"
@@ -153,6 +156,7 @@ pipeline {
           def prevTag = env.PREV_APP.tokenize(':').last().replaceFirst(/^app-/, '')
           withCredentials([file(credentialsId: 'innovista-research-ai-env', variable: 'ENV_SRC')]) {
             sh """
+              trap 'rm -f .env.rollback' EXIT INT TERM
               cp "\$ENV_SRC" .env.rollback
               if grep -q '^IMAGE_TAG=' .env.rollback; then
                 sed -i 's|^IMAGE_TAG=.*|IMAGE_TAG=${prevTag}|' .env.rollback
@@ -160,7 +164,6 @@ pipeline {
                 echo 'IMAGE_TAG=${prevTag}' >> .env.rollback
               fi
               docker compose -p ${PROJECT} -f ${COMPOSE_FILE} --env-file .env.rollback up -d || true
-              rm -f .env.rollback
             """
           }
         } else {
