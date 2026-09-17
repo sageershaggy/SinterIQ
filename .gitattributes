@@ -1,0 +1,19 @@
+# Files that are executed by the Linux host must keep LF endings regardless of
+# the platform they are checked out on.
+#
+# Why this exists: deploy/host/periodic-daily-innovista is checked out on
+# Windows, uploaded to the Alpine VPS by the deploy, and installed as
+# /etc/periodic/daily/innovista. With Git's default autocrlf on Windows it
+# arrived with CRLF, so its shebang read "#!/bin/sh\r" — an interpreter that
+# does not exist — and run-parts failed with the famously unhelpful
+# "not found" even though the file was present and executable.
+#
+# Anything with a shebang, or parsed by a shell on the host, belongs here.
+deploy/host/*   text eol=lf
+*.sh            text eol=lf
+
+# Same reasoning: these are read by Linux tooling, not by Windows.
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+Jenkinsfile     text eol=lf
+*.conf          text eol=lf
