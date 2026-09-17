@@ -57,6 +57,20 @@ docker-compose*.yml
 Jenkinsfile
 deploy
 
+# Agent/dev tooling. None of it is part of the running app, and it is large:
+# .claude alone is ~240 files of skill markdown as of b7c9bcb. The manual deploy
+# happened to exclude .claude from its tar, but Jenkins builds from a git clone,
+# so without these lines all of it lands in the build context.
+#
+# .claude-flow/{data,logs,sessions} is agent RUNTIME state and is gitignored,
+# which means its contents are unreviewed — exactly what should never be copied
+# toward a production image.
+.claude
+.claude-flow
+.swarm
+.agents
+.mcp.json
+
 # Logs, editor and OS cruft
 *.log
 npm-debug.log*
