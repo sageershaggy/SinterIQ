@@ -168,9 +168,18 @@ function fixture(
   fetchPage?: (url: string) => Promise<WebsitePage>,
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'innovista-test-'));
+  const decisionKeys: string[] = [];
   const { app, db } = createApp({
     dataDir: dir,
     generate: call ?? undefined,
+    createDecision: async ({ model, apiKey }) => {
+      decisionKeys.push(apiKey);
+      return {
+        answers: { ok: { type: 'noul' as const, noul: 0.97 } },
+        model: model || 'typesafe/jev-1.13',
+        latency_ms: 12,
+      };
+    },
     sendMail: mail as never,
     fetchWebsite:
       fetchPage ||
@@ -201,6 +210,7 @@ function fixture(
     app,
     db,
     agent,
+    decisionKeys,
     post,
     put,
     get csrf() {
@@ -717,6 +727,33 @@ test('admin settings encrypt keys, never expose plaintext, block key forwarding 
     assert.equal(testPing.status, 200);
     assert.equal(testPing.body.ok, true);
     assert.equal(testPing.body.model, 'fixture-model');
+    assert.equal(testPing.body.mode, 'chat');
+    const jevPing = await f.post('/settings/llm/test', {
+      mode: 'decisions',
+      model: 'typesafe/jev-1.13',
+      api_key: 'sk-or-test-fixture',
+    });
+    assert.equal(jevPing.status, 200);
+    assert.equal(jevPing.body.ok, true);
+    assert.equal(jevPing.body.mode, 'decisions');
+    assert.equal(jevPing.body.model, 'typesafe/jev-1.13');
+    assert.equal(jevPing.body.answers.ok.type, 'noul');
+    assert.equal(f.decisionKeys.at(-1), 'sk-or-test-fixture');
+    // Non-OpenRouter chat keys must never be forwarded to the Decisions API.
+    const previous = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      const noReuse = await f.post('/settings/llm/test', {
+        mode: 'decisions',
+        model: 'typesafe/jev-1.13',
+      });
+      assert.equal(noReuse.status, 200);
+      assert.equal(f.decisionKeys.at(-1), 'fixture');
+      assert.equal(f.decisionKeys.includes(secret), false);
+    } finally {
+      if (previous === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = previous;
+    }
     const stored = f.db.prepare("SELECT value FROM settings WHERE key='api_key'").get() as {
       value: string;
     };

@@ -23,6 +23,13 @@ import {
   type Generate,
   type AiConfig,
 } from './ai';
+import {
+  createDecision,
+  healthDecisionQuestions,
+  isDecisionsModel,
+  isOpenRouterBase,
+  DEFAULT_JEV_MODEL,
+} from './decisions';
 import { researchMissing, researchableFields } from './enrich';
 import {
   HttpError,
@@ -309,6 +316,7 @@ export function createApp(options: {
   production?: boolean;
   origin?: string;
   generate?: Generate;
+  createDecision?: typeof createDecision;
   fetchWebsite?: typeof fetchWebsite;
   extractDocument?: typeof extractDocument;
   sendMail?: Send;
@@ -317,6 +325,7 @@ export function createApp(options: {
   const production = options.production || false;
   const { db, secrets } = openDatabase(options.dataDir, options.legacyPath);
   const callAi = options.generate || generate;
+  const decide = options.createDecision || createDecision;
   const readWebsite = options.fetchWebsite || fetchWebsite;
   const readDocument = options.extractDocument || extractDocument;
   const deliver = options.sendMail || sendMail;
@@ -408,11 +417,23 @@ export function createApp(options: {
   });
   const expensiveLimit = rateLimit({
     windowMs: 15 * 60_000,
-    limit: 40,
+    // Enough for a few 20-lead batches plus training/research, without opening unbounded spend.
+    limit: 100,
     keyGenerator: (req) => String(req.user.id),
     standardHeaders: 'draft-8',
     legacyHeaders: false,
-    message: { error: 'Analysis limit reached. Please retry in 15 minutes.' },
+    message: {
+      error:
+        'Analysis limit reached (100 AI runs per 15 minutes). Wait, then continue with the next batch of up to 20 leads.',
+    },
+  });
+  const mailLimit = rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 60,
+    keyGenerator: (req) => String(req.user.id),
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'Email send limit reached. Please retry in 15 minutes.' },
   });
   const fileLimit = rateLimit({
     windowMs: 15 * 60_000,
@@ -1802,6 +1823,8 @@ export function createApp(options: {
         model: text(200).optional(),
         base_url: text(2000).optional(),
         api_key: text(1000).optional(),
+        /** Use OpenRouter Decisions / TypeSafe Jev instead of chat/completions. */
+        mode: z.enum(['chat', 'decisions']).optional(),
       })
       .strict()
       .parse(req.body);
@@ -1809,9 +1832,46 @@ export function createApp(options: {
     const provider = input.provider || current.provider;
     const model = input.model?.trim() || current.model;
     const base_url = input.base_url?.trim() || current.base_url;
-    const api_key = input.api_key ? input.api_key.trim() : current.api_key;
-    if (!api_key && !options.generate)
-      throw new HttpError(400, 'Enter an API key to test the connection.');
+    const useDecisions =
+      input.mode === 'decisions' || (input.mode !== 'chat' && isDecisionsModel(model));
+    // Decisions go to OpenRouter only. Never forward a Gemini/OpenAI chat key there —
+    // reuse the saved key only when chat is already configured for OpenRouter.
+    const api_key = useDecisions
+      ? (input.api_key?.trim() ||
+          process.env.OPENROUTER_API_KEY?.trim() ||
+          (current.provider === 'openai_compatible' &&
+          isOpenRouterBase(current.base_url) &&
+          current.api_key
+            ? current.api_key
+            : '') ||
+          '')
+      : input.api_key
+        ? input.api_key.trim()
+        : current.api_key;
+    if (!api_key && !(useDecisions ? options.createDecision : options.generate))
+      throw new HttpError(
+        400,
+        useDecisions
+          ? 'Enter an OpenRouter API key to test Jev decisions (or set OPENROUTER_API_KEY).'
+          : 'Enter an API key to test the connection.',
+      );
+    if (useDecisions) {
+      const decisionModel = isDecisionsModel(model) ? model : DEFAULT_JEV_MODEL;
+      const result = await decide({
+        apiKey: api_key || 'fixture',
+        model: decisionModel,
+        state: 'Innovista Research AI health check ping.',
+        questions: healthDecisionQuestions(),
+      });
+      res.json({
+        ok: true,
+        mode: 'decisions',
+        model: result.model,
+        latency_ms: result.latency_ms,
+        answers: result.answers,
+      });
+      return;
+    }
     if (provider === 'openai_compatible') {
       const url = checkedUrl(base_url);
       if (url.protocol !== 'https:' || url.search || url.hash)
@@ -1831,7 +1891,7 @@ export function createApp(options: {
       { ping: true },
     );
     const latency_ms = Date.now() - start;
-    res.json({ ok: true, model, latency_ms });
+    res.json({ ok: true, mode: 'chat', model, latency_ms });
   });
   /** Every project sends from its own mailbox, so these routes are project-scoped. */
   app.get('/api/projects/:projectId/mailbox/email', adminOnly, (req, res) => {
@@ -1884,7 +1944,7 @@ export function createApp(options: {
   app.post(
     '/api/projects/:projectId/mailbox/email/test',
     adminOnly,
-    expensiveLimit,
+    mailLimit,
     async (req, res) => {
       const project = getProject(db, positiveId(req.params.projectId), req.user);
       const config = getEmailConfig(db, secrets, project.id);
@@ -1926,7 +1986,7 @@ export function createApp(options: {
       })(),
     });
   });
-  app.post('/api/projects/:projectId/leads/:leadId/email', expensiveLimit, async (req, res) => {
+  app.post('/api/projects/:projectId/leads/:leadId/email', mailLimit, async (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
     const input = emailSendSchema.parse(req.body);

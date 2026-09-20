@@ -259,7 +259,20 @@ export default function Leads({
         });
         completed++;
       } catch (e) {
-        failures.push((leads.find((l) => l.id === id)?.name || id) + ': ' + (e as Error).message);
+        const message = (e as Error).message;
+        failures.push((leads.find((l) => l.id === id)?.name || id) + ': ' + message);
+        // Stop burning the window once the server rate limit trips — remaining rows would fail the same way.
+        if (/analysis limit reached/i.test(message)) {
+          const remaining = selected.length - index - 1;
+          if (remaining > 0)
+            failures.push(
+              remaining +
+                ' more lead' +
+                (remaining === 1 ? '' : 's') +
+                ' skipped until the limit resets.',
+            );
+          break;
+        }
       }
     }
     if (mounted.current) {
@@ -455,7 +468,10 @@ export default function Leads({
           </div>
           {selected.length > 0 && (
             <div className="selection-bar">
-              <span>{selected.length} selected</span>
+              <span>
+                {selected.length} selected
+                <small className="table-subtext"> · up to 20 per batch</small>
+              </span>
               <button
                 className="button primary"
                 disabled={!!busy}

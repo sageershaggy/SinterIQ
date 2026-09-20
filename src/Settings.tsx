@@ -89,16 +89,60 @@ export default function Settings({
     setError('');
     setTestResult('');
     try {
-      const res = await api<{ ok: boolean; model: string; latency_ms: number }>('/settings/llm/test', {
+      const res = await api<{
+        ok: boolean;
+        model: string;
+        latency_ms: number;
+        mode?: string;
+      }>('/settings/llm/test', {
         method: 'POST',
         body: json({
           provider: settings.provider,
           model: settings.model,
           base_url: settings.base_url,
           api_key: key || undefined,
+          mode: 'chat',
         }),
       });
       const msg = 'Connected to ' + res.model + ' successfully (' + res.latency_ms + 'ms).';
+      setTestResult(msg);
+      notify(msg);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+  async function testJevDecision() {
+    if (!settings) return;
+    setBusy('test-jev');
+    setError('');
+    setTestResult('');
+    try {
+      const res = await api<{
+        ok: boolean;
+        model: string;
+        latency_ms: number;
+        mode?: string;
+        answers?: Record<string, { type: string; noul?: number }>;
+      }>('/settings/llm/test', {
+        method: 'POST',
+        body: json({
+          provider: 'openai_compatible',
+          model: 'typesafe/jev-1.13',
+          base_url: 'https://openrouter.ai/api/v1',
+          api_key: key || undefined,
+          mode: 'decisions',
+        }),
+      });
+      const noul = res.answers?.ok?.type === 'noul' ? res.answers.ok.noul : undefined;
+      const msg =
+        'Jev decision OK via ' +
+        res.model +
+        ' (' +
+        res.latency_ms +
+        'ms)' +
+        (noul !== undefined ? ' · health noul=' + noul.toFixed(2) : '');
       setTestResult(msg);
       notify(msg);
     } catch (e) {
@@ -216,9 +260,14 @@ export default function Settings({
                       onChange={(e) => setSettings({ ...settings, base_url: e.target.value })}
                       required
                       maxLength={2000}
-                      placeholder="https://api.openai.com/v1"
+                      placeholder="https://openrouter.ai/api/v1"
                     />
-                    <small>Public HTTPS endpoints only.</small>
+                    <small>
+                      Public HTTPS only. For OpenRouter chat models use{' '}
+                      <code>https://openrouter.ai/api/v1</code>. TypeSafe Jev uses the Decisions API
+                      (Test Jev decision) — do not set the chat model to{' '}
+                      <code>typesafe/jev-1.13</code>.
+                    </small>
                   </label>
                 )}
                 <label>
@@ -288,7 +337,29 @@ export default function Settings({
                       </>
                     )}
                   </button>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={!!busy}
+                    onClick={() => void testJevDecision()}
+                    title="Uses the key typed above, OPENROUTER_API_KEY on the server, or a saved OpenRouter chat key — never a Gemini key"
+                  >
+                    {busy === 'test-jev' ? (
+                      <Spinner text="Testing Jev…" />
+                    ) : (
+                      <>
+                        <CheckCircle2 size={16} />
+                        Test Jev decision
+                      </>
+                    )}
+                  </button>
                 </div>
+                <p className="fine-print">
+                  Test Jev uses OpenRouter&apos;s Decisions API with{' '}
+                  <code>typesafe/jev-1.13</code>. Paste an OpenRouter key above, or set{' '}
+                  <code>OPENROUTER_API_KEY</code> on the server. A Gemini chat key is never sent to
+                  OpenRouter.
+                </p>
               </form>
             )}
           </section>
