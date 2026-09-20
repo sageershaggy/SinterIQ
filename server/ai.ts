@@ -81,28 +81,38 @@ export const generate: Generate = async (config, system, input) => {
     } else {
       if (!config.base_url.startsWith('https://'))
         throw new HttpError(400, 'AI provider endpoints must use public HTTPS.');
-      const response = await publicRequest(
-        config.base_url.replace(/\/$/, '') + '/chat/completions',
-        {
+      const endpoint = config.base_url.replace(/\/$/, '') + '/chat/completions';
+      const headers = {
+        Authorization: 'Bearer ' + config.api_key,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://innovista-ai.local',
+        'X-Title': 'Innovista Research AI',
+      };
+      const messages = [
+        { role: 'system', content: system },
+        { role: 'user', content: JSON.stringify(input) },
+      ];
+      // Prefer JSON mode when the provider supports it; many OpenAI-compatible hosts
+      // still reject response_format, so fall back to a plain chat completion.
+      const post = (withJsonMode: boolean) =>
+        publicRequest(endpoint, {
           method: 'POST',
           timeout: 90000,
           maxBytes: 1_000_000,
-          headers: {
-            Authorization: 'Bearer ' + config.api_key,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://innovista-ai.local',
-            'X-Title': 'Innovista Research AI',
-          },
+          headers,
           body: JSON.stringify({
             model: config.model,
-            response_format: { type: 'json_object' },
-            messages: [
-              { role: 'system', content: system },
-              { role: 'user', content: JSON.stringify(input) },
-            ],
+            ...(withJsonMode ? { response_format: { type: 'json_object' } } : {}),
+            messages,
           }),
-        },
-      );
+        });
+      let response = await post(true);
+      if (
+        response.status === 400 &&
+        /response_format|json_object|unknown parameter/i.test(response.text)
+      ) {
+        response = await post(false);
+      }
       if (response.status < 200 || response.status >= 300) {
         let detail = '';
         try {

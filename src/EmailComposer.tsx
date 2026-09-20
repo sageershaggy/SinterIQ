@@ -31,21 +31,27 @@ export function EmailComposer({
   lead,
   onSent,
   onCampaign,
+  startEditing = false,
 }: {
   base: string;
   lead: Lead;
   onSent: () => void;
   onCampaign: () => void;
+  /** When true, skip the template grid and open the editor with a blank message. */
+  startEditing?: boolean;
 }) {
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [categories, setCategories] = useState<Array<{ value: string; label: string }>>([]);
   const [mergeFields, setMergeFields] = useState<string[]>([]);
   const [category, setCategory] = useState<TemplateCategory | 'all'>('all');
-  const [picking, setPicking] = useState(true);
-  const [blocks, setBlocks] = useState<EmailBlock[]>([]);
+  const [picking, setPicking] = useState(!startEditing);
+  const [blocks, setBlocks] = useState<EmailBlock[]>(() =>
+    startEditing ? [palette[1].make()] : [],
+  );
   const [subject, setSubject] = useState('');
   const [previewText, setPreviewText] = useState('');
   const [to, setTo] = useState(lead.contact_email);
+  const toInputRef = useRef<HTMLInputElement | null>(null);
   const [device, setDevice] = useState<Device>('desktop');
   const [preview, setPreview] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -126,7 +132,13 @@ export function EmailComposer({
     return () => {
       cancelled = true;
     };
-  }, [base]);
+  }, [base, lead.contact_email]);
+
+  useEffect(() => {
+    if (loading || picking) return;
+    const timer = setTimeout(() => toInputRef.current?.focus(), 50);
+    return () => clearTimeout(timer);
+  }, [loading, picking]);
 
   // The preview is rendered by the server, so what is shown is what will be delivered.
   useEffect(() => {
@@ -365,6 +377,7 @@ export function EmailComposer({
             <label>
               To
               <input
+                ref={toInputRef}
                 type="email"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}

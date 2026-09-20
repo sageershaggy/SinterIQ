@@ -889,6 +889,58 @@
 .funnel-editor-heading input {
   max-width: 130px;
 }
+.funnel-template-picker {
+  position: relative;
+  display: grid;
+  gap: 6px;
+}
+.funnel-template-picker .field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.funnel-template-trigger {
+  justify-content: space-between;
+  width: 100%;
+}
+.funnel-template-trigger-wrap {
+  position: relative;
+}
+.funnel-template-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(25, 46, 38, 0.14);
+  display: flex;
+  flex-direction: column;
+}
+.funnel-template-menu button {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.funnel-template-menu button:hover {
+  background: #f0f5e8;
+}
+.funnel-template-menu > p {
+  margin: 0;
+  padding: 12px;
+}
 .funnel-candidates {
   max-height: 280px;
   overflow: auto;
@@ -2721,14 +2773,15 @@ input::file-selector-button {
   border-color: var(--green);
   box-shadow: 0 0 0 3px rgba(49, 90, 63, 0.12);
 }
-.filter-menu {
-  position: relative;
-  margin-left: auto;
-}
 .filter-menu .table-filter {
   margin-left: 0;
   width: 100%;
   text-align: left;
+}
+.filter-menu {
+  position: relative;
+  margin-left: auto;
+  z-index: 20;
 }
 .filter-value {
   flex: 1;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Plus,
   Pause,
@@ -10,6 +10,7 @@ import {
   GitBranch,
   AlignLeft,
   LayoutTemplate,
+  ChevronDown,
 } from 'lucide-react';
 import type { EmailBlock, Lead, Project, User, EmailTemplate } from '../shared/types';
 import type { Enrollment, Funnel, FunnelStep, OutreachOutcome } from '../shared/funnels';
@@ -396,6 +397,8 @@ function FunnelEditor({
     [error, setError] = useState('');
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [mergeFields, setMergeFields] = useState<string[]>([]);
+  const [templateMenu, setTemplateMenu] = useState<number | null>(null);
+  const templateMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     let cancelled = false;
     api<{ templates: EmailTemplate[]; merge_fields: string[] }>(
@@ -413,6 +416,21 @@ function FunnelEditor({
       cancelled = true;
     };
   }, [base]);
+  useEffect(() => {
+    if (templateMenu === null) return;
+    const away = (event: MouseEvent) => {
+      if (!templateMenuRef.current?.contains(event.target as Node)) setTemplateMenu(null);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTemplateMenu(null);
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [templateMenu]);
   const update = (i: number, value: Partial<StepDraft>) =>
     setSteps((list) => list.map((s, index) => (index === i ? { ...s, ...value } : s)));
   /** Seeding in both directions is what makes the choice reversible: neither format is lost. */
@@ -498,7 +516,9 @@ function FunnelEditor({
         </div>
         <p className="muted">
           Edit the starter messages for this audience. Write each one as plain text, or design it
-          with blocks that are delivered as email-safe HTML.{' '}
+          with blocks that are delivered as email-safe HTML. Set each message’s To address (default{' '}
+          {'{{contact_email}}'}
+          ).{' '}
           {mergeFields.length
             ? 'Merge fields work in both: ' +
               mergeFields.map((field) => '{{' + field + '}}').join(', ') +
@@ -510,39 +530,75 @@ function FunnelEditor({
           <fieldset className="form-fieldset" key={i}>
             <legend>Message {i + 1}</legend>
             <label>
-              {step.designed ? 'Use template design' : 'Use template text'}
-              <select
-                value=""
-                onChange={(e) => {
-                  const template = templates.find((item) => item.id === e.target.value);
-                  if (!template) return;
-                  // A designed message takes the template's own blocks; a plain one takes
-                  // the text and links flattened out of them.
-                  update(
-                    i,
-                    step.designed
-                      ? {
-                          subject: template.subject,
-                          blocks: structuredClone(template.blocks),
-                          selected: 0,
-                        }
-                      : { subject: template.subject, body: textFromBlocks(template.blocks) },
-                  );
-                }}
-              >
-                <option value="">Choose a saved or starter template…</option>
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}
-                  </option>
-                ))}
-              </select>
+              To (Recipient)
+              <input
+                value={step.to ?? '{{contact_email}}'}
+                maxLength={200}
+                placeholder="{{contact_email}}"
+                onChange={(e) => update(i, { to: e.target.value })}
+              />
+              <small>
+                Default is {'{{contact_email}}'}. You can use another merge field or a fixed address.
+              </small>
+            </label>
+            <div
+              className="funnel-template-picker"
+              ref={templateMenu === i ? templateMenuRef : undefined}
+            >
+              <span className="field-label">
+                {step.designed ? 'Use template design' : 'Use template text'}
+              </span>
+              <div className="funnel-template-trigger-wrap">
+                <button
+                  type="button"
+                  className="button secondary funnel-template-trigger"
+                  aria-haspopup="listbox"
+                  aria-expanded={templateMenu === i}
+                  onClick={() => setTemplateMenu((open) => (open === i ? null : i))}
+                >
+                  <span>Choose a saved or starter template…</span>
+                  <ChevronDown size={15} />
+                </button>
+                {templateMenu === i && (
+                  <div className="funnel-template-menu" role="listbox">
+                    {templates.length ? (
+                      templates.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          role="option"
+                          onClick={() => {
+                            update(
+                              i,
+                              step.designed
+                                ? {
+                                    subject: template.subject,
+                                    blocks: structuredClone(template.blocks),
+                                    selected: 0,
+                                  }
+                                : {
+                                    subject: template.subject,
+                                    body: textFromBlocks(template.blocks),
+                                  },
+                            );
+                            setTemplateMenu(null);
+                          }}
+                        >
+                          {template.name}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="muted">No templates available yet.</p>
+                    )}
+                  </div>
+                )}
+              </div>
               <small>
                 {step.designed
                   ? 'Copies the template’s blocks into this campaign message. Review it before saving.'
                   : 'Copies the text and links into this campaign message. Review it before saving.'}
               </small>
-            </label>
+            </div>
             <div className="funnel-editor-heading">
               <label>
                 {i === 0 ? 'Days after enrollment' : 'Days after the previous email'}
@@ -566,16 +622,6 @@ function FunnelEditor({
                 </button>
               )}
             </div>
-            <label>
-              To (Recipient)
-              <input
-                value={step.to ?? '{{contact_email}}'}
-                maxLength={200}
-                placeholder="{{contact_email}}"
-                onChange={(e) => update(i, { to: e.target.value })}
-              />
-              <small>Default is {'{{contact_email}}'}. You can specify another merge field or address.</small>
-            </label>
             <label>
               Subject
               <input

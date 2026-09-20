@@ -348,6 +348,7 @@ export default function Leads({
                 reading as unclickable. */}
             <div className="filter-menu" ref={filterRef}>
               <button
+                type="button"
                 className="table-filter"
                 aria-haspopup="listbox"
                 aria-expanded={filterOpen}
@@ -1231,6 +1232,8 @@ function LeadDetail({
   const [enrolling, setEnrolling] = useState(false);
   const [researching, setResearching] = useState(false),
     [research, setResearch] = useState<ResearchOutcome | null>(null);
+  const [composeReady, setComposeReady] = useState(false);
+  const emailPanelRef = useRef<HTMLDivElement | null>(null);
   const ready = project.active_version && project.revision === project.trained_revision;
   useEffect(() => {
     let cancelled = false;
@@ -1251,31 +1254,19 @@ function LeadDetail({
   }, [leadId, refresh, project.revision, project.active_version]);
 
   useEffect(() => {
-    if (tab === 'email') {
-      const timer = setTimeout(() => {
-        const target =
-          document.querySelector('.result-tabs') || document.querySelector('.feedback-tab');
-        target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        const input = document.querySelector<HTMLInputElement>(
-          '.feedback-tab input[type="email"], .feedback-tab input',
-        );
-        input?.focus();
-      }, 100);
-      return () => clearTimeout(timer);
+    if (tab !== 'email') {
+      setComposeReady(false);
+      return;
     }
-  }, [tab]);
+    const timer = setTimeout(() => {
+      emailPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [tab, composeReady]);
 
   function openEmailComposer() {
+    setComposeReady(true);
     setTab('email');
-    setTimeout(() => {
-      const target =
-        document.querySelector('.result-tabs') || document.querySelector('.feedback-tab');
-      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      const input = document.querySelector<HTMLInputElement>(
-        '.feedback-tab input[type="email"], .feedback-tab input',
-      );
-      input?.focus();
-    }, 100);
   }
   const run = lead?.runs?.find((r) => r.id === runId);
   async function qualifyLead() {
@@ -1791,10 +1782,11 @@ function LeadDetail({
                 </div>
               )}
               {tab === 'email' && (
-                <div className="feedback-tab">
+                <div className="feedback-tab" ref={emailPanelRef}>
                   <EmailComposer
                     base={base}
                     lead={lead}
+                    startEditing={composeReady}
                     onCampaign={() => setTab('campaigns')}
                     onSent={() => {
                       setRefresh((n) => n + 1);
