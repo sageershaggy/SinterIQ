@@ -66,6 +66,13 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
+      # Optional server-side fallback for the OpenRouter Decisions (Jev) key,
+      # added in eb3b5c5. Compose only forwards what is named here, so without
+      # this line .env.example documents a variable that can never reach the
+      # container and the fallback silently does nothing in production.
+      # Still optional: the normal path is entering the key in Settings, where
+      # it is encrypted at rest. Blank here means "not set", not "empty key".
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       # THE DATABASE. innovista.db (+ -wal/-shm) and .innovista-encryption-key.
       - innovista-research-ai_data:/app/data
