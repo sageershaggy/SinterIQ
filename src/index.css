@@ -889,6 +889,39 @@
 .funnel-editor-heading input {
   max-width: 130px;
 }
+.funnel-schedule {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.2fr) minmax(0, 0.9fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+.funnel-schedule label {
+  margin: 0;
+}
+.funnel-schedule input[type='number'],
+.funnel-schedule input[type='date'],
+.funnel-schedule input[type='time'] {
+  width: 100%;
+}
+.funnel-schedule .icon-button {
+  margin-bottom: 2px;
+}
+.funnel-schedule-hint {
+  display: block;
+  margin: -4px 0 8px;
+  color: #687364;
+  font-size: 11px;
+  line-height: 1.45;
+}
+@media (max-width: 720px) {
+  .funnel-schedule {
+    grid-template-columns: 1fr 1fr;
+  }
+  .funnel-schedule .icon-button {
+    grid-column: 2;
+    justify-self: end;
+  }
+}
 .funnel-template-picker {
   position: relative;
   display: grid;

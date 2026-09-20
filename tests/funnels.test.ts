@@ -6,6 +6,8 @@ import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../server/app';
 import { sendMail, type Send, type SmtpConfig } from '../server/email';
+import { scheduleNextSend } from '../server/funnels';
+import { emailTemplates } from '../server/email-templates';
 import type { ReadInbox } from '../server/imap';
 import nodemailer from 'nodemailer';
 import type { Lead, Project, TrainingSnapshot } from '../shared/types';
@@ -1337,6 +1339,43 @@ test('funnel step To is checked at enrollment and used as the delivery recipient
     assert.equal(f.messages.length, 1);
     assert.equal(f.messages[0].to, 'ops@pumps.example');
     assert.equal((await f.queue(funnel))[0].status, 'COMPLETED');
+  } finally {
+    f.dispose();
+  }
+});
+
+test('follow-up email templates ship with the library and scheduleNextSend honors send_time', () => {
+  const names = emailTemplates.map((t) => t.name);
+  assert.ok(names.includes('Follow-up Email 1'));
+  assert.ok(names.includes('Follow-up Email 2'));
+  assert.ok(names.includes('Follow-up Email 3'));
+
+  const noon = new Date(2026, 0, 15, 12, 0, 0, 0).getTime();
+  assert.equal(scheduleNextSend(noon, 0, ''), noon);
+  assert.equal(scheduleNextSend(noon, 1, ''), noon + day);
+  const morning = scheduleNextSend(noon, 1, '09:00');
+  const due = new Date(morning);
+  assert.equal(due.getHours(), 9);
+  assert.equal(due.getMinutes(), 0);
+  assert.ok(morning > noon);
+  // Same-day preferred time already past → due immediately.
+  assert.equal(scheduleNextSend(noon, 0, '08:00'), noon);
+});
+
+test('funnel steps accept a preferred send time and use it for the first due slot', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const lead = await f.lead();
+    const funnel = await f.funnel([
+      { ...steps[0], delay_days: 1, send_time: '14:30' },
+    ]);
+    assert.equal((await f.enroll(funnel, lead)).status, 201);
+    const row = (await f.queue(funnel))[0];
+    const due = new Date(row.next_send_at);
+    assert.equal(due.getHours(), 14);
+    assert.equal(due.getMinutes(), 30);
+    assert.equal(funnel.steps[0].send_time || '14:30', '14:30');
   } finally {
     f.dispose();
   }

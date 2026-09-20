@@ -21,23 +21,53 @@ import { Alert, Badge, Empty, Modal, Spinner } from './ui';
 const starterSteps: FunnelStep[] = [
   {
     delay_days: 0,
+    send_time: '09:00',
     to: '{{contact_email}}',
     subject: 'A question for {{company}}',
     body: 'Hello,\n\nI wanted to ask whether our services could be useful to {{company}}. Would a short introduction be helpful?\n\nBest regards,\n{{sender_name}}',
   },
   {
     delay_days: 3,
+    send_time: '09:00',
     to: '{{contact_email}}',
     subject: 'Following up with {{company}}',
     body: 'Hello,\n\nFollowing up on my introduction. Is there a relevant requirement at {{company}} that we could discuss?\n\nBest regards,\n{{sender_name}}',
   },
   {
     delay_days: 7,
+    send_time: '09:00',
     to: '{{contact_email}}',
     subject: 'Closing the loop',
     body: 'Hello,\n\nThis is my final follow-up. If a conversation would be useful, please reply whenever it suits you. Otherwise, I will leave it here.\n\nBest regards,\n{{sender_name}}',
   },
 ];
+
+function localDateOffset(days: number): string {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+function daysFromLocalDate(value: string, minDays: number): number {
+  if (!value) return minDays;
+  const picked = new Date(value + 'T12:00:00');
+  if (Number.isNaN(picked.getTime())) return minDays;
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const diff = Math.round((picked.getTime() - today.getTime()) / 86_400_000);
+  return Math.min(90, Math.max(minDays, diff));
+}
+
+/** Prefer follow-up starters near the top of the funnel template menu. */
+function funnelTemplateOrder(a: EmailTemplate, b: EmailTemplate): number {
+  const rank = (id: string) =>
+    id.startsWith('follow-up-') ? Number(id.slice('follow-up-'.length)) : 100 + id.length;
+  return rank(a.id) - rank(b.id) || a.name.localeCompare(b.name);
+}
 
 /** The server's ceiling on one designed message. */
 const blockLimit = 60;
@@ -81,6 +111,7 @@ interface StepDraft extends FunnelStep {
 }
 const toDraft = (step: FunnelStep): StepDraft => ({
   delay_days: step.delay_days,
+  send_time: step.send_time || '09:00',
   to: step.to || '{{contact_email}}',
   subject: step.subject,
   body: step.body,
@@ -289,6 +320,7 @@ export default function Funnels({
                           ? step.delay_days + ' days after enrollment'
                           : 'When started'
                         : step.delay_days + ' days after the previous email'}
+                      {step.send_time ? ' at ' + step.send_time : ''}
                       {step.blocks?.length
                         ? ' · designed with ' + step.blocks.length + ' blocks'
                         : ''}
@@ -473,6 +505,7 @@ function FunnelEditor({
                   // before designed messages existed keeps its exact stored shape.
                   steps: steps.map((step) => ({
                     delay_days: step.delay_days,
+                    send_time: step.send_time?.trim() || '',
                     to: step.to?.trim() || '{{contact_email}}',
                     subject: step.subject,
                     ...(step.designed
@@ -562,7 +595,7 @@ function FunnelEditor({
                 {templateMenu === i && (
                   <div className="funnel-template-menu" role="listbox">
                     {templates.length ? (
-                      templates.map((template) => (
+                      [...templates].sort(funnelTemplateOrder).map((template) => (
                         <button
                           key={template.id}
                           type="button"
@@ -599,7 +632,7 @@ function FunnelEditor({
                   : 'Copies the text and links into this campaign message. Review it before saving.'}
               </small>
             </div>
-            <div className="funnel-editor-heading">
+            <div className="funnel-schedule">
               <label>
                 {i === 0 ? 'Days after enrollment' : 'Days after the previous email'}
                 <input
@@ -609,6 +642,25 @@ function FunnelEditor({
                   required
                   value={step.delay_days}
                   onChange={(e) => update(i, { delay_days: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Send date
+                <input
+                  type="date"
+                  value={localDateOffset(step.delay_days)}
+                  min={localDateOffset(i ? 1 : 0)}
+                  onChange={(e) =>
+                    update(i, { delay_days: daysFromLocalDate(e.target.value, i ? 1 : 0) })
+                  }
+                />
+              </label>
+              <label>
+                Send time
+                <input
+                  type="time"
+                  value={step.send_time || '09:00'}
+                  onChange={(e) => update(i, { send_time: e.target.value })}
                 />
               </label>
               {steps.length > 1 && (
@@ -622,6 +674,10 @@ function FunnelEditor({
                 </button>
               )}
             </div>
+            <small className="funnel-schedule-hint">
+              Sequences stay relative to each enrollment. The date is a planner for “if enrolled
+              today”; the time is when the message may leave on its due day.
+            </small>
             <label>
               Subject
               <input

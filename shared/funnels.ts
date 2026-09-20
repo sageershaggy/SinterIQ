@@ -1,5 +1,10 @@
 export interface FunnelStep {
   delay_days: number;
+  /**
+   * Preferred local send time on the due day, as HH:mm. Empty means send as soon as the
+   * delay elapses. Sequences stay relative to enrollment; this only picks the clock time.
+   */
+  send_time?: string;
   subject: string;
   to?: string;
   /** Plain text. Also the text alternative when the message is designed with blocks. */

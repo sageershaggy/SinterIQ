@@ -150,6 +150,69 @@ export const emailTemplates: EmailTemplate[] = [
       { type: 'text', text: 'Best regards', align: 'left' },
     ],
   },
+  {
+    id: 'follow-up-1',
+    name: 'Follow-up Email 1',
+    category: 'follow_up',
+    description: 'First follow-up after the introduction, still light and easy to answer.',
+    subject: 'Following up with {{company}}',
+    preview_text: 'A short follow-up on the introduction.',
+    blocks: [
+      { type: 'text', text: 'Hello {{contact_first_name}},', align: 'left' },
+      {
+        type: 'text',
+        text: 'I wanted to follow up on my note to {{company}}. Is there a relevant requirement we could discuss?',
+        align: 'left',
+      },
+      {
+        type: 'text',
+        text: 'If the timing is wrong, feel free to say so — I will leave it there.\n\nBest regards,\n{{sender_name}}',
+        align: 'left',
+      },
+    ],
+  },
+  {
+    id: 'follow-up-2',
+    name: 'Follow-up Email 2',
+    category: 'follow_up',
+    description: 'Second follow-up that closes the loop without pressure.',
+    subject: 'Closing the loop with {{company}}',
+    preview_text: 'A final follow-up before leaving it here.',
+    blocks: [
+      { type: 'text', text: 'Hello {{contact_first_name}},', align: 'left' },
+      {
+        type: 'text',
+        text: 'This is my second follow-up with {{company}}. If a short conversation would be useful, I am happy to make time.',
+        align: 'left',
+      },
+      {
+        type: 'text',
+        text: 'Otherwise I will leave it here and you can reply whenever it suits you.\n\nBest regards,\n{{sender_name}}',
+        align: 'left',
+      },
+    ],
+  },
+  {
+    id: 'follow-up-3',
+    name: 'Follow-up Email 3',
+    category: 'follow_up',
+    description: 'Final follow-up in a three-message sequence.',
+    subject: 'Last note for {{company}}',
+    preview_text: 'A polite last note before ending the sequence.',
+    blocks: [
+      { type: 'text', text: 'Hello {{contact_first_name}},', align: 'left' },
+      {
+        type: 'text',
+        text: 'This is my final follow-up. If anything changes at {{company}}, you are welcome to reply whenever it suits you.',
+        align: 'left',
+      },
+      {
+        type: 'text',
+        text: 'I will leave it here for now.\n\nBest regards,\n{{sender_name}}',
+        align: 'left',
+      },
+    ],
+  },
 ];
 export const templateCategories: Array<{ value: TemplateCategory | 'all'; label: string }> = [
   { value: 'all', label: 'All' },

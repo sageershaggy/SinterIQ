@@ -18,6 +18,26 @@ import type { Lead, Project, User } from '../shared/types';
 
 const day = 86_400_000;
 
+/** HH:mm on a 24-hour clock, or empty to send as soon as the delay elapses. */
+const sendTimeSchema = text(5)
+  .optional()
+  .default('')
+  .refine((s) => !s || /^([01]\d|2[0-3]):[0-5]\d$/.test(s), 'Use a send time like 09:00.');
+
+/**
+ * Due time for a funnel step: delay_days after `fromMs`, then the preferred clock time on
+ * that calendar day (local). If that clock has already passed for a same-day step, send now.
+ */
+export function scheduleNextSend(fromMs: number, delayDays: number, sendTime = ''): number {
+  const base = new Date(fromMs + Math.max(0, delayDays) * day);
+  if (!sendTime || !/^([01]\d|2[0-3]):[0-5]\d$/.test(sendTime)) return base.getTime();
+  const [hours, minutes] = sendTime.split(':').map(Number);
+  const due = new Date(base);
+  due.setHours(hours, minutes, 0, 0);
+  if (due.getTime() <= fromMs) return fromMs;
+  return due.getTime();
+}
+
 /**
  * Reports a bad block the way the composer does. Left to the schema alone, a designed step
  * fails with a validator path like "steps.0.blocks.2.url", which means nothing to someone
@@ -44,6 +64,7 @@ export const funnelSchema = z
         z
           .object({
             delay_days: z.number().int().min(0).max(90),
+            send_time: sendTimeSchema,
             to: text(200)
               .optional()
               .default('{{contact_email}}')
@@ -406,7 +427,7 @@ export function createFunnels(options: {
             p.active_version,
             req.user.id,
             req.user.name,
-            Date.now() + f.steps[0].delay_days * day,
+            scheduleNextSend(Date.now(), f.steps[0].delay_days, f.steps[0].send_time),
             now(),
             now(),
           );
@@ -580,7 +601,11 @@ export function createFunnels(options: {
         ).run(
           next,
           next === f.steps.length ? 'COMPLETED' : 'QUEUED',
-          Math.max(time, Date.now()) + (f.steps[next]?.delay_days || 0) * day,
+          scheduleNextSend(
+            Math.max(time, Date.now()),
+            f.steps[next]?.delay_days || 0,
+            f.steps[next]?.send_time,
+          ),
           now(),
           job.id,
           job.project_id,
