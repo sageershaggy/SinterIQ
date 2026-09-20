@@ -32,10 +32,19 @@ export function suppressRecipient(db: DB, recipient: string, reason: string) {
       reason,
       now(),
     );
+    // Stop enrollments keyed to this address, and any still-running sequence that already
+    // delivered (or attempted delivery) to it — a step's custom To can differ from the
+    // enrollment's stored contact_email.
     db.prepare(
       `UPDATE funnel_enrollments SET status='UNSUBSCRIBED',reason=?,updated_at=?
-      WHERE recipient=? AND status IN ('QUEUED','SENDING','BLOCKED')`,
-    ).run(reason, now(), recipient);
+      WHERE status IN ('QUEUED','SENDING','BLOCKED') AND (
+        recipient=?
+        OR lead_id IN (
+          SELECT lead_id FROM email_deliveries
+          WHERE recipient=? AND status IN ('SENDING','SENT','UNKNOWN')
+        )
+      )`,
+    ).run(reason, now(), recipient, recipient);
     db.prepare(
       "UPDATE leads SET outreach_status='UNSUBSCRIBED' WHERE lower(trim(contact_email))=?",
     ).run(recipient);

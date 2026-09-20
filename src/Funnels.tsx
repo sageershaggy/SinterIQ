@@ -20,16 +20,19 @@ import { Alert, Badge, Empty, Modal, Spinner } from './ui';
 const starterSteps: FunnelStep[] = [
   {
     delay_days: 0,
+    to: '{{contact_email}}',
     subject: 'A question for {{company}}',
     body: 'Hello,\n\nI wanted to ask whether our services could be useful to {{company}}. Would a short introduction be helpful?\n\nBest regards,\n{{sender_name}}',
   },
   {
     delay_days: 3,
+    to: '{{contact_email}}',
     subject: 'Following up with {{company}}',
     body: 'Hello,\n\nFollowing up on my introduction. Is there a relevant requirement at {{company}} that we could discuss?\n\nBest regards,\n{{sender_name}}',
   },
   {
     delay_days: 7,
+    to: '{{contact_email}}',
     subject: 'Closing the loop',
     body: 'Hello,\n\nThis is my final follow-up. If a conversation would be useful, please reply whenever it suits you. Otherwise, I will leave it here.\n\nBest regards,\n{{sender_name}}',
   },
@@ -77,6 +80,7 @@ interface StepDraft extends FunnelStep {
 }
 const toDraft = (step: FunnelStep): StepDraft => ({
   delay_days: step.delay_days,
+  to: step.to || '{{contact_email}}',
   subject: step.subject,
   body: step.body,
   blocks: step.blocks?.length ? structuredClone(step.blocks) : [],
@@ -278,6 +282,7 @@ export default function Funnels({
                   <span>
                     <strong>{step.subject}</strong>
                     <small>
+                      {step.to ? 'To: ' + step.to + ' · ' : ''}
                       {i === 0
                         ? step.delay_days
                           ? step.delay_days + ' days after enrollment'
@@ -450,6 +455,7 @@ function FunnelEditor({
                   // before designed messages existed keeps its exact stored shape.
                   steps: steps.map((step) => ({
                     delay_days: step.delay_days,
+                    to: step.to?.trim() || '{{contact_email}}',
                     subject: step.subject,
                     ...(step.designed
                       ? {
@@ -560,6 +566,16 @@ function FunnelEditor({
                 </button>
               )}
             </div>
+            <label>
+              To (Recipient)
+              <input
+                value={step.to ?? '{{contact_email}}'}
+                maxLength={200}
+                placeholder="{{contact_email}}"
+                onChange={(e) => update(i, { to: e.target.value })}
+              />
+              <small>Default is {'{{contact_email}}'}. You can specify another merge field or address.</small>
+            </label>
             <label>
               Subject
               <input

@@ -44,6 +44,10 @@ export const funnelSchema = z
         z
           .object({
             delay_days: z.number().int().min(0).max(90),
+            to: text(200)
+              .optional()
+              .default('{{contact_email}}')
+              .refine((s) => !/[\r\n]/.test(s), 'Recipient cannot contain line breaks.'),
             subject: requiredText(200).refine(
               (s) => !/[\r\n]/.test(s),
               'Subject cannot contain line breaks.',
@@ -132,6 +136,7 @@ export function createFunnels(options: {
   function compose(step: FunnelStep, lead: Lead, config: SmtpConfig, sender: string) {
     const context = mergeContext(lead, sender);
     const subject = applyMerge(step.subject, context);
+    const to = step.to ? applyMerge(step.to, context) : null;
     const refuse = (missing: string[]) => {
       if (missing.length)
         throw new HttpError(
@@ -139,6 +144,9 @@ export function createFunnels(options: {
           'Fill missing merge fields for ' + lead.name + ': ' + missing.join(', '),
         );
     };
+    if (to?.missing.length) {
+      refuse(to.missing);
+    }
     if (step.blocks?.length) {
       // Rendered by the same server-side renderer the composer previews, so a designed
       // funnel message is delivered as the editor showed it, Outlook-safe tables and all.
@@ -150,12 +158,22 @@ export function createFunnels(options: {
         previewText: '',
         includeFooter: false,
       });
-      refuse([...new Set([...subject.missing, ...rendered.missingMergeFields])]);
-      return { subject: subject.merged, body: rendered.text, html: rendered.html };
+      refuse([
+        ...new Set([
+          ...(to?.missing || []),
+          ...subject.missing,
+          ...rendered.missingMergeFields,
+        ]),
+      ]);
+      return { to: to?.merged, subject: subject.merged, body: rendered.text, html: rendered.html };
     }
     const body = applyMerge(step.body, context);
-    refuse([...new Set([...subject.missing, ...body.missing])]);
-    return { subject: subject.merged, body: body.merged, html: '' };
+    refuse([...new Set([...(to?.missing || []), ...subject.missing, ...body.missing])]);
+    return { to: to?.merged, subject: subject.merged, body: body.merged, html: '' };
+  }
+  /** Every step may name its own recipient; fall back to the lead contact when unset. */
+  function stepRecipient(built: { to?: string }, fallback: string) {
+    return recipientKey((built.to || '').trim() || fallback);
   }
   function recordOutcome(
     project: Project,
@@ -339,22 +357,42 @@ export function createFunnels(options: {
             skipped++;
             continue;
           }
+          // Enrollment is keyed to the lead contact for identity checks, but each step may
+          // merge to a different address — assert and de-conflict every address that will
+          // actually be mailed, not only contact_email.
           const recipient = recipientKey(lead.contact_email);
-          assertCanContact(db, recipient);
-          f.steps.forEach((step) =>
-            compose(step, lead, config, config.from_name || req.user.name),
-          );
           if (
             db
               .prepare(
-                "SELECT 1 FROM funnel_enrollments WHERE recipient=? AND status IN ('QUEUED','SENDING')",
+                "SELECT 1 FROM funnel_enrollments WHERE lead_id=? AND status IN ('QUEUED','SENDING')",
               )
-              .get(recipient)
+              .get(lead.id)
           )
             throw new HttpError(
               409,
               lead.name + ' already has an active sequence for this recipient.',
             );
+          const stepRecipients = new Set<string>();
+          for (const step of f.steps) {
+            const built = compose(step, lead, config, config.from_name || req.user.name);
+            const stepTo = stepRecipient(built, lead.contact_email);
+            assertCanContact(db, stepTo);
+            stepRecipients.add(stepTo);
+          }
+          assertCanContact(db, recipient);
+          for (const stepTo of stepRecipients) {
+            if (
+              db
+                .prepare(
+                  "SELECT 1 FROM funnel_enrollments WHERE recipient=? AND status IN ('QUEUED','SENDING')",
+                )
+                .get(stepTo)
+            )
+              throw new HttpError(
+                409,
+                lead.name + ' already has an active sequence for this recipient.',
+              );
+          }
           db.prepare(
             `INSERT INTO funnel_enrollments
             (project_id,funnel_id,lead_id,recipient,lead_revision,training_version,account_id,created_by,next_send_at,created_at,updated_at)
@@ -396,7 +434,7 @@ export function createFunnels(options: {
       const lead = eligible(p, input.lead_id),
         config = getEmailConfig(db, secrets, p.id);
       const built = compose(f.steps[input.step], lead, config, config.from_name || req.user.name);
-      res.json({ to: lead.contact_email, ...built });
+      res.json({ ...built, to: stepRecipient(built, lead.contact_email) });
     });
     app.post('/api/projects/:projectId/leads/:leadId/outreach-events', (req, res) => {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
@@ -499,12 +537,17 @@ export function createFunnels(options: {
         const step = f.steps[job.next_step];
         if (!step) throw new HttpError(409, 'The sequence is complete.');
         const built = compose(step, lead, config, config.from_name);
+        const sendTo = stepRecipient(built, job.recipient);
+        // verify() only proves the lead contact still matches enrollment; the step may mail
+        // a different merged address, so re-check suppression and the three-email limit on
+        // the address that will actually leave the mailbox (before outreach reserves a slot).
+        assertCanContact(db, sendTo);
         await outreach.send({
           projectId: job.project_id,
           leadId: job.lead_id,
           actor: job.created_by,
           config,
-          to: job.recipient,
+          to: sendTo,
           subject: built.subject,
           text: built.body,
           html:
@@ -519,7 +562,15 @@ export function createFunnels(options: {
             }),
           deliveryKey: 'funnel:' + job.id + ':' + job.next_step,
           beforeSend: () => {
-            verify();
+            // Do not call assertCanContact here: outreach already reserved a SENDING row,
+            // which counts toward the three-email limit and would falsely block the 3rd send.
+            const { lead: current } = verify();
+            const again = compose(step, current, config, config.from_name);
+            if (stepRecipient(again, job.recipient) !== sendTo)
+              throw new HttpError(
+                409,
+                'Lead, recipient or training changed after enrollment. Review this lead before contacting again.',
+              );
           },
         });
         const next = job.next_step + 1;

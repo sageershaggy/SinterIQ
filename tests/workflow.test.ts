@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../server/app';
+import { parseJson } from '../server/validation';
 import { citationSupports, pageNamesCompany, sameSite } from '../server/enrich';
 import { type Generate } from '../server/ai';
 import type { WebsitePage } from '../server/network';
@@ -127,6 +128,7 @@ test('preserved company research is project-scoped and supports AI context witho
   }
 });
 const generated: Generate = async (_config, system, input) => {
+  if (system.includes('health check assistant')) return { ok: true };
   if (system.includes('proposed qualification rubric')) return rubric;
   const snapshot = (input as { approved_training: TrainingSnapshot }).approved_training;
   return {
@@ -711,6 +713,10 @@ test('admin settings encrypt keys, never expose plaintext, block key forwarding 
     assert.equal(response.status, 200);
     assert.equal(JSON.stringify(response.body).includes(secret), false);
     assert.equal(response.body.has_api_key, true);
+    const testPing = await f.post('/settings/llm/test', {});
+    assert.equal(testPing.status, 200);
+    assert.equal(testPing.body.ok, true);
+    assert.equal(testPing.body.model, 'fixture-model');
     const stored = f.db.prepare("SELECT value FROM settings WHERE key='api_key'").get() as {
       value: string;
     };
@@ -758,6 +764,7 @@ test('admin settings encrypt keys, never expose plaintext, block key forwarding 
       });
     assert.equal(login.status, 200);
     assert.equal((await researcher.get('/api/settings/llm')).status, 403);
+    assert.equal((await researcher.post('/api/settings/llm/test').set('X-Requested-With', 'Innovista').set('X-CSRF-Token', login.body.csrf_token).send({})).status, 403);
     assert.equal((await researcher.get('/api/users')).status, 403);
     assert.equal((await researcher.get('/api/projects')).status, 200);
     const forbidden = await researcher
@@ -2803,3 +2810,19 @@ test('a duplicate is still caught by name or by website after the probe was spli
     f.dispose();
   }
 });
+
+test('parseJson extracts clean JSON, reasoning models with think tags, and fenced blocks with surrounding text', () => {
+  assert.deepEqual(parseJson('{"ok": true}'), { ok: true });
+  assert.deepEqual(parseJson('```json\n{"ok": true}\n```'), { ok: true });
+  assert.deepEqual(parseJson('<think>Analyzing the company...</think> {"ok": true}'), { ok: true });
+  assert.deepEqual(
+    parseJson('Here is the result:\n```json\n{"decision": "QUALIFIED"}\n```\nHope that helps!'),
+    { decision: 'QUALIFIED' },
+  );
+  assert.deepEqual(
+    parseJson('Evaluation:\n{"decision": "NEEDS_REVIEW", "score": 50}\nEnd of response.'),
+    { decision: 'NEEDS_REVIEW', score: 50 },
+  );
+  assert.throws(() => parseJson('not json at all'), /invalid response/);
+});
+

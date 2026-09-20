@@ -61,7 +61,7 @@ export async function publicRequest(
   ]).finally(() => clearTimeout(timer));
   if (!records.length || records.some((r) => !isPublicIp(r.address)))
     throw new HttpError(400, 'The website resolves to a private or reserved network.');
-  const address = records[0];
+  const address = records.find((r) => r.family === 4) || records[0];
   const response = await new Promise<{
     status: number;
     type: string;

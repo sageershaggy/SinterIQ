@@ -156,16 +156,41 @@ export function positiveId(value: unknown): number {
   return parsed.data;
 }
 export function parseJson(text: string): unknown {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch) {
+    try {
+      return JSON.parse(fenceMatch[1].trim());
+    } catch {
+      // Continue to next heuristic
+    }
+  }
   try {
     return JSON.parse(cleaned);
   } catch {
-    throw new HttpError(
-      502,
-      'The AI returned an invalid response. No qualification was saved. Please retry.',
-    );
+    // Continue to next heuristic
   }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+    } catch {
+      // Continue to next heuristic
+    }
+  }
+  const firstBracket = cleaned.indexOf('[');
+  const lastBracket = cleaned.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    try {
+      return JSON.parse(cleaned.slice(firstBracket, lastBracket + 1));
+    } catch {
+      // Fall through to error
+    }
+  }
+  throw new HttpError(
+    502,
+    'The AI returned an invalid response. No qualification was saved. Please retry.',
+  );
 }
+

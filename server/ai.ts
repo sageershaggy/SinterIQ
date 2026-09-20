@@ -90,9 +90,12 @@ export const generate: Generate = async (config, system, input) => {
           headers: {
             Authorization: 'Bearer ' + config.api_key,
             'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://innovista-ai.local',
+            'X-Title': 'Innovista Research AI',
           },
           body: JSON.stringify({
             model: config.model,
+            response_format: { type: 'json_object' },
             messages: [
               { role: 'system', content: system },
               { role: 'user', content: JSON.stringify(input) },
@@ -100,34 +103,124 @@ export const generate: Generate = async (config, system, input) => {
           }),
         },
       );
-      if (response.status < 200 || response.status >= 300)
+      if (response.status < 200 || response.status >= 300) {
+        let detail = '';
+        try {
+          const errData = JSON.parse(response.text);
+          if (errData?.error?.message && typeof errData.error.message === 'string') {
+            detail = ': ' + errData.error.message.slice(0, 200);
+          }
+        } catch {
+          // ignore unparseable body
+        }
+        if (response.status === 401 || response.status === 403)
+          throw new HttpError(
+            502,
+            'AI provider authentication failed (HTTP ' +
+              response.status +
+              detail +
+              '). Check your API key in Settings.',
+          );
+        if (response.status === 402)
+          throw new HttpError(
+            502,
+            'AI provider account has insufficient credits or quota (HTTP 402' +
+              detail +
+              '). Check your balance in your provider account.',
+          );
+        if (response.status === 404)
+          throw new HttpError(
+            502,
+            'AI model "' +
+              config.model +
+              '" not found on provider (HTTP 404' +
+              detail +
+              '). Check the model name in Settings.',
+          );
+        if (response.status === 429)
+          throw new HttpError(
+            502,
+            'AI provider rate limit or quota exceeded (HTTP 429' +
+              detail +
+              '). Please wait a moment and retry.',
+          );
         throw new HttpError(
           502,
           'AI provider request failed (HTTP ' +
             response.status +
+            detail +
             '). Check the provider, model and key in Settings.',
         );
-      const data = JSON.parse(response.text);
-      output = data?.choices?.[0]?.message?.content;
-      if (typeof output !== 'string')
+      }
+      let data: Record<string, unknown> | undefined;
+      try {
+        data = JSON.parse(response.text);
+      } catch {
+        throw new HttpError(
+          502,
+          'The AI provider did not return valid JSON. Check the model and endpoint.',
+        );
+      }
+      const content = (data?.choices as Array<{ message?: { content?: string } }>)?.[0]?.message
+        ?.content;
+      if (typeof content !== 'string')
         throw new HttpError(502, 'The AI provider did not return a text response.');
+      output = content;
     }
     if (output.length > 100000)
       throw new HttpError(502, 'The AI response exceeded the supported size.');
     return parseJson(output);
   } catch (error) {
     if (error instanceof HttpError) throw error;
+    const errObj = error as { code?: string; name?: string; message?: string; status?: number };
+    const errName = errObj?.name || '';
+    const errCode = errObj?.code || '';
+    const errMsg = errObj?.message || '';
+
     // Provider errors may contain credentials or prompt contents, so only the discriminator
     // is logged — enough to tell a timeout from a refused key without printing either.
     console.error(
       '[ai] Provider call failed:',
-      (error as { code?: string; name?: string })?.code ||
-        (error as { name?: string })?.name ||
-        'UnknownError',
+      errCode || errName || 'UnknownError',
     );
+
+    if (errName === 'TimeoutError' || errName === 'AbortError' || errCode === 'ETIMEDOUT') {
+      throw new HttpError(
+        502,
+        'AI analysis timed out after 90 seconds. The provider or model took too long to respond. Please retry.',
+      );
+    }
+    if (errCode === 'ECONNREFUSED' || errCode === 'ENETUNREACH' || errCode === 'ENOTFOUND') {
+      throw new HttpError(
+        502,
+        'Could not connect to AI provider endpoint (' +
+          (errCode || 'network failure') +
+          '). Check your internet connection and provider URL.',
+      );
+    }
+    if (config.provider === 'gemini') {
+      if (errObj.status === 400 || /API_KEY_INVALID|invalid api key/i.test(errMsg)) {
+        throw new HttpError(
+          502,
+          'Gemini API authentication failed. Check your Gemini API key in Settings.',
+        );
+      }
+      if (errObj.status === 404 || /not found|models\//i.test(errMsg)) {
+        throw new HttpError(
+          502,
+          'Gemini model "' + config.model + '" was not found. Check the model name in Settings.',
+        );
+      }
+      if (errObj.status === 429 || /quota|resource_exhausted/i.test(errMsg)) {
+        throw new HttpError(
+          502,
+          'Gemini quota or rate limit exceeded. Check your Gemini API quotas or wait before retrying.',
+        );
+      }
+    }
     throw new HttpError(
       502,
-      'AI analysis failed or timed out. Check your provider settings and retry. No result was saved.',
+      'AI analysis failed. Check your provider settings and retry. No result was saved.',
     );
   }
 };

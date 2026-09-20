@@ -302,7 +302,12 @@ export function CompanyOverview({
             <dd>{lead.assigned_to_name || 'Unassigned'}</dd>
           </dl>
           <div className="company-actions">
-            <button className="button secondary" onClick={() => onTab('email')}>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => onTab('email')}
+              aria-label="Create email"
+            >
               <Mail size={15} />
               Create email
             </button>

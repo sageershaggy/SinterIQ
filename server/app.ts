@@ -21,6 +21,7 @@ import {
   publicSettings,
   qualify,
   type Generate,
+  type AiConfig,
 } from './ai';
 import { researchMissing, researchableFields } from './enrich';
 import {
@@ -1793,6 +1794,44 @@ export function createApp(options: {
       audit(db, null, req.user.name, 'settings.updated', 'AI provider configuration updated.');
     })();
     res.json(publicSettings(getAiConfig(db, secrets)));
+  });
+  app.post('/api/settings/llm/test', adminOnly, async (req, res) => {
+    const input = z
+      .object({
+        provider: z.enum(['gemini', 'openai_compatible']).optional(),
+        model: text(200).optional(),
+        base_url: text(2000).optional(),
+        api_key: text(1000).optional(),
+      })
+      .strict()
+      .parse(req.body);
+    const current = getAiConfig(db, secrets);
+    const provider = input.provider || current.provider;
+    const model = input.model?.trim() || current.model;
+    const base_url = input.base_url?.trim() || current.base_url;
+    const api_key = input.api_key ? input.api_key.trim() : current.api_key;
+    if (!api_key && !options.generate)
+      throw new HttpError(400, 'Enter an API key to test the connection.');
+    if (provider === 'openai_compatible') {
+      const url = checkedUrl(base_url);
+      if (url.protocol !== 'https:' || url.search || url.hash)
+        throw new HttpError(400, 'Use a public HTTPS base URL without query parameters.');
+    }
+    const testConfig: AiConfig = {
+      provider,
+      model,
+      base_url,
+      api_key,
+      source: 'test',
+    };
+    const start = Date.now();
+    await callAi(
+      testConfig,
+      'You are a health check assistant. Return only strict JSON: {"ok":true}',
+      { ping: true },
+    );
+    const latency_ms = Date.now() - start;
+    res.json({ ok: true, model, latency_ms });
   });
   /** Every project sends from its own mailbox, so these routes are project-scoped. */
   app.get('/api/projects/:projectId/mailbox/email', adminOnly, (req, res) => {

@@ -1314,3 +1314,30 @@ test('a campaign message names a bad block the way the composer does', async () 
     f.dispose();
   }
 });
+
+test('funnel step To is checked at enrollment and used as the delivery recipient', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const lead = await f.lead('contact@pumps.example');
+    f.db
+      .prepare('INSERT INTO email_suppressions VALUES (?,?,?)')
+      .run('alt@pumps.example', 'Prior opt-out', new Date().toISOString());
+    const blocked = await f.funnel([
+      { ...steps[0], to: 'alt@pumps.example' },
+    ]);
+    assert.equal((await f.enroll(blocked, lead)).status, 409);
+
+    const funnel = await f.funnel([
+      { ...steps[0], to: 'ops@pumps.example' },
+    ]);
+    assert.equal((await f.enroll(funnel, lead)).status, 201);
+    await f.status(funnel, 'ACTIVE');
+    await f.worker.tick(Date.now() + 10);
+    assert.equal(f.messages.length, 1);
+    assert.equal(f.messages[0].to, 'ops@pumps.example');
+    assert.equal((await f.queue(funnel))[0].status, 'COMPLETED');
+  } finally {
+    f.dispose();
+  }
+});

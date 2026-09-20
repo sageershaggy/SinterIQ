@@ -35,7 +35,8 @@ export default function Settings({
     // Held only until the administrator closes the dialog: the server will not show it again.
     [issued, setIssued] = useState<{ name: string; password: string } | null>(null);
   const [busy, setBusy] = useState(''),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [testResult, setTestResult] = useState('');
   const loadUsers = () => api<typeof accounts>('/users').then(setAccounts);
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +77,30 @@ export default function Settings({
       setKey('');
       setClearKey(false);
       notify('AI settings saved.');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+  async function testConnection() {
+    if (!settings) return;
+    setBusy('test-ai');
+    setError('');
+    setTestResult('');
+    try {
+      const res = await api<{ ok: boolean; model: string; latency_ms: number }>('/settings/llm/test', {
+        method: 'POST',
+        body: json({
+          provider: settings.provider,
+          model: settings.model,
+          base_url: settings.base_url,
+          api_key: key || undefined,
+        }),
+      });
+      const msg = 'Connected to ' + res.model + ' successfully (' + res.latency_ms + 'ms).';
+      setTestResult(msg);
+      notify(msg);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -231,6 +256,12 @@ export default function Settings({
                     A server environment key will be used if one is configured.
                   </p>
                 )}
+                {testResult && (
+                  <p className="field-hint" style={{ color: 'var(--success, #15803d)', fontWeight: 500 }}>
+                    <CheckCircle2 size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} />
+                    {testResult}
+                  </p>
+                )}
                 <div className="form-actions">
                   <button className="button primary" disabled={!!busy}>
                     {busy === 'settings' ? (
@@ -239,6 +270,21 @@ export default function Settings({
                       <>
                         <Save size={16} />
                         Save configuration
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={!!busy || (!settings.has_api_key && !key)}
+                    onClick={testConnection}
+                  >
+                    {busy === 'test-ai' ? (
+                      <Spinner text="Testing connection…" />
+                    ) : (
+                      <>
+                        <CheckCircle2 size={16} />
+                        Test connection
                       </>
                     )}
                   </button>

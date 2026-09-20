@@ -1,6 +1,7 @@
 export interface FunnelStep {
   delay_days: number;
   subject: string;
+  to?: string;
   /** Plain text. Also the text alternative when the message is designed with blocks. */
   body: string;
   /**

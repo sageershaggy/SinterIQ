@@ -367,21 +367,26 @@ export default function Leads({
               </button>
               {filterOpen && (
                 <div className="filter-dropdown" role="listbox">
-                  {statusFilters(queue).map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="option"
-                      aria-selected={status === option.value}
-                      className={status === option.value ? 'is-selected' : ''}
-                      onClick={() => {
-                        setStatus(option.value);
-                        setPage(1);
-                        setFilterOpen(false);
-                      }}
-                    >
-                      {option.label}
-                    </button>
+                  {statusFilterGroups(queue).map((group, gIdx) => (
+                    <div key={group.name || gIdx} className="filter-group" role="group">
+                      {group.name && <div className="filter-group-title">{group.name}</div>}
+                      {group.options.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="option"
+                          aria-selected={status === option.value}
+                          className={status === option.value ? 'is-selected' : ''}
+                          onClick={() => {
+                            setStatus(option.value);
+                            setPage(1);
+                            setFilterOpen(false);
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               )}
@@ -1244,6 +1249,34 @@ function LeadDetail({
       cancelled = true;
     };
   }, [leadId, refresh, project.revision, project.active_version]);
+
+  useEffect(() => {
+    if (tab === 'email') {
+      const timer = setTimeout(() => {
+        const target =
+          document.querySelector('.result-tabs') || document.querySelector('.feedback-tab');
+        target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const input = document.querySelector<HTMLInputElement>(
+          '.feedback-tab input[type="email"], .feedback-tab input',
+        );
+        input?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [tab]);
+
+  function openEmailComposer() {
+    setTab('email');
+    setTimeout(() => {
+      const target =
+        document.querySelector('.result-tabs') || document.querySelector('.feedback-tab');
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const input = document.querySelector<HTMLInputElement>(
+        '.feedback-tab input[type="email"], .feedback-tab input',
+      );
+      input?.focus();
+    }, 100);
+  }
   const run = lead?.runs?.find((r) => r.id === runId);
   async function qualifyLead() {
     setBusy(true);
@@ -1350,7 +1383,12 @@ function LeadDetail({
           <h1>{lead?.name || 'Loading company…'}</h1>
           <p>Research, conversations and follow-ups in one place.</p>
         </div>
-        <button className="button primary" onClick={() => setTab('email')}>
+        <button
+          type="button"
+          className="button primary"
+          onClick={openEmailComposer}
+          aria-label={'Create email for ' + (lead?.name || 'company')}
+        >
           <Mail size={16} />
           Create email
         </button>
@@ -2071,34 +2109,58 @@ function FeedbackTab({
  */
 type FilterValue = LeadStatusFilter | 'ASSIGNED_TO_ME';
 type FilterOption = { value: FilterValue; label: string };
-function statusFilters(queue: boolean): FilterOption[] {
-  const reviewQueue: FilterOption[] = queue
-    ? [{ value: 'REVIEW_QUEUE', label: 'All awaiting research' }]
-    : [];
+type FilterGroup = { name?: string; options: FilterOption[] };
+
+function statusFilterGroups(queue: boolean): FilterGroup[] {
   return [
-    { value: 'ALL', label: 'All leads' },
-    ...reviewQueue,
-    { value: 'UNREVIEWED', label: 'Unreviewed' },
-    { value: 'QUALIFIED', label: 'Qualified' },
-    { value: 'CALL_READY', label: 'Call ready (' + nextStepBands.call + '–100)' },
     {
-      value: 'SEND_EMAIL',
-      label: 'Send an email (' + nextStepBands.email + '–' + (nextStepBands.call - 1) + ')',
+      options: [
+        { value: 'ALL', label: 'All leads' },
+        ...(queue
+          ? [{ value: 'REVIEW_QUEUE' as FilterValue, label: 'All awaiting research' }]
+          : []),
+      ],
     },
     {
-      value: 'REVIEW_WITH_CLIENT',
-      label:
-        'Review with the client (' + nextStepBands.review + '–' + (nextStepBands.email - 1) + ')',
+      name: 'AI Qualification',
+      options: [
+        { value: 'QUALIFIED', label: 'Qualified' },
+        { value: 'NEEDS_REVIEW', label: 'Needs review' },
+        { value: 'NOT_A_TARGET', label: 'Not a target' },
+        { value: 'UNREVIEWED', label: 'Unreviewed' },
+      ],
     },
-    { value: 'ASSIGNED_TO_ME', label: 'Assigned to me' },
-    { value: 'ASSIGNED', label: 'Assigned for calling (anyone)' },
-    { value: 'UNASSIGNED', label: 'Qualified, not yet assigned' },
-    { value: 'NEEDS_REVIEW', label: 'Needs review' },
-    { value: 'NOT_A_TARGET', label: 'Not a target' },
-    { value: 'STALE', label: 'Training or lead changed' },
-    { value: 'NEEDS_RESEARCH', label: 'Missing website, industry or location' },
-    { value: 'NO_WEBSITE', label: 'No website yet' },
+    {
+      name: 'Lead Status & Outreach',
+      options: [
+        { value: 'STALE', label: 'Updated / Requalification needed' },
+        { value: 'CALL_READY', label: 'Call ready (' + nextStepBands.call + '–100)' },
+        {
+          value: 'SEND_EMAIL',
+          label: 'Send an email (' + nextStepBands.email + '–' + (nextStepBands.call - 1) + ')',
+        },
+        {
+          value: 'REVIEW_WITH_CLIENT',
+          label:
+            'Review with client (' + nextStepBands.review + '–' + (nextStepBands.email - 1) + ')',
+        },
+        { value: 'ASSIGNED_TO_ME', label: 'Assigned to me' },
+        { value: 'ASSIGNED', label: 'Assigned for calling (anyone)' },
+        { value: 'UNASSIGNED', label: 'Qualified, not yet assigned' },
+      ],
+    },
+    {
+      name: 'Data Gaps',
+      options: [
+        { value: 'NEEDS_RESEARCH', label: 'Missing website, industry or location' },
+        { value: 'NO_WEBSITE', label: 'No website yet' },
+      ],
+    },
   ];
+}
+
+function statusFilters(queue: boolean): FilterOption[] {
+  return statusFilterGroups(queue).flatMap((g) => g.options);
 }
 
 const callOutcomes: Array<{ value: CallOutcome; label: string }> = [
