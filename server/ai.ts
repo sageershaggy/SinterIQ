@@ -209,10 +209,29 @@ export const generate: Generate = async (config, system, input) => {
       );
     }
     if (config.provider === 'gemini') {
-      if (errObj.status === 400 || /API_KEY_INVALID|invalid api key/i.test(errMsg)) {
+      // Gemini answers 400 for a rejected key AND for a malformed request, so the
+      // status alone cannot tell them apart. Key the message off the reason Google
+      // actually returns; only then is "check your key" true. Reporting every 400
+      // as an auth failure sends people to rotate a key that was never the problem.
+      if (/API_KEY_INVALID|api key not valid|invalid api key/i.test(errMsg)) {
         throw new HttpError(
           502,
-          'Gemini API authentication failed. Check your Gemini API key in Settings.',
+          'Gemini rejected the API key (API_KEY_INVALID). The key is not recognised by Google — ' +
+            'confirm it in Google AI Studio and that the Generative Language API is enabled for its project.',
+        );
+      }
+      if (errObj.status === 403 || /PERMISSION_DENIED|SERVICE_DISABLED/i.test(errMsg)) {
+        throw new HttpError(
+          502,
+          'Gemini refused the request (permission denied). The key may be restricted to other ' +
+            'referrers/IPs, or the Generative Language API is not enabled for its project.',
+        );
+      }
+      if (errObj.status === 400) {
+        throw new HttpError(
+          502,
+          'Gemini rejected the request (HTTP 400). This is usually the model name or request ' +
+            'shape rather than the key — current model is "' + config.model + '".',
         );
       }
       if (errObj.status === 404 || /not found|models\//i.test(errMsg)) {
