@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import type { Project, Source, Rubric, TrainingSnapshot } from '../shared/types';
 import { api, date, json } from './api';
-import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
+import { Alert, Badge, Empty, ExternalLink, GrowingTextarea, Modal, Spinner } from './ui';
 
 interface Version {
   version: number;
@@ -174,6 +174,10 @@ export default function Training({
     });
   }
   const ready = project.trained_revision === project.revision;
+  // The live version and the two before it answer almost every "what changed?" question.
+  const versionPreview = 3;
+  const [allVersions, setAllVersions] = useState(false);
+  const shownVersions = allVersions ? versions : versions.slice(0, versionPreview);
   const checklist = [
     {
       done: sources.some((s) => s.kind === 'document' || s.kind === 'note'),
@@ -232,28 +236,29 @@ export default function Training({
         </Badge>
       </div>
       {error && <Alert>{error}</Alert>}
-      <div className="training-status">
-        <div className="training-status-icon">
-          <BookOpen size={23} />
+      {!ready && (
+        <div className="training-status">
+          <div className="training-status-icon">
+            <BookOpen size={23} />
+          </div>
+          <div>
+            <strong>
+              {ready
+                ? 'Your project training is ready.'
+                : project.active_version
+                  ? 'Your training has changed.'
+                  : 'Build and approve your training.'}
+            </strong>
+            <p>
+              {ready
+                ? 'Each analysis uses this approved version and retains its original source context.'
+                : project.active_version
+                  ? 'Publish a new version to qualify with your latest context. Existing results are flagged for requalification.'
+                  : 'Add sources, review the rules, then publish. You stay in control of what qualifies a lead.'}
+            </p>
+          </div>
         </div>
-        <div>
-          <strong>
-            {ready
-              ? 'Your project training is ready.'
-              : project.active_version
-                ? 'Your training has changed.'
-                : 'Build and approve your training.'}
-          </strong>
-          <p>
-            {ready
-              ? 'Each analysis uses this approved version and retains its original source context.'
-              : project.active_version
-                ? 'Publish a new version to qualify with your latest context. Existing results are flagged for requalification.'
-                : 'Add sources, review the rules, then publish. You stay in control of what qualifies a lead.'}
-          </p>
-        </div>
-        {ready && <CheckCircle2 size={25} className="green" />}
-      </div>
+      )}
       <div className="training-layout">
         <div>
           <section className="panel">
@@ -366,29 +371,31 @@ export default function Training({
               </button>
             </div>
           </section>
-          <section className="panel training-checklist">
-            <div className="section-title">
-              <h2>Ready to qualify?</h2>
-              <ShieldCheckIcon />
-            </div>
-            {checklist.map((item) => (
-              <div className={'checklist-row ' + (item.done ? 'complete' : '')} key={item.text}>
-                {item.done ? <CheckCircle2 size={18} /> : <span className="empty-check" />}
-                <span>{item.text}</span>
+          {!ready && (
+            <section className="panel training-checklist">
+              <div className="section-title">
+                <h2>Ready to qualify?</h2>
+                <ShieldCheckIcon />
               </div>
-            ))}
-            <p className="fine-print">
-              Publishing saves a version of your sources and rules. Future changes will require a
-              new version.
-            </p>
-          </section>
+              {checklist.map((item) => (
+                <div className={'checklist-row ' + (item.done ? 'complete' : '')} key={item.text}>
+                  {item.done ? <CheckCircle2 size={18} /> : <span className="empty-check" />}
+                  <span>{item.text}</span>
+                </div>
+              ))}
+              <p className="fine-print">
+                Publishing saves a version of your sources and rules. Future changes will require a
+                new version.
+              </p>
+            </section>
+          )}
           <section className="panel versions">
             <div className="section-title">
               <h2>Training versions</h2>
               <History size={18} />
             </div>
             {versions.length ? (
-              versions.map((version) => (
+              shownVersions.map((version) => (
                 <button
                   key={version.version}
                   className="version-row"
@@ -414,6 +421,20 @@ export default function Training({
               ))
             ) : (
               <p className="muted">Your first published version will appear here.</p>
+            )}
+            {versions.length > versionPreview && (
+              <button
+                type="button"
+                className="text-button versions-toggle"
+                onClick={() => setAllVersions((current) => !current)}
+              >
+                {allVersions
+                  ? 'Show fewer versions'
+                  : 'Show ' +
+                    (versions.length - versionPreview) +
+                    ' earlier version' +
+                    (versions.length - versionPreview === 1 ? '' : 's')}
+              </button>
             )}
             {analyses.length > 0 && (
               <details>
@@ -482,7 +503,7 @@ export default function Training({
           <form onSubmit={save} className="form-stack">
             <label>
               Business context & ideal customer
-              <textarea
+              <GrowingTextarea
                 rows={5}
                 value={editor.summary}
                 onChange={(e) => update('summary', e.target.value)}
@@ -496,7 +517,7 @@ export default function Training({
               <small>
                 One criterion per line. Each criterion contributes equally to the fit score.
               </small>
-              <textarea
+              <GrowingTextarea
                 rows={7}
                 value={editor.criteria}
                 onChange={(e) => update('criteria', e.target.value)}
@@ -507,7 +528,7 @@ export default function Training({
             <label>
               Exclusion rules
               <small>One exclusion per line. A supported exclusion can disqualify a lead.</small>
-              <textarea
+              <GrowingTextarea
                 rows={6}
                 value={editor.exclusions}
                 onChange={(e) => update('exclusions', e.target.value)}
@@ -517,7 +538,7 @@ export default function Training({
             <label>
               Open questions
               <small>Resolve these questions, then remove them before publishing.</small>
-              <textarea
+              <GrowingTextarea
                 rows={3}
                 value={editor.questions}
                 onChange={(e) => update('questions', e.target.value)}
@@ -540,54 +561,63 @@ export default function Training({
               </button>
             </div>
           </form>
-          <div className="publish-box">
-            <div>
-              <strong>
-                {ready
-                  ? 'Training v' + project.active_version + ' is published'
-                  : 'Approve this training version'}
-              </strong>
-              <p>
-                {ready
-                  ? 'Every qualification runs against this version until you publish another.'
-                  : dirty
-                    ? 'Save your draft before publishing.'
-                    : blocker ||
-                      'Confirm that the sources and rules reflect how this project should qualify leads.'}
-              </p>
+          {ready && !dirty ? (
+            <div className="publish-box is-live">
+              <CheckCircle2 size={20} />
+              <div>
+                <strong>Training v{project.active_version} is live</strong>
+                <p>
+                  Every qualification runs against this version. Edit the rules and save to prepare
+                  the next one.
+                </p>
+              </div>
             </div>
-            {!ready && openQuestions > 0 && (
+          ) : (
+            <div className="publish-box">
+              <div>
+                <strong>{ready ? 'Unsaved changes' : 'Approve this training version'}</strong>
+                <p>
+                  {ready
+                    ? 'Save your changes to start a new version, then review and publish it.'
+                    : dirty
+                      ? 'Save your draft before publishing.'
+                      : blocker ||
+                        'Confirm that the sources and rules reflect how this project should qualify leads.'}
+                </p>
+              </div>
+              {!ready && openQuestions > 0 && (
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={!!busy}
+                  onClick={resolveQuestions}
+                >
+                  {busy === 'save' ? (
+                    <Spinner />
+                  ) : (
+                    <>
+                      <CheckCircle2 size={15} />
+                      Mark resolved &amp; clear
+                    </>
+                  )}
+                </button>
+              )}
               <button
-                className="button secondary"
-                type="button"
-                disabled={!!busy}
-                onClick={resolveQuestions}
+                className="button primary"
+                disabled={!!busy || dirty || ready || !checklist.every((c) => c.done)}
+                onClick={publish}
               >
-                {busy === 'save' ? (
+                {busy === 'publish' ? (
                   <Spinner />
                 ) : (
                   <>
-                    <CheckCircle2 size={15} />
-                    Mark resolved &amp; clear
+                    <CheckCircle2 size={16} />
+                    Approve &amp; publish
                   </>
                 )}
               </button>
-            )}
-            <button
-              className="button primary"
-              disabled={!!busy || dirty || ready || !checklist.every((c) => c.done)}
-              onClick={publish}
-            >
-              {busy === 'publish' ? (
-                <Spinner />
-              ) : (
-                <>
-                  <CheckCircle2 size={16} />
-                  {ready ? 'Published' : 'Approve & publish'}
-                </>
-              )}
-            </button>
-          </div>
+            </div>
+          )}
         </section>
       </div>
       {mode && (

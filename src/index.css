@@ -496,6 +496,48 @@
   margin-top: 4px;
   color: var(--muted);
 }
+/* Quieter than a real fact, but still readable: 4.8:1 against white. */
+.fact-missing {
+  color: #6c7564;
+}
+.company-facts dd a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: #c5cfb9;
+  text-underline-offset: 3px;
+}
+/* The research card before any analysis: centred, with the action that fills it. */
+.summary-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 26px 12px 8px;
+}
+.summary-empty-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #eef3e4;
+  color: #5d6f4a;
+}
+.summary-empty strong {
+  font-size: 15px;
+}
+.summary-empty p {
+  max-width: 380px;
+  margin: 0;
+  color: #5f6a59;
+}
+.summary-empty .fine-print {
+  color: #8a7446;
+}
+.summary-empty .button {
+  margin-top: 6px;
+}
 .company-actions {
   display: flex;
   gap: 10px;
@@ -2221,10 +2263,14 @@ details + details {
   display: flex;
   flex-direction: column;
 }
+/* One line per event: what happened on the left, who and when on the right. The old
+   stacked card spent three lines on every entry, so five entries filled a screen. */
 .activity-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: 13px;
-  padding: 17px 0;
+  padding: 11px 0;
   border-bottom: 1px solid #edf0e7;
 }
 .activity-item:last-child {
@@ -2232,8 +2278,8 @@ details + details {
   padding-bottom: 3px;
 }
 .activity-icon {
-  height: 31px;
-  width: 31px;
+  height: 28px;
+  width: 28px;
   display: grid;
   place-items: center;
   border-radius: 7px;
@@ -2241,20 +2287,64 @@ details + details {
   color: #687853;
   flex-shrink: 0;
 }
+.activity-text {
+  min-width: 0;
+}
 .activity-item strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 11px;
-  font-weight: 550;
-  text-transform: capitalize;
+  font-weight: 600;
+}
+.activity-count {
+  font-size: 9px;
+  font-weight: 600;
+  color: #5d6f4a;
+  background: #eef3e4;
+  border-radius: 999px;
+  padding: 2px 7px;
 }
 .activity-item p {
   font-size: 10px;
   color: #6d7664;
-  margin: 5px 0;
-  line-height: 1.8;
+  margin: 3px 0 0;
+  line-height: 1.5;
 }
-.activity-item small {
+/* The overview is a summary, so a long detail stops at two lines; the full history page
+   shows every word, and the title attribute carries the rest on hover. */
+.activity-list.is-compact .activity-item p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.activity-all {
+  margin-top: 12px;
+}
+.activity-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
   font-size: 9px;
   color: #6f7567;
+  white-space: nowrap;
+}
+/* Who and when are told apart by weight, not by a paler grey: at 9px anything lighter than
+   this fails contrast, and the relative time is the only visible "when". */
+.activity-meta span:first-child {
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .activity-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .activity-meta {
+    grid-column: 2;
+    flex-direction: row;
+    gap: 6px;
+  }
 }
 label {
   font-size: 11px;
@@ -2564,19 +2654,23 @@ input::file-selector-button {
 }
 .version-row {
   width: 100%;
-  padding: 14px 0;
+  padding: 10px 0;
   display: flex;
   gap: 13px;
   align-items: center;
   border-top: 1px solid #edf0e7;
   text-align: left;
 }
+/* Fixed width, so v10 and v9 line their text up in the same column. */
 .version-number {
   background: #ecf2e2;
   color: #67784f;
   font-size: 13px;
   border-radius: 6px;
-  padding: 8px;
+  padding: 8px 0;
+  min-width: 46px;
+  text-align: center;
+  flex-shrink: 0;
 }
 .version-row > span:nth-child(2) {
   flex: 1;
@@ -2660,6 +2754,23 @@ input::file-selector-button {
   line-height: 1.7;
   color: #667356;
   margin: 8px 0 15px;
+}
+/* A live version is a confirmation, laid out as one line rather than a box with a dead button. */
+.publish-box.is-live {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.publish-box.is-live > svg {
+  color: #4f7a3a;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.publish-box.is-live p {
+  margin-bottom: 0;
+}
+.versions-toggle {
+  margin-top: 12px;
 }
 .publish-box .button {
   width: 100%;

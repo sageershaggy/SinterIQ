@@ -29,3 +29,8 @@ playwright-report/
 .claude-flow/data/
 .claude-flow/logs/
 .claude-flow/sessions/
+# Ruflo runtime state: the memory index and policy receipts are rebuilt locally and
+# change on every memory write, so committing them would churn the repo.
+.claude-flow/policy/
+.swarm/hnsw.index
+.swarm/hnsw.metadata.json

@@ -1,4 +1,11 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from 'react';
 import { X, ArrowUpRight, LoaderCircle, AlertCircle } from 'lucide-react';
 import { label, safeHref } from './api';
 
@@ -12,6 +19,44 @@ export function Brand() {
       </div>
     </div>
   );
+}
+/**
+ * A textarea that grows with what is in it, up to a ceiling. Long lists of rules were read
+ * through a scrollbar inside the page's own scroll, with every line after the fourth cut off
+ * mid-sentence; past the ceiling it scrolls again, so one enormous paste cannot push the
+ * rest of the form off the screen.
+ */
+export function GrowingTextarea({
+  maxHeight = 560,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { maxHeight?: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  // Overflow is left to the browser rather than forced hidden: at the fitted height no
+  // scrollbar is drawn anyway, and if someone drags the box smaller the text stays reachable.
+  const fit = () => {
+    const element = ref.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = Math.min(element.scrollHeight + 2, maxHeight) + 'px';
+  };
+  // Layout, not a plain effect: measuring after paint would show one frame at the old height.
+  useLayoutEffect(fit, [props.value, maxHeight]);
+  useEffect(() => {
+    // Text rewraps whenever the box gets narrower or wider, which a window resize does not
+    // cover (a sidebar opening does it too). Only width is watched: fitting changes the
+    // height, and reacting to that would loop.
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      fit();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return <textarea ref={ref} {...props} />;
 }
 export function Spinner({ text = 'Loading…' }: { text?: string }) {
   return (

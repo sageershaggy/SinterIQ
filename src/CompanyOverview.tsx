@@ -25,6 +25,8 @@ export function missingDetails(lead: Lead): ResearchableField[] {
     (field) => !String(lead[field] ?? '').trim(),
   );
 }
+/** A missing fact, shown quietly so the facts that do exist are what the eye lands on. */
+const blank = (text: string) => <span className="fact-missing">{text}</span>;
 export interface ResearchControls {
   missing: ResearchableField[];
   /** The last run's result, kept on screen after the lead itself is reloaded. */
@@ -284,22 +286,47 @@ export function CompanyOverview({
           </div>
           <dl className="company-facts">
             <dt>Industry</dt>
-            <dd>{lead.industry || 'Not provided'}</dd>
+            <dd>{lead.industry || blank('Unknown')}</dd>
             <dt>Location</dt>
-            <dd>{[lead.city, lead.country].filter(Boolean).join(', ') || 'Not provided'}</dd>
+            <dd>{[lead.city, lead.country].filter(Boolean).join(', ') || blank('Unknown')}</dd>
             <dt>Company size</dt>
-            <dd>{lead.employee_count || 'Not provided'}</dd>
+            <dd>{lead.employee_count || blank('Unknown')}</dd>
             <dt>Contact</dt>
             <dd>
-              {lead.contact_name || 'No named contact'}
-              {lead.contact_role && <small>{lead.contact_role}</small>}
+              {/* "No named contact" above a role read as if that were the person. A role
+                  without a name is still a lead worth calling, so it leads. */}
+              {lead.contact_name ? (
+                <>
+                  {lead.contact_name}
+                  {lead.contact_role && <small>{lead.contact_role}</small>}
+                </>
+              ) : lead.contact_role ? (
+                <>
+                  {lead.contact_role}
+                  <small>Name not found yet</small>
+                </>
+              ) : (
+                blank(
+                  lead.contact_email || lead.contact_phone
+                    ? 'Name not found yet'
+                    : 'No contact yet',
+                )
+              )}
             </dd>
             <dt>Email</dt>
-            <dd>{lead.contact_email || 'No email captured'}</dd>
+            <dd>{lead.contact_email || blank('Not found yet')}</dd>
             <dt>Phone</dt>
-            <dd>{lead.contact_phone || 'No phone captured'}</dd>
+            <dd>
+              {lead.contact_phone ? (
+                <a href={'tel:' + lead.contact_phone.replace(/[^\d+]/g, '')}>
+                  {lead.contact_phone}
+                </a>
+              ) : (
+                blank('Not found yet')
+              )}
+            </dd>
             <dt>Assigned to</dt>
-            <dd>{lead.assigned_to_name || 'Unassigned'}</dd>
+            <dd>{lead.assigned_to_name || blank('Unassigned')}</dd>
           </dl>
           <div className="company-actions">
             <button
@@ -320,19 +347,46 @@ export function CompanyOverview({
         <section className="company-card">
           <div className="section-title">
             <h3>Research summary</h3>
-            <button className="text-button" onClick={() => onTab('reasoning')}>
-              View evidence <ArrowUpRight size={14} />
-            </button>
+            {latest && (
+              <button className="text-button" onClick={() => onTab('reasoning')}>
+                View evidence <ArrowUpRight size={14} />
+              </button>
+            )}
           </div>
-          <p>
-            {latest?.result.summary ||
-              'Run AI qualification using the project’s published criteria to see the company’s fit and supporting evidence.'}
-          </p>
-          {latest && (
-            <small className="muted">
-              {lead.stale ? 'Previous result · ' : ''}Training v{latest.training_version} ·{' '}
-              {date(latest.created_at)}
-            </small>
+          {latest ? (
+            <>
+              <p>{latest.result.summary}</p>
+              <small className="muted">
+                {lead.stale ? 'Previous result · ' : ''}Training v{latest.training_version} ·{' '}
+                {date(latest.created_at)}
+              </small>
+            </>
+          ) : (
+            // An empty card is where the next step belongs, not a sentence about it.
+            <div className="summary-empty">
+              <span className="summary-empty-icon">
+                <Sparkles size={19} />
+              </span>
+              <strong>Not analyzed yet</strong>
+              <p>
+                AI qualification checks this company against the published criteria and returns a
+                fit score, the evidence behind it and a next step.
+              </p>
+              {!lead.website && (
+                <p className="fine-print">
+                  There is no website on record, so the analysis would have little to read.
+                  Researching the missing details first usually gives a better result.
+                </p>
+              )}
+              <button
+                className="button primary"
+                disabled={research.running || research.busy}
+                onClick={research.onQualify}
+              >
+                <Sparkles size={15} />
+                {research.ready ? 'Analyze with AI' : 'Open training'}
+              </button>
+            </div>
           )}
           {!!latest?.result.gaps.length && (
             <div className="company-gaps">

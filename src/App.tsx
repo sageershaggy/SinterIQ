@@ -5,7 +5,6 @@ import {
   BookOpen,
   Check,
   ChevronDown,
-  FlaskConical,
   FolderOpen,
   History,
   LayoutGrid,
@@ -396,10 +395,19 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                         {project.description || 'Build the context for your next research project.'}
                       </p>
                     </div>
-                    <button className="button secondary" onClick={() => setEditProject(true)}>
-                      <SettingsIcon size={16} />
-                      Project settings
-                    </button>
+                    <div className="heading-actions">
+                      <button className="button secondary" onClick={() => setEditProject(true)}>
+                        <SettingsIcon size={16} />
+                        Project settings
+                      </button>
+                      <button
+                        className="button primary"
+                        onClick={() => navigate(ready ? 'leads' : 'training')}
+                      >
+                        {ready ? 'Research leads' : 'Review training'}
+                        <ArrowRight size={16} />
+                      </button>
+                    </div>
                   </div>
                   <div className="project-meta">
                     <ExternalLink url={project.website} />
@@ -454,36 +462,23 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                       icon={<BookOpen />}
                     />
                   </div>
-                  <section className="overview-callout">
-                    <div className="callout-icon">
-                      <FlaskConical size={28} />
-                    </div>
-                    <div>
-                      <span className="eyebrow">
-                        {ready ? 'READY TO RESEARCH' : 'BUILD YOUR FOUNDATION'}
+                  {/* Ready training needs no announcement: the badge above says it and the
+                      header offers the next step. Only a missing prerequisite earns a line. */}
+                  {!ready && (
+                    <div className="inline-notice">
+                      <BookOpen size={20} />
+                      <span>
+                        <strong>Training comes first.</strong> Review the sources and rules, then
+                        publish a version to start qualifying leads.
                       </span>
-                      <h2>
-                        {ready
-                          ? 'Your training is ready. Put it to work.'
-                          : 'Great qualification begins with your knowledge.'}
-                      </h2>
-                      <p>
-                        {ready
-                          ? 'Every lead will be evaluated against training v' +
-                            project.active_version +
-                            ', with evidence and a clear rationale.'
-                          : 'Review the source library, refine your qualification rules, and publish an approved training version.'}
-                      </p>
                     </div>
-                    <button
-                      className="button primary"
-                      onClick={() => navigate(ready ? 'leads' : 'training')}
-                    >
-                      {ready ? 'Research leads' : 'Review training'}
-                      <ArrowRight size={17} />
-                    </button>
-                  </section>
-                  <Activity projectId={project.id} compact refresh={refresh} />
+                  )}
+                  <Activity
+                    projectId={project.id}
+                    compact
+                    refresh={refresh}
+                    onViewAll={() => navigate('activity')}
+                  />
                 </>
               )}
               {project &&
@@ -733,14 +728,71 @@ function ProjectForm({
     </Modal>
   );
 }
+/** Plain words for the audit actions a project log actually contains. */
+const activityLabels: Record<string, string> = {
+  'training.published': 'Training published',
+  'training.rubric_saved': 'Draft rules saved',
+  'training.analyzed': 'Training sources analyzed',
+  'training.feedback_added': 'Training feedback added',
+  'source.added': 'Source added',
+  'source.removed': 'Source removed',
+  'source.capture_pending': 'Website capture queued',
+  'project.created': 'Project created',
+  'project.updated': 'Project settings changed',
+  'lead.created': 'Lead added',
+  'lead.updated': 'Lead edited',
+  'lead.qualified': 'Lead analyzed',
+  'lead.reviewed': 'Lead reviewed',
+  'lead.researched': 'Missing details researched',
+  'lead.email_sent': 'Email sent',
+  'lead.call_logged': 'Call logged',
+  'lead.contact_removed': 'Contact removed',
+  'leads.imported': 'Leads imported',
+  'leads.deleted': 'Leads deleted',
+  'leads.assigned': 'Leads assigned for calling',
+  'leads.unassigned': 'Leads returned to the pool',
+  'leads.assignments_released': 'Calling assignments released',
+  'funnel.created': 'Campaign created',
+  'funnel.enrolled': 'Leads added to a campaign',
+  'email.template_created': 'Email template saved',
+  'settings.email_updated': 'Mailbox settings changed',
+  'settings.email_tested': 'Mailbox test sent',
+  'mailbox.incoming_settings': 'Incoming mail settings changed',
+};
+function activityLabel(action: string) {
+  const words = action.replaceAll('.', ' ').replaceAll('_', ' ');
+  return activityLabels[action] || words.charAt(0).toUpperCase() + words.slice(1);
+}
+function activityIcon(action: string) {
+  if (action.startsWith('training') || action.startsWith('source')) return <BookOpen size={15} />;
+  if (/^(funnel|email|mailbox|settings\.email)/.test(action) || action === 'lead.email_sent')
+    return <Mail size={15} />;
+  if (action.startsWith('lead')) return <Users size={15} />;
+  return <ScanLine size={15} />;
+}
+/** "12 min ago" reads faster than a date when most of a day's work happened today. */
+function relativeTime(value: string) {
+  const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return minutes + ' min ago';
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours + ' h ago';
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return days + ' days ago';
+  return date(value);
+}
 function Activity({
   projectId,
   compact,
   refresh,
+  onViewAll,
 }: {
   projectId: number;
   compact?: boolean;
   refresh: number;
+  /** The overview shows a summary; this leads to the full, ungrouped record. */
+  onViewAll?: () => void;
 }) {
   const [items, setItems] = useState<
       Array<{
@@ -768,6 +820,24 @@ function Activity({
       cancelled = true;
     };
   }, [projectId, refresh]);
+  // Saving a draft three times in a row is one thing that happened, not three: in the overview
+  // summary, consecutive entries with the same action, person and detail collapse into one row
+  // with a count. The history page is an audit record, so there every entry keeps its own row.
+  type Group = { first: (typeof items)[number]; count: number };
+  const groups: Group[] = !compact
+    ? items.map((item) => ({ first: item, count: 1 }))
+    : items.reduce<Group[]>((all, item) => {
+        const last = all[all.length - 1];
+        if (
+          last &&
+          last.first.action === item.action &&
+          last.first.actor === item.actor &&
+          last.first.detail === item.detail
+        )
+          last.count++;
+        else all.push({ first: item, count: 1 });
+        return all;
+      }, []);
   return (
     <section className="panel activity-panel">
       <div className="section-title">
@@ -780,22 +850,30 @@ function Activity({
           Your project activity will appear here.
         </Empty>
       ) : (
-        <div className="activity-list">
-          {items.slice(0, compact ? 5 : 100).map((item) => (
-            <div className="activity-item" key={item.id}>
-              <span className="activity-icon">
-                {item.action.includes('training') ? <BookOpen size={16} /> : <ScanLine size={16} />}
-              </span>
-              <div>
-                <strong>{item.action.replaceAll('.', ' ').replaceAll('_', ' ')}</strong>
-                <p>{item.detail}</p>
-                <small>
-                  {item.actor} · {date(item.created_at)}
-                </small>
+        <div className={'activity-list' + (compact ? ' is-compact' : '')}>
+          {groups.slice(0, compact ? 6 : 100).map(({ first, count }) => (
+            <div className="activity-item" key={first.id}>
+              <span className="activity-icon">{activityIcon(first.action)}</span>
+              <div className="activity-text">
+                <strong>
+                  {activityLabel(first.action)}
+                  {count > 1 && <span className="activity-count">×{count}</span>}
+                </strong>
+                {first.detail && <p title={first.detail}>{first.detail}</p>}
               </div>
+              <small className="activity-meta" title={new Date(first.created_at).toLocaleString()}>
+                <span>{first.actor}</span>
+                <span>{relativeTime(first.created_at)}</span>
+              </small>
             </div>
           ))}
         </div>
+      )}
+      {compact && onViewAll && items.length > 0 && (
+        <button type="button" className="text-button activity-all" onClick={onViewAll}>
+          View full history
+          <ArrowRight size={14} />
+        </button>
       )}
     </section>
   );
