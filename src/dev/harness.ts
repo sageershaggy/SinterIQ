@@ -9,6 +9,8 @@
  * Only GETs return data; writes answer {} so buttons can be clicked without anything persisting.
  * Development only — see harness.html. Nothing here is imported by the production entry.
  */
+import { shellRoutes } from './shell-fixtures';
+
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
 
@@ -153,6 +155,7 @@ const lead = {
 };
 
 const routes: Array<[RegExp, () => unknown]> = [
+  ...shellRoutes,
   [
     /^\/auth\/me$/,
     () => ({

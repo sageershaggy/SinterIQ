@@ -16,6 +16,7 @@ import { Alert, Badge, Empty, Spinner } from './ui';
 import { leadLink } from './navigation';
 import { ReplyForm } from './IncomingReplies';
 import { MailboxSettings } from './MailboxSettings';
+import { MailboxStatus } from './MailboxStatus';
 
 const folders = [
   { id: 'inbox', title: 'Inbox', icon: Inbox },
@@ -145,32 +146,13 @@ export default function Mailbox({
         </div>
       </div>
       {error && <Alert>{error}</Alert>}
-      {data && !configuring && (
-        <div className="mail-connection-strip">
-          <span>
-            <span className={'status-dot ' + (data.outgoing_configured ? 'connected' : '')} />{' '}
-            Sending {data.outgoing_configured ? 'configured' : 'needs setup'}
-          </span>
-          <span>
-            <span
-              className={
-                'status-dot ' +
-                (data.incoming.enabled && data.incoming.last_sync && !data.incoming.last_error
-                  ? 'connected'
-                  : '')
-              }
-            />{' '}
-            Incoming{' '}
-            {data.incoming.last_error
-              ? 'needs attention'
-              : data.incoming.last_sync
-                ? 'last synced ' + new Date(data.incoming.last_sync).toLocaleTimeString()
-                : data.incoming.enabled
-                  ? 'awaiting first sync'
-                  : 'needs setup'}
-          </span>
-        </div>
-      )}
+      {/* Which mailbox this project sends from and receives at, and what is still missing. */}
+      <MailboxStatus
+        project={project}
+        incoming={data?.incoming ?? null}
+        refresh={refresh}
+        onConfigure={configuring ? undefined : () => setConfiguring(true)}
+      />
       {data?.incoming.last_error && !configuring && <Alert>{data.incoming.last_error}</Alert>}
       {configuring ? (
         <MailboxSettings

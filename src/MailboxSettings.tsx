@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Mail, Send, Users } from 'lucide-react';
 import type { EmailSettings, Project } from '../shared/types';
+import { sendingGaps } from '../shared/mailbox-status';
 import { api, json } from './api';
 import { Alert, Badge, Spinner } from './ui';
 import { IncomingSettings } from './IncomingSettings';
@@ -18,6 +19,9 @@ export function MailboxSettings({
 }) {
   const base = '/projects/' + project.id + '/mailbox/email';
   const [mailbox, setMailbox] = useState<EmailSettings | null>(null),
+    // What the server holds, so the status names what is missing from the saved mailbox rather
+    // than from whatever is half-typed in the form.
+    [stored, setStored] = useState<EmailSettings | null>(null),
     [password, setPassword] = useState(''),
     [clearPassword, setClearPassword] = useState(false),
     [test, setTest] = useState('');
@@ -28,7 +32,10 @@ export function MailboxSettings({
     let cancelled = false;
     api<EmailSettings>(base)
       .then((value) => {
-        if (!cancelled) setMailbox(value);
+        if (!cancelled) {
+          setMailbox(value);
+          setStored(value);
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e.message);
@@ -46,9 +53,11 @@ export function MailboxSettings({
             <Mail size={20} />
             Sending mailbox
           </h2>
-          {mailbox && (
-            <Badge value={mailbox.configured ? 'ready' : 'draft'}>
-              {mailbox.configured ? 'Ready to send' : 'Not configured'}
+          {stored && (
+            <Badge value={stored.configured ? 'ready' : 'draft'}>
+              {stored.configured
+                ? 'Ready to send'
+                : 'Not configured · ' + sendingGaps(stored).join(' · ')}
             </Badge>
           )}
         </div>
@@ -85,6 +94,7 @@ export function MailboxSettings({
                   }),
                 });
                 setMailbox(saved);
+                setStored(saved);
                 setPassword('');
                 setClearPassword(false);
                 onSaved?.();

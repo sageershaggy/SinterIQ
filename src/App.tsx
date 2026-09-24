@@ -8,12 +8,10 @@ import {
   FolderOpen,
   History,
   LayoutGrid,
-  LogOut,
   Plus,
   ScanLine,
   Settings as SettingsIcon,
   ShieldCheck,
-  Sparkles,
   Users,
   X,
   Menu,
@@ -24,12 +22,15 @@ import type { Project, User } from '../shared/types';
 import { api, date, json } from './api';
 import { Alert, Badge, Brand, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { Notifications } from './Notifications';
+import { AccountMenu } from './AccountMenu';
+import { HeaderQuote } from './Shell';
 import { readRoute, type View } from './navigation';
 const Training = lazy(() => import('./Training'));
 const Leads = lazy(() => import('./Leads'));
 const Funnels = lazy(() => import('./Funnels'));
 const Settings = lazy(() => import('./Settings'));
 const Mailbox = lazy(() => import('./Mailbox'));
+const ResearchLog = lazy(() => import('./ResearchLog'));
 export default function App({ user, onLogout }: { user: User; onLogout: () => Promise<void> }) {
   const [projects, setProjects] = useState<Project[]>([]),
     [loading, setLoading] = useState(true),
@@ -37,7 +38,8 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
   const [route, setRoute] = useState(readRoute);
   const [view, setView] = useState<View>(route.view),
     [selected, setSelected] = useState<number | null>(route.projectId),
-    [expanded, setExpanded] = useState<number[]>([]);
+    [expanded, setExpanded] = useState<number[]>([]),
+    [projectsOpen, setProjectsOpen] = useState(true);
   const [newProject, setNewProject] = useState(false),
     [editProject, setEditProject] = useState(false),
     [menu, setMenu] = useState(false);
@@ -51,8 +53,10 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
       setRoute(next);
       setView(next.view);
       setSelected(next.projectId);
-      if (next.projectId)
+      if (next.projectId) {
         setExpanded((ids) => (ids.includes(next.projectId!) ? ids : [...ids, next.projectId!]));
+        setProjectsOpen(true);
+      }
       setMenu(false);
     };
     sync();
@@ -147,26 +151,45 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
       )}
       <aside className={'sidebar ' + (menu ? 'sidebar-open' : '')}>
         <Brand />
-        <div className="workspace-label">
-          <span className="workspace-avatar">IR</span>
-          <div>
-            Research workspace<small>Team workspace</small>
-          </div>
-          <ChevronDown size={14} />
-        </div>
+        {/* A plain line, not a control: there is one workspace, so nothing to switch. */}
+        <p className="workspace-line">
+          <strong>Research workspace</strong> <span>Team workspace</span>
+        </p>
         <span className="nav-caption">WORKSPACE</span>
         <nav aria-label="Workspace">
-          <button
-            className={'nav-item ' + (view === 'projects' ? 'active' : '')}
-            onClick={() => navigate('projects')}
-          >
-            <FolderOpen size={18} />
-            All projects<span className="nav-count">{projects.length}</span>
-          </button>
+          {/* "All projects" opens its page and drops down every project beneath it. */}
+          <div className={'all-projects-row' + (view === 'projects' ? ' is-active' : '')}>
+            <button
+              className={'nav-item ' + (view === 'projects' ? 'active' : '')}
+              onClick={() => {
+                navigate('projects');
+                setProjectsOpen(true);
+              }}
+            >
+              <FolderOpen size={18} />
+              All projects<span className="nav-count">{projects.length}</span>
+            </button>
+            <button
+              className="project-nav-toggle"
+              aria-expanded={projectsOpen}
+              aria-controls="sidebar-projects"
+              aria-label={(projectsOpen ? 'Hide' : 'Show') + ' the list of projects'}
+              onClick={() => setProjectsOpen((value) => !value)}
+            >
+              <ChevronDown size={14} className={projectsOpen ? 'is-open' : ''} />
+            </button>
+          </div>
         </nav>
-        <div className="nav-divider" />
-        <div className="nav-caption">PROJECTS</div>
-        <div className="project-nav">
+        <div
+          className="project-nav sidebar-projects"
+          id="sidebar-projects"
+          hidden={!projectsOpen}
+          aria-label="Projects"
+          role="group"
+        >
+          {!projects.length && !loading && (
+            <p className="sidebar-projects-empty">No projects yet</p>
+          )}
           {projects.map((p) => {
             // Each project owns its own section, rendered inside its group rather than
             // after the list, and expands independently of which project is active.
@@ -209,46 +232,8 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             );
           })}
         </div>
-        <div className="sidebar-bottom">
-          <div className="sidebar-note">
-            <Sparkles size={19} />
-            <strong>
-              Good research starts
-              <br />
-              with good context.
-            </strong>
-            <p>Give each project the knowledge it needs to qualify with confidence.</p>
-          </div>
-          {
-            <button
-              className={'nav-item ' + (view === 'settings' ? 'active' : '')}
-              onClick={() => navigate('settings')}
-            >
-              <SettingsIcon size={17} />
-              Workspace settings
-            </button>
-          }
-          <div className="user-card">
-            <span className="user-avatar">
-              {user.name
-                .split(' ')
-                .map((n) => n[0])
-                .slice(0, 2)
-                .join('')}
-            </span>
-            <div>
-              <strong>{user.name}</strong>
-              <small>{user.role === 'admin' ? 'Administrator' : 'Researcher'}</small>
-            </div>
-            <button
-              aria-label="Sign out"
-              title="Sign out"
-              onClick={() => onLogout().catch((e) => setError(e.message))}
-            >
-              <LogOut size={17} />
-            </button>
-          </div>
-        </div>
+        {/* Workspace settings, the profile and sign-out moved to the account menu in the header;
+            the quote moved to the header line. The sidebar is navigation only. */}
       </aside>
       <div className="main-shell">
         <header className="topbar">
@@ -270,13 +255,15 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             )}
             <strong>{headings[view]}</strong>
           </div>
+          {view !== 'settings' && <HeaderQuote />}
           <div className="topbar-right">
             <Notifications refresh={refresh} />
-            <span className="private-label">
-              <ShieldCheck size={14} />
-              Team workspace
-            </span>
-            <span className="top-avatar">{user.name[0]}</span>
+            <AccountMenu
+              user={user}
+              active={view === 'settings'}
+              onSettings={() => navigate('settings')}
+              onLogout={() => onLogout().catch((e) => setError(e.message))}
+            />
           </div>
         </header>
         <main className="main-content" id="main-content">
@@ -318,32 +305,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                       </button>
                     )}
                   </div>
-                  <div className="stat-grid">
-                    <Stat
-                      label="Projects"
-                      value={projects.length}
-                      detail={user.role === 'admin' ? 'In this workspace' : 'Assigned to you'}
-                      icon={<FolderOpen />}
-                    />
-                    <Stat
-                      label="Total leads"
-                      value={projects.reduce((total, p) => total + p.lead_count, 0)}
-                      detail="Across your projects"
-                      icon={<Users />}
-                    />
-                    <Stat
-                      label="Qualified leads"
-                      value={projects.reduce((total, p) => total + p.qualified_count, 0)}
-                      detail="Against current training"
-                      icon={<Check />}
-                    />
-                    <Stat
-                      label="Awaiting review"
-                      value={projects.reduce((total, p) => total + p.review_count, 0)}
-                      detail="Unreviewed, uncertain or outdated"
-                      icon={<ShieldCheck />}
-                    />
-                  </div>
+                  {/* No workspace totals here: each project card carries its own numbers. */}
                   <div className="section-title">
                     <h2>
                       Project library <span>{projects.length}</span>
@@ -522,16 +484,12 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                 />
               )}
               {project && view === 'activity' && (
-                <>
-                  <div className="page-heading">
-                    <div>
-                      <span className="eyebrow">THE RESEARCH RECORD</span>
-                      <h1>Every step, accounted for.</h1>
-                      <p>Training changes, analysis and human decisions for {project.name}.</p>
-                    </div>
-                  </div>
-                  <Activity projectId={project.id} refresh={refresh} />
-                </>
+                <ResearchLog
+                  key={project.id}
+                  project={project}
+                  refresh={refresh}
+                  activity={<Activity projectId={project.id} refresh={refresh} />}
+                />
               )}
               {view === 'settings' && (
                 <Settings
