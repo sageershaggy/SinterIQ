@@ -19,7 +19,7 @@ type GetProject = (db: DB, id: number, user: User) => Project;
 /**
  * The newest call entry of a lead aliased `l`, for joins and filters. The lead list's "Call
  * status" filter can use it: `LEFT JOIN call_logs c ON c.id=` + latestCallSql, then c.outcome
- * against shared/calls.ts (followUpCallOutcomes, callStage).
+ * against shared/calls.ts (callOutcomeStage, callStage).
  */
 export const latestCallSql =
   '(SELECT MAX(x.id) FROM call_logs x WHERE x.lead_id=l.id AND x.project_id=l.project_id)';

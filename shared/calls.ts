@@ -44,20 +44,28 @@ export const manualCallOutcomes: CallOutcome[] = [
 export const datedCallOutcomes: CallOutcome[] = ['CALLBACK', 'FOLLOW_UP'];
 
 /**
- * Where calling stands for a lead, derived from its latest call. This is the vocabulary a
- * "Call status" filter on the lead list can use (Suggestions 2, line 11):
+ * Where calling stands for a lead, derived from its latest call:
  * - NO_CALL_YET: nothing logged;
- * - FOLLOW_UP_REQUIRED: the last call asks for another one (no answer, call back, follow-up);
+ * - PENDING: called, nobody answered yet;
+ * - FOLLOW_UP_REQUIRED: the last call asks for another one (call back, follow-up, wrong contact);
  * - COMPLETED: the last call reached a result (connected, interested, not interested, meeting
- *   booked, wrong contact).
- * "Call assigned" and "Call pending" are about assignment rather than the log: assigned_to is
- * set, and pending is assigned with NO_CALL_YET.
+ *   booked).
+ * This is the one mapping: the lead list's "Call status" filter reads it too
+ * (shared/lead-filters.ts), so a lead is in the same state on both screens.
  */
-export type CallStage = 'NO_CALL_YET' | 'FOLLOW_UP_REQUIRED' | 'COMPLETED';
-export const followUpCallOutcomes: CallOutcome[] = ['NO_ANSWER', 'CALLBACK', 'FOLLOW_UP'];
+export type CallStage = 'NO_CALL_YET' | 'PENDING' | 'FOLLOW_UP_REQUIRED' | 'COMPLETED';
+export const callOutcomeStage: Record<CallOutcome, Exclude<CallStage, 'NO_CALL_YET'>> = {
+  NO_ANSWER: 'PENDING',
+  CALLBACK: 'FOLLOW_UP_REQUIRED',
+  FOLLOW_UP: 'FOLLOW_UP_REQUIRED',
+  WRONG_CONTACT: 'FOLLOW_UP_REQUIRED',
+  CONNECTED: 'COMPLETED',
+  INTERESTED: 'COMPLETED',
+  NOT_INTERESTED: 'COMPLETED',
+  MEETING_BOOKED: 'COMPLETED',
+};
 export function callStage(latest: CallOutcome | null): CallStage {
-  if (!latest) return 'NO_CALL_YET';
-  return followUpCallOutcomes.includes(latest) ? 'FOLLOW_UP_REQUIRED' : 'COMPLETED';
+  return latest ? callOutcomeStage[latest] : 'NO_CALL_YET';
 }
 
 /** What the caller should do next, read from the latest call. */

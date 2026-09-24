@@ -34,6 +34,13 @@ import { researchMissing, researchableFields } from './enrich';
 import { installCalls, recordCall } from './calls';
 import { installCrm, leadCrm } from './crm';
 import {
+  facetWhere,
+  installLeadFilters,
+  leadFacetShape,
+  leadOrder,
+  leadSummary,
+} from './lead-filters';
+import {
   HttpError,
   positiveId,
   projectSchema,
@@ -171,6 +178,9 @@ export const leadQuerySchema = z.object({
   search: text(200).default(''),
   status: z.enum(leadStatusFilters).default('ALL'),
   assigned_to: z.enum(['any', 'me']).default('any'),
+  // The Filters panel: qualification, fit score, calls, industry, location, assignee, lead
+  // status, research, date added and the sort order (server/lead-filters.ts).
+  ...leadFacetShape,
 });
 /**
  * One filter definition, shared by the lead list and the CSV export so both agree.
@@ -239,6 +249,7 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, vi
     where += ' AND l.assigned_to=?';
     params.push(viewerId);
   }
+  where += facetWhere(project, input, params);
   return { where, params };
 }
 const fieldLabels: Record<string, string> = {
@@ -405,6 +416,11 @@ export function createApp(options: {
   installUnsubscribe(app, db);
   installAuth(app, db, production);
   installWorkspace(app, db, getProject);
+  installLeadFilters(app, {
+    db,
+    getProject,
+    scope: (project, user) => leadFilter(project, leadQuerySchema.parse({}), user.id),
+  });
   funnels.install(app);
   mailbox.install(app);
   installCalls(app, db, getProject);
@@ -799,19 +815,30 @@ export function createApp(options: {
     const { count } = db
       .prepare('SELECT COUNT(*) count FROM leads l WHERE ' + where)
       .get(...params) as { count: number };
+    // A page past the end (a filter narrowed the list, or a lead was deleted) shows the last one.
+    const pages = Math.max(1, Math.ceil(count / input.page_size));
+    const page = Math.min(input.page, pages);
     const rows = db
       .prepare(
         'SELECT l.*,a.name assigned_to_name,(SELECT COUNT(*) FROM call_logs c WHERE c.lead_id=l.id) call_count' +
           ' FROM leads l LEFT JOIN accounts a ON a.id=l.assigned_to WHERE ' +
           where +
-          ' ORDER BY l.updated_at DESC,l.id DESC LIMIT ? OFFSET ?',
+          ' ORDER BY ' +
+          leadOrder(input.sort) +
+          ' LIMIT ? OFFSET ?',
       )
-      .all(...params, input.page_size, (input.page - 1) * input.page_size) as Lead[];
+      .all(...params, input.page_size, (page - 1) * input.page_size) as Lead[];
     res.json({
       leads: rows.map((row) => serializeLead(row, project)),
       total: count,
-      page: input.page,
+      page,
+      pages,
       page_size: input.page_size,
+      summary: leadSummary(
+        db,
+        project,
+        leadFilter(project, leadQuerySchema.parse({}), req.user.id),
+      ),
     });
   });
   app.post('/api/projects/:projectId/leads', (req, res) => {
@@ -964,7 +991,8 @@ export function createApp(options: {
       .prepare(
         'SELECT l.*,a.name assigned_to_name FROM leads l LEFT JOIN accounts a ON a.id=l.assigned_to WHERE ' +
           where +
-          ' ORDER BY l.name',
+          ' ORDER BY ' +
+          leadOrder(input.sort),
       )
       .all(...params) as Lead[];
     const cell = (value: unknown) => {

@@ -9,6 +9,10 @@
  * Only GETs return data; writes answer {} so buttons can be clicked without anything persisting.
  * Development only — see harness.html. Nothing here is imported by the production entry.
  */
+import { harnessAssignees, leadFacets, leadsPage } from './lead-fixtures';
+import { callStage } from '../../shared/calls';
+import type { CallOutcome } from '../../shared/types';
+
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
 /** A local calendar day, `offset` days from today, as YYYY-MM-DD (call next-action dates). */
@@ -224,11 +228,7 @@ const caller = (
   assigned_to_name: person[1],
   assigned_at: ago(60 * 30),
   call_status: call?.[0] ?? null,
-  call_stage: !call
-    ? 'NO_CALL_YET'
-    : ['NO_ANSWER', 'CALLBACK', 'FOLLOW_UP'].includes(call[0])
-      ? 'FOLLOW_UP_REQUIRED'
-      : 'COMPLETED',
+  call_stage: callStage((call?.[0] ?? null) as CallOutcome | null),
   last_call_at: call ? ago(call[2]) : null,
   last_call_by: call ? person[1] : null,
   last_call_notes: '',
@@ -311,7 +311,7 @@ const callQueue = {
   ],
 };
 
-const routes: Array<[RegExp, () => unknown]> = [
+const routes: Array<[RegExp, (route: string) => unknown]> = [
   [
     /^\/auth\/me$/,
     () => ({
@@ -324,12 +324,13 @@ const routes: Array<[RegExp, () => unknown]> = [
   [/^\/projects\/2$/, () => ({ ...project, sources, versions })],
   [/^\/projects\/2\/activity$/, () => activity],
   [/^\/projects\/2\/leads\/7$/, () => lead],
-  [/^\/projects\/2\/leads(\?.*)?$/, () => ({ leads: [lead], total: 198 })],
+  [/^\/projects\/2\/leads(\?.*)?$/, (route) => leadsPage(route, lead)],
+  [/^\/projects\/2\/lead-facets$/, () => leadFacets],
   [/^\/notifications/, () => ({ items: [], unread: 0 })],
   // Lists the covered screens load alongside their main data. A missing one fails the
   // whole screen load, which is exactly what the 404 default is there to make visible.
   [/^\/projects\/2\/training\/analyses$/, () => []],
-  [/^\/projects\/2\/assignees$/, () => []],
+  [/^\/projects\/2\/assignees$/, () => harnessAssignees],
   [/^\/projects\/2\/calls(\?.*)?$/, () => callQueue],
 ];
 
@@ -350,7 +351,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       status: 404,
       headers,
     });
-  return new Response(JSON.stringify(match[1]()), { status: 200, headers });
+  return new Response(JSON.stringify(match[1](route)), { status: 200, headers });
 };
 
 // The app reads the route from the hash; default to the project overview.

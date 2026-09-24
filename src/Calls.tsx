@@ -13,6 +13,7 @@ const focusLabels: Record<Focus, string> = {
   ALL: 'Assigned for calling',
   NO_CALL_YET: 'Not called yet',
   DUE: 'Due today or overdue',
+  PENDING: 'No answer yet',
   FOLLOW_UP_REQUIRED: 'Follow-up required',
   COMPLETED: 'Completed',
 };
@@ -92,7 +93,7 @@ export default function Calls({
         </div>
       </div>
       <div className="calls-summary" role="group" aria-label="Show calls">
-        {(['ALL', 'NO_CALL_YET', 'DUE', 'FOLLOW_UP_REQUIRED', 'COMPLETED'] as const).map(
+        {(['ALL', 'NO_CALL_YET', 'DUE', 'PENDING', 'FOLLOW_UP_REQUIRED', 'COMPLETED'] as const).map(
           (value) => (
             <button
               key={value}

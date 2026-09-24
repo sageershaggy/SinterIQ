@@ -6,7 +6,6 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
-  ChevronRight,
   ClipboardCheck,
   Download,
   FileText,
@@ -55,6 +54,23 @@ import { leadLink, type LeadTab } from './navigation';
 import { LeadCalls } from './LeadCalls';
 import { LeadStatus } from './LeadStatus';
 import { LeadComments } from './LeadComments';
+import {
+  FitQualification,
+  LeadCounts,
+  LeadFilterChips,
+  LeadFilters,
+  Pager,
+  countView,
+  useLeadFacetOptions,
+} from './LeadFilters';
+import { AssignForCalling, AssignRowButton } from './LeadAssign';
+import {
+  emptyFacets,
+  facetParams,
+  activeFacetCount,
+  type LeadFacets,
+  type LeadSummary,
+} from '../shared/lead-filters';
 
 export default function Leads({
   project,
@@ -83,6 +99,30 @@ export default function Leads({
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
     [refresh, setRefresh] = useState(0);
+  // The Filters panel's facets and sort, and what the server says about the whole project.
+  const [facets, setFacets] = useState<LeadFacets>(emptyFacets),
+    [pages, setPages] = useState(1),
+    [summary, setSummary] = useState<LeadSummary | null>(null);
+  const facetOptions = useLeadFacetOptions(base, refresh);
+  const defaultStatus = queue ? 'REVIEW_QUEUE' : 'ALL';
+  const filtered = Boolean(query) || status !== 'ALL' || activeFacetCount(facets) > 0;
+  const changeFacets = (next: LeadFacets) => {
+    setFacets(next);
+    setPage(1);
+  };
+  /** A count tile shows the whole project, or one qualification state of it. */
+  const showCount = (state: LeadFacets['qualification'][number] | null) => {
+    setSearch('');
+    setQuery('');
+    setStatus('ALL');
+    changeFacets({ ...emptyFacets, sort: facets.sort, qualification: state ? [state] : [] });
+  };
+  const clearAll = () => {
+    setSearch('');
+    setQuery('');
+    setStatus(defaultStatus);
+    changeFacets(emptyFacets);
+  };
   const [selected, setSelected] = useState<number[]>([]),
     [create, setCreate] = useState(false),
     [importing, setImporting] = useState(false);
@@ -158,11 +198,18 @@ export default function Leads({
       page: String(page),
       page_size: '30',
     });
-    api<{ leads: Lead[]; total: number }>(base + '/leads?' + params)
+    for (const [key, value] of facetParams(facets)) params.append(key, value);
+    api<{ leads: Lead[]; total: number; page: number; pages: number; summary: LeadSummary }>(
+      base + '/leads?' + params,
+    )
       .then((data) => {
         if (!cancelled) {
           setLeads(data.leads);
           setTotal(data.total);
+          setPages(data.pages);
+          setSummary(data.summary);
+          // The server answers a page past the end with the last page.
+          if (data.page !== page) setPage(data.page);
           setError('');
         }
       })
@@ -175,7 +222,7 @@ export default function Leads({
     return () => {
       cancelled = true;
     };
-  }, [project.id, project.active_version, project.revision, refresh, page, query, status]);
+  }, [project.id, project.active_version, project.revision, refresh, page, query, status, facets]);
   async function qualifyOne(lead: Lead) {
     setBusy('lead-' + lead.id);
     setError('');
@@ -326,26 +373,12 @@ export default function Leads({
             </button>
           </div>
         )}
-        <div className="lead-summary">
-          <span>
-            <Users size={16} />
-            <strong>{project.lead_count}</strong> total leads
-          </span>
-          <span>
-            <span className="small-dot green-dot" />
-            <strong>{project.qualified_count}</strong> qualified on current training
-          </span>
-          <span>
-            <span className="small-dot amber-dot" />
-            <strong>{project.review_count}</strong> awaiting research
-          </span>
-          {ready && (
-            <span className="training-version">
-              <BookOpen size={14} />
-              Training v{project.active_version}
-            </span>
-          )}
-        </div>
+        <LeadCounts
+          summary={summary}
+          active={countView(facets, !query && status === 'ALL')}
+          onPick={showCount}
+          trainingVersion={ready ? project.active_version : null}
+        />
         {error && <Alert>{error}</Alert>}
         <section className="panel leads-panel">
           <div className="table-toolbar">
@@ -358,6 +391,12 @@ export default function Leads({
                 placeholder="Search company, industry or country…"
               />
             </div>
+            <LeadFilters
+              facets={facets}
+              options={facetOptions}
+              total={total}
+              onChange={changeFacets}
+            />
             {/* A real dropdown rather than a native select: the OS popup cannot be aligned
                 or padded, and its hit area does not match the control, which is why it kept
                 reading as unclickable. */}
@@ -428,18 +467,27 @@ export default function Leads({
                       '/api' +
                       base +
                       '/leads/export?' +
-                      new URLSearchParams({
-                        status: status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status,
-                        ...(status === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
-                        search: query,
-                      })
+                      new URLSearchParams([
+                        ['status', status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status],
+                        ...(status === 'ASSIGNED_TO_ME' ? [['assigned_to', 'me']] : []),
+                        ['search', query],
+                        // The same facets and sort as the table, from the same function.
+                        ...facetParams(facets),
+                      ])
                     }
                     onClick={() => setExportOpen(false)}
                   >
                     <strong>This view</strong>
                     <small>
                       {statusFilters(queue).find((o) => o.value === status)?.label}
-                      {query ? ' · matching “' + query + '”' : ''} · {total} lead
+                      {query ? ' · matching “' + query + '”' : ''}
+                      {activeFacetCount(facets)
+                        ? ' · ' +
+                          activeFacetCount(facets) +
+                          ' filter' +
+                          (activeFacetCount(facets) === 1 ? '' : 's')
+                        : ''}{' '}
+                      · {total} lead
                       {total === 1 ? '' : 's'}
                     </small>
                   </a>
@@ -468,6 +516,37 @@ export default function Leads({
               )}
             </div>
           </div>
+          <LeadFilterChips
+            facets={facets}
+            options={facetOptions}
+            onChange={changeFacets}
+            onClearAll={clearAll}
+            extra={[
+              ...(query
+                ? [
+                    {
+                      key: 'search',
+                      label: 'Search: “' + query + '”',
+                      onRemove: () => setSearch(''),
+                    },
+                  ]
+                : []),
+              ...(status !== defaultStatus
+                ? [
+                    {
+                      key: 'status',
+                      label:
+                        'View: ' +
+                        (statusFilters(queue).find((o) => o.value === status)?.label || status),
+                      onRemove: () => {
+                        setStatus(defaultStatus);
+                        setPage(1);
+                      },
+                    },
+                  ]
+                : []),
+            ]}
+          />
           {selected.length > 0 && (
             <div className="selection-bar">
               <span>
@@ -524,11 +603,7 @@ export default function Leads({
           ) : !leads.length ? (
             <Empty
               icon={<ScanLine size={30} />}
-              title={
-                query || status !== 'ALL'
-                  ? 'No leads match this view'
-                  : 'Your next discovery starts here'
-              }
+              title={filtered ? 'No leads match this view' : 'Your next discovery starts here'}
               action={
                 <button className="button secondary" onClick={() => setCreate(true)}>
                   <Plus size={16} />
@@ -536,7 +611,7 @@ export default function Leads({
                 </button>
               }
             >
-              {query || status !== 'ALL'
+              {filtered
                 ? 'Try another filter, or add a lead to this project.'
                 : 'Add a company and its website, or import a CSV to build your research list.'}
             </Empty>
@@ -561,10 +636,7 @@ export default function Leads({
                     <th>Company</th>
                     <th>Contact</th>
                     <th>Industry / location</th>
-                    <th>Fit score</th>
-                    <th>Next step</th>
-                    <th>Assigned to</th>
-                    <th>Qualification</th>
+                    <th>Fit score · qualification</th>
                     <th>
                       <span className="visually-hidden">Open</span>
                     </th>
@@ -622,67 +694,7 @@ export default function Leads({
                         </small>
                       </td>
                       <td>
-                        {lead.score === null ? (
-                          <span className="muted">—</span>
-                        ) : (
-                          <div className={'score-cell ' + (lead.stale ? 'score-stale' : '')}>
-                            <strong>
-                              {lead.score}
-                              <small>/100</small>
-                            </strong>
-                            <span className="score-track">
-                              <i style={{ width: lead.score + '%' }} />
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <NextStepBadge step={lead.next_step} />
-                      </td>
-                      <td>
-                        <button
-                          className="assignee-cell"
-                          disabled={!!busy}
-                          onClick={() => setAssigning([lead.id])}
-                          title="Assign this lead for calling"
-                        >
-                          {lead.assigned_to_name ? (
-                            <>
-                              <span className="assignee-avatar">{lead.assigned_to_name[0]}</span>
-                              <span>
-                                {lead.assigned_to_name}
-                                {(lead.call_count || 0) > 0 && (
-                                  <small>
-                                    {lead.call_count} call{lead.call_count === 1 ? '' : 's'} logged
-                                  </small>
-                                )}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <UserPlus size={14} />
-                              <span className="muted">Assign</span>
-                            </>
-                          )}
-                        </button>
-                      </td>
-                      <td>
-                        <Badge value={lead.stale ? 'stale' : lead.status}>
-                          {lead.stale ? 'Requalification needed' : label(lead.status)}
-                        </Badge>
-                        <small className="table-subtext">
-                          {lead.reviewed && (
-                            <>
-                              <ShieldCheck size={12} /> Human reviewed ·{' '}
-                            </>
-                          )}
-                          {lead.training_version ? 'Training v' + lead.training_version : 'No run'}
-                        </small>
-                        {lead.outreach_status && lead.outreach_status !== 'NOT_CONTACTED' && (
-                          <small className="table-subtext">
-                            Outreach: {label(lead.outreach_status)}
-                          </small>
-                        )}
+                        <FitQualification lead={lead} />
                       </td>
                       <td>
                         <div className="row-actions">
@@ -718,6 +730,11 @@ export default function Leads({
                             <Mail size={14} />
                             Email
                           </button>
+                          <AssignRowButton
+                            lead={lead}
+                            disabled={!!busy}
+                            onClick={() => setAssigning([lead.id])}
+                          />
                           <button
                             className="icon-button"
                             onClick={() => setDetail(lead.id)}
@@ -749,25 +766,7 @@ export default function Leads({
               {total} leads
             </span>
             <span className="fine-print">Select up to 20 leads for a qualification batch.</span>
-            <div>
-              <button
-                className="icon-button"
-                disabled={page <= 1 || loading || !!busy}
-                onClick={() => setPage((n) => n - 1)}
-                aria-label="Previous page"
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <span>{page}</span>
-              <button
-                className="icon-button"
-                disabled={page * 30 >= total || loading || !!busy}
-                onClick={() => setPage((n) => n + 1)}
-                aria-label="Next page"
-              >
-                <ChevronRight size={18} />
-              </button>
-            </div>
+            <Pager page={page} pages={pages} disabled={loading || !!busy} onPage={setPage} />
           </div>
         </section>
         {enrolling && (
@@ -1455,9 +1454,16 @@ function LeadDetail({
                     {lead.stale ? 'Requalification needed' : label(lead.status)}
                   </Badge>
                   {lead.reviewed && <Badge value="ready">Human reviewed</Badge>}
-                  {lead.assigned_to_name && (
-                    <Badge value="ready">Calling: {lead.assigned_to_name}</Badge>
-                  )}
+                  <AssignForCalling
+                    projectId={project.id}
+                    projectName={project.name}
+                    lead={lead}
+                    onSaved={() => {
+                      setRefresh((n) => n + 1);
+                      onChange();
+                    }}
+                    notify={notify}
+                  />
                 </div>
               </div>
               <button
