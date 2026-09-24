@@ -31,6 +31,8 @@ import {
   DEFAULT_JEV_MODEL,
 } from './decisions';
 import { researchMissing, researchableFields } from './enrich';
+import { installCalls, recordCall } from './calls';
+import { installCrm, leadCrm } from './crm';
 import {
   HttpError,
   positiveId,
@@ -405,6 +407,8 @@ export function createApp(options: {
   installWorkspace(app, db, getProject);
   funnels.install(app);
   mailbox.install(app);
+  installCalls(app, db, getProject);
+  installCrm(app, db, getProject);
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -1099,6 +1103,7 @@ export function createApp(options: {
           'SELECT * FROM call_logs WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
         )
         .all(lead.id, project.id),
+      ...leadCrm(db, project.id, lead.id, req.user),
       emails: db
         .prepare(
           'SELECT * FROM email_messages WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
@@ -1603,20 +1608,7 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
     const input = callSchema.parse(req.body);
-    const id = Number(
-      db
-        .prepare(
-          'INSERT INTO call_logs (project_id,lead_id,outcome,notes,created_by,created_at) VALUES (?,?,?,?,?,?)',
-        )
-        .run(project.id, lead.id, input.outcome, input.notes, req.user.name, now()).lastInsertRowid,
-    );
-    db.prepare('UPDATE leads SET updated_at=? WHERE id=? AND project_id=?').run(
-      now(),
-      lead.id,
-      project.id,
-    );
-    audit(db, project.id, req.user.name, 'lead.call_logged', lead.name + ': ' + input.outcome);
-    notifyLead(db, project.id, lead.id, 'call', 'Call recorded for ' + lead.name);
+    const id = recordCall(db, project, lead, input, req.user.name);
     res.status(201).json({ id });
   });
   /**

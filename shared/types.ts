@@ -166,6 +166,10 @@ export interface Lead {
   reviews?: Review[];
   feedback?: LeadFeedback[];
   calls?: CallLog[];
+  /** Manual CRM layer (shared/crm.ts); never part of the qualification. */
+  pipeline_status?: import('./crm').PipelineStatus;
+  pipeline_changes?: import('./crm').PipelineChange[];
+  comments?: import('./crm').LeadComment[];
   emails?: EmailMessage[];
   outreach_status?: string;
   campaigns?: Array<
@@ -184,7 +188,15 @@ export interface Lead {
   }>;
 }
 export type CallOutcome =
-  'CONNECTED' | 'NO_ANSWER' | 'CALLBACK' | 'NOT_INTERESTED' | 'WRONG_CONTACT' | 'MEETING_BOOKED';
+  | 'CONNECTED'
+  | 'NO_ANSWER'
+  | 'CALLBACK'
+  | 'NOT_INTERESTED'
+  | 'WRONG_CONTACT'
+  | 'MEETING_BOOKED'
+  // Added for the Calls page; the order and labels live in shared/calls.ts.
+  | 'INTERESTED'
+  | 'FOLLOW_UP';
 /** A logged call attempt against an assigned lead. Append-only. */
 export interface CallLog {
   id: number;
@@ -192,6 +204,8 @@ export interface CallLog {
   lead_id: number;
   outcome: CallOutcome;
   notes: string;
+  /** YYYY-MM-DD for a call-back or follow-up; null otherwise and on older entries. */
+  next_action_at?: string | null;
   created_by: string;
   created_at: string;
 }

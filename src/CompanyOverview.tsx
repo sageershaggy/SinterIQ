@@ -3,6 +3,8 @@ import type { Lead, ResearchOutcome, ResearchableField } from '../shared/types';
 import type { LeadTab } from './navigation';
 import { date, label } from './api';
 import { Badge, ExternalLink, Spinner } from './ui';
+import { callOutcomeLabels } from '../shared/calls';
+import { crmEvents } from './LeadComments';
 
 /** What this record calls each field a research pass can fill. */
 const researchableLabels: Record<ResearchableField, string> = {
@@ -218,10 +220,11 @@ export function CompanyOverview({
     ...(lead.calls || []).map((item) => ({
       key: 'call-' + item.id,
       when: item.created_at,
-      title: 'Call · ' + label(item.outcome),
+      title: 'Call · ' + (callOutcomeLabels[item.outcome] || label(item.outcome)),
       detail: item.notes,
       tab: 'calls' as const,
     })),
+    ...crmEvents(lead),
     ...(lead.emails || []).map((item) => ({
       key: 'email-' + item.id,
       when: item.created_at,

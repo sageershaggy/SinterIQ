@@ -1,0 +1,157 @@
+/* Manual lead status, top right of the lead header, beside the header's main action. */
+.lead-heading-actions {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+.lead-status {
+  position: relative;
+  --status-color: #6d7669;
+}
+.lead-status-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 39px;
+  padding-left: 12px;
+  border: 1px solid #dfe4d9;
+  border-radius: 7px;
+  background: #fff;
+}
+.lead-status-control:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(49, 90, 63, 0.12);
+}
+.lead-status-control label {
+  display: block;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.lead-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-color);
+  flex-shrink: 0;
+}
+.lead-status-control select {
+  width: auto;
+  min-width: 0;
+  padding: 8px 4px 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--status-color);
+  font-size: 12px;
+  font-weight: 650;
+}
+.lead-status-control select:focus {
+  outline: none;
+}
+.lead-status-history-button {
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  width: 36px;
+  border-left: 1px solid var(--line);
+  border-radius: 0 6px 6px 0;
+  color: #6f7868;
+}
+.lead-status-history-button:hover,
+.lead-status-history-button[aria-expanded='true'] {
+  background: #f3f6ee;
+  color: var(--green);
+}
+.lead-status-error {
+  max-width: 320px;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #964e3c;
+}
+.lead-status-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: min(330px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(25, 46, 38, 0.14);
+}
+.lead-status-popover > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.lead-status-history {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.lead-status-history li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 0;
+  border-top: 1px solid #eef1e9;
+}
+.lead-status-history li:first-child {
+  border-top: 0;
+}
+.lead-status-move {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5d6a55;
+}
+.lead-status-move strong {
+  color: var(--ink);
+}
+.lead-status-history small,
+.lead-status-empty {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.lead-status-new {
+  --status-color: #6d7669;
+}
+.lead-status-contacted {
+  --status-color: #3a6590;
+}
+.lead-status-interested {
+  --status-color: #4d7d33;
+}
+.lead-status-meeting_booked {
+  --status-color: #22705a;
+}
+.lead-status-proposal_sent {
+  --status-color: #97661a;
+}
+.lead-status-won {
+  --status-color: #2b5b33;
+}
+.lead-status-lost {
+  --status-color: #a2463c;
+}
+.lead-status-not_interested {
+  --status-color: #8b5750;
+}
+@media (max-width: 560px) {
+  .lead-heading-actions {
+    justify-content: flex-start;
+  }
+}

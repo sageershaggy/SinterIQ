@@ -7,6 +7,7 @@ export const leadTabs = [
   'calls',
   'email',
   'campaigns',
+  'comments',
 ] as const;
 export type LeadTab = (typeof leadTabs)[number];
 export type View =
@@ -18,7 +19,8 @@ export type View =
   | 'funnels'
   | 'activity'
   | 'settings'
-  | 'mailbox';
+  | 'mailbox'
+  | 'calls';
 const views: View[] = [
   'projects',
   'overview',
@@ -30,6 +32,7 @@ const views: View[] = [
   'settings',
   // A mailbox belongs to a project, so it is only ever reachable under one.
   'mailbox',
+  'calls',
 ];
 export function readRoute(hash = window.location.hash): {
   view: View;

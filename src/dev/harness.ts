@@ -11,6 +11,13 @@
  */
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
+/** A local calendar day, `offset` days from today, as YYYY-MM-DD (call next-action dates). */
+const day = (offset: number) => {
+  const d = new Date(now + offset * 86_400_000);
+  return [d.getFullYear(), d.getMonth() + 1, d.getDate()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join('-');
+};
 
 const rubric = {
   summary:
@@ -145,11 +152,163 @@ const lead = {
   runs: [],
   reviews: [],
   feedback: [],
-  calls: [],
+  calls: [
+    {
+      id: 2,
+      project_id: 2,
+      lead_id: 7,
+      outcome: 'CALLBACK',
+      notes: 'Reception asked us to call Justin back after the hearing.',
+      next_action_at: day(2),
+      created_by: 'Workspace Administrator',
+      created_at: ago(90),
+    },
+    {
+      id: 1,
+      project_id: 2,
+      lead_id: 7,
+      outcome: 'NO_ANSWER',
+      notes: '',
+      next_action_at: null,
+      created_by: 'Workspace Administrator',
+      created_at: ago(60 * 26),
+    },
+  ],
+  // Manual CRM layer (src/LeadStatus.tsx, src/LeadComments.tsx).
+  pipeline_status: 'CONTACTED',
+  pipeline_changes: [
+    {
+      id: 1,
+      from_status: 'NEW',
+      to_status: 'CONTACTED',
+      created_by: 'Workspace Administrator',
+      created_at: ago(95),
+    },
+  ],
+  comments: [
+    {
+      id: 1,
+      lead_id: 7,
+      author: 'Workspace Administrator',
+      body: 'Small firm, but they asked about a new website twice. Worth a proper call.',
+      created_at: ago(80),
+      updated_at: null,
+      can_edit: true,
+      can_delete: true,
+    },
+  ],
   emails: [],
   campaigns: [],
   outreach_events: [],
   outreach_status: 'NOT_CONTACTED',
+};
+
+// The Calls page: one row per call stage, with an overdue, a due-today and a later next action.
+const caller = (
+  lead_id: number,
+  name: string,
+  contact: [string, string, string, string],
+  place: [string, string],
+  person: [number, string],
+  call: null | [string, string | null, number, number],
+) => ({
+  lead_id,
+  name,
+  contact_name: contact[0],
+  contact_role: contact[1],
+  contact_phone: contact[2],
+  contact_email: contact[3],
+  city: place[0],
+  country: place[1],
+  assigned_to: person[0],
+  assigned_to_name: person[1],
+  assigned_at: ago(60 * 30),
+  call_status: call?.[0] ?? null,
+  call_stage: !call
+    ? 'NO_CALL_YET'
+    : ['NO_ANSWER', 'CALLBACK', 'FOLLOW_UP'].includes(call[0])
+      ? 'FOLLOW_UP_REQUIRED'
+      : 'COMPLETED',
+  last_call_at: call ? ago(call[2]) : null,
+  last_call_by: call ? person[1] : null,
+  last_call_notes: '',
+  call_count: call?.[3] ?? 0,
+  next_action: !call
+    ? 'Make the first call'
+    : (
+        {
+          CALLBACK: 'Call back',
+          FOLLOW_UP: 'Follow up',
+          NO_ANSWER: 'Try again',
+          INTERESTED: 'Book a meeting',
+          NOT_INTERESTED: 'No further calls',
+          CONNECTED: 'Record the outcome',
+        } as Record<string, string>
+      )[call[0]],
+  next_action_at: call?.[1] ?? null,
+});
+const callQueue = {
+  assignee: 'all',
+  truncated: false,
+  people: [
+    { id: 1, name: 'Workspace Administrator' },
+    { id: 3, name: 'Qudsiya Researcher' },
+  ],
+  rows: [
+    caller(
+      11,
+      'Harbour Dental Clinic',
+      ['Mariam Haddad', 'Practice manager', '+971 4 555 0101', 'mariam@harbourdental.ae'],
+      ['Dubai', 'AE'],
+      [3, 'Qudsiya Researcher'],
+      ['CALLBACK', day(-1), 60 * 28, 2],
+    ),
+    caller(
+      7,
+      'The Chopin Law Firm LLC',
+      ['', 'Attorney', '', 'Justin@chopinlawfirm.com'],
+      ['', ''],
+      [1, 'Workspace Administrator'],
+      ['FOLLOW_UP', day(0), 90, 2],
+    ),
+    caller(
+      12,
+      'Amusement Whitewater (L.L.C)',
+      ['', '', '+971 4 339 1234', 'dmaww@emirates.net.ae'],
+      ['Dubai', 'AE'],
+      [3, 'Qudsiya Researcher'],
+      ['CALLBACK', day(3), 60 * 5, 1],
+    ),
+    caller(
+      13,
+      'Kaimana Surf Supply',
+      ['Leilani Kahale', 'Owner', '+1 808 555 0199', 'leilani@kaimanasurf.com'],
+      ['Honolulu', 'US'],
+      [1, 'Workspace Administrator'],
+      null,
+    ),
+    caller(
+      14,
+      'Pacific Rim Logistics',
+      [
+        'Daniel Cho',
+        'Operations director',
+        '+1 808 555 0142',
+        'daniel.cho@pacificrimlogistics.com',
+      ],
+      ['Kapolei', 'US'],
+      [3, 'Qudsiya Researcher'],
+      ['INTERESTED', null, 60 * 50, 3],
+    ),
+    caller(
+      15,
+      'North Shore Bakehouse',
+      ['', 'Owner', '+1 808 555 0170', ''],
+      ['Haleiwa', 'US'],
+      [1, 'Workspace Administrator'],
+      ['NOT_INTERESTED', null, 60 * 72, 1],
+    ),
+  ],
 };
 
 const routes: Array<[RegExp, () => unknown]> = [
@@ -171,6 +330,7 @@ const routes: Array<[RegExp, () => unknown]> = [
   // whole screen load, which is exactly what the 404 default is there to make visible.
   [/^\/projects\/2\/training\/analyses$/, () => []],
   [/^\/projects\/2\/assignees$/, () => []],
+  [/^\/projects\/2\/calls(\?.*)?$/, () => callQueue],
 ];
 
 const realFetch = window.fetch.bind(window);

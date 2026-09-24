@@ -19,6 +19,7 @@ import {
   Menu,
   GitBranch,
   Mail,
+  PhoneCall,
 } from 'lucide-react';
 import type { Project, User } from '../shared/types';
 import { api, date, json } from './api';
@@ -30,6 +31,7 @@ const Leads = lazy(() => import('./Leads'));
 const Funnels = lazy(() => import('./Funnels'));
 const Settings = lazy(() => import('./Settings'));
 const Mailbox = lazy(() => import('./Mailbox'));
+const Calls = lazy(() => import('./Calls'));
 export default function App({ user, onLogout }: { user: User; onLogout: () => Promise<void> }) {
   const [projects, setProjects] = useState<Project[]>([]),
     [loading, setLoading] = useState(true),
@@ -120,6 +122,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
       { id: 'training', label: 'Training library', icon: BookOpen },
       { id: 'leads', label: 'Lead research', icon: ScanLine },
       { id: 'review', label: 'Review queue', icon: ShieldCheck },
+      { id: 'calls', label: 'Calls', icon: PhoneCall },
       { id: 'funnels', label: 'Email funnels', icon: GitBranch },
       { id: 'mailbox', label: 'Mailbox', icon: Mail },
       { id: 'activity', label: 'Research history', icon: History },
@@ -135,6 +138,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     activity: 'Research history',
     settings: 'Workspace settings',
     mailbox: 'Project mailbox',
+    calls: 'Calls',
   };
   return (
     <div className="app-shell">
@@ -491,6 +495,9 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                     a company are available on that company’s Email tab.
                   </Alert>
                 ))}
+              {project && view === 'calls' && (
+                <Calls key={project.id} project={project} user={user} notify={setNotice} />
+              )}
               {project && view === 'funnels' && (
                 <Funnels
                   key={project.id}
@@ -746,6 +753,10 @@ const activityLabels: Record<string, string> = {
   'lead.researched': 'Missing details researched',
   'lead.email_sent': 'Email sent',
   'lead.call_logged': 'Call logged',
+  'lead.status_changed': 'Lead status changed',
+  'lead.comment_added': 'Comment added',
+  'lead.comment_edited': 'Comment edited',
+  'lead.comment_deleted': 'Comment deleted',
   'lead.contact_removed': 'Contact removed',
   'leads.imported': 'Leads imported',
   'leads.deleted': 'Leads deleted',

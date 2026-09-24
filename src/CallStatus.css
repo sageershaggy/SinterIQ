@@ -1,0 +1,143 @@
+/* Call status pills and the call-status form, shared by the Calls page and a lead's Calls tab. */
+.call-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.call-pill-none {
+  background: #f2f3ef;
+  border-color: #e5e8df;
+  color: #6d7669;
+}
+.call-pill-connected {
+  background: #e9f3e4;
+  border-color: #c9e0bf;
+  color: #2f5e36;
+}
+.call-pill-no_answer {
+  background: #eef1f4;
+  border-color: #d6dde5;
+  color: #4a5968;
+}
+.call-pill-callback {
+  background: #fdf4e3;
+  border-color: #ecd6a6;
+  color: #7a5a1d;
+}
+.call-pill-interested {
+  background: #dff0d6;
+  border-color: #b7d9a7;
+  color: #285a2d;
+}
+.call-pill-not_interested {
+  background: #fbeceb;
+  border-color: #eec4c0;
+  color: #8d372f;
+}
+.call-pill-follow_up {
+  background: #fcefe0;
+  border-color: #efcfa9;
+  color: #85501a;
+}
+.call-pill-meeting_booked {
+  background: #e1f1ec;
+  border-color: #b5dacd;
+  color: #1f5b4a;
+}
+.call-pill-wrong_contact {
+  background: #f5edeb;
+  border-color: #e3cdc8;
+  color: #7a4740;
+}
+
+.call-status-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.call-status-options {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.call-status-options legend {
+  padding: 0;
+  margin-bottom: 9px;
+  font-size: 11px;
+  font-weight: 550;
+  color: #59644f;
+}
+.call-status-options > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.call-status-option {
+  position: relative;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border: 1px solid #dfe4d9;
+  border-radius: 999px;
+  background: #fff;
+  color: #4d5a4d;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.call-status-option:hover {
+  border-color: #b5c3aa;
+}
+.call-status-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.call-status-option:focus-within {
+  outline: 2px solid #9cb982;
+  outline-offset: 2px;
+}
+.call-status-option.is-selected {
+  border-color: var(--green);
+  background: var(--pale);
+  color: var(--green);
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+.call-status-option .call-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+.call-status-option:not(.is-selected) .call-dot {
+  opacity: 0.8;
+}
+.call-status-date {
+  max-width: 280px;
+}
+.call-optional {
+  font-weight: 400;
+  color: var(--muted);
+}
+/* The action sits right under the fields: no divider row, so the form ends where it ends. */
+.call-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
