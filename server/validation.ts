@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { callOutcomes } from '../shared/calls';
 
 export class HttpError extends Error {
   constructor(
@@ -57,17 +58,21 @@ export const leadSchema = z
     notes: text(10000).default(''),
   })
   .strict();
+/** A calendar day as YYYY-MM-DD that really exists (no 2026-02-30). */
+export const calendarDay = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter the date as YYYY-MM-DD.')
+  .refine((value) => {
+    const day = new Date(value + 'T00:00:00Z');
+    return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === value;
+  }, 'Enter a real calendar date.');
 export const callSchema = z
   .object({
-    outcome: z.enum([
-      'CONNECTED',
-      'NO_ANSWER',
-      'CALLBACK',
-      'NOT_INTERESTED',
-      'WRONG_CONTACT',
-      'MEETING_BOOKED',
-    ]),
+    // Additive: every earlier outcome is still accepted (shared/calls.ts).
+    outcome: z.enum(callOutcomes),
     notes: requiredText(4000).min(5),
+    next_action_at: calendarDay.nullable().default(null),
   })
   .strict();
 export const emailSettingsSchema = z

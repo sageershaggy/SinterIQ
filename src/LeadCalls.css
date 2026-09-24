@@ -1,0 +1,62 @@
+/*
+ * A lead's Calls tab. The form used to end in a full-width divider row holding one right-aligned
+ * button, followed by a 26px heading margin: a band of empty space between the form and the
+ * history. The action now sits directly under the fields and the history follows closely.
+ */
+.lead-calls {
+  display: flex;
+  flex-direction: column;
+}
+.lead-calls .call-contact {
+  margin-bottom: 12px;
+}
+.lead-calls-note {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.lead-calls-title {
+  margin: 22px 0 10px;
+  font-size: 14px;
+}
+.lead-call-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lead-call-history li {
+  padding: 12px 14px;
+  border: 1px solid #e7eddf;
+  border-radius: 8px;
+  background: #fff;
+}
+.lead-call-history li > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.lead-call-history small {
+  font-size: 11px;
+  color: #6c7560;
+}
+.lead-call-history p {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: #56654a;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lead-call-next {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #7a5a1d;
+}

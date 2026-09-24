@@ -1,0 +1,260 @@
+/* The Calls page: every lead assigned for calling in a project. */
+.calls-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.calls-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.calls-summary-item:hover {
+  border-color: #b5c3aa;
+}
+.calls-summary-item strong {
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.5px;
+}
+.calls-summary-item span {
+  font-size: 11px;
+  color: #6b7562;
+}
+.calls-summary-item.is-due strong {
+  color: #85501a;
+}
+.calls-summary-item.is-active {
+  border-color: var(--green);
+  background: #f7faf2;
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+.calls-panel {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+}
+.calls-panel > .alert {
+  margin: 0 20px 16px;
+}
+.calls-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+}
+.calls-search {
+  flex-direction: row;
+  flex: 1 1 260px;
+  max-width: 380px;
+}
+.calls-person {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.calls-person select {
+  width: auto;
+  min-width: 180px;
+}
+.calls-table {
+  min-width: 900px;
+}
+.calls-table td {
+  padding: 14px 9px;
+  font-size: 12px;
+  vertical-align: top;
+}
+.calls-table th {
+  padding-inline: 9px;
+  font-size: 10px;
+}
+.calls-table td:first-child,
+.calls-table th:first-child {
+  padding-left: 20px;
+}
+.calls-table td:last-child,
+.calls-table th:last-child {
+  padding-right: 18px;
+}
+.calls-company-cell {
+  min-width: 170px;
+  max-width: 260px;
+}
+.calls-company {
+  display: block;
+  font-weight: 600;
+  color: #3e5a36;
+  overflow-wrap: anywhere;
+}
+.calls-company:hover {
+  text-decoration: underline;
+}
+.calls-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+/* break-word, not anywhere: the column is sized to fit a whole address before anything wraps. */
+.calls-channel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--green);
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.calls-channel:hover {
+  text-decoration: underline;
+}
+.calls-missing {
+  color: #8a9285;
+}
+.calls-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.calls-status .text-button {
+  font-size: 11px;
+}
+.calls-next {
+  display: block;
+  font-weight: 550;
+}
+.calls-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6f7566;
+  white-space: nowrap;
+}
+.calls-when.is-today {
+  font-weight: 650;
+  color: #7a5a1d;
+}
+.calls-when.is-overdue {
+  font-weight: 650;
+  color: #a2463c;
+}
+.calls-none {
+  padding: 30px 20px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--muted);
+}
+.calls-footnote {
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+.calls-update {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px 24px;
+}
+.calls-update-lead {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid #e7ecdf;
+  border-radius: 8px;
+  background: #f7f9f3;
+  font-size: 12px;
+  color: #5d6a55;
+}
+.calls-update-lead strong {
+  font-size: 14px;
+  color: var(--ink);
+}
+.calls-update-lead > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+@media (max-width: 1100px) {
+  .calls-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+/* On a phone every row becomes a card with its own labels; nothing scrolls sideways. */
+@media (max-width: 760px) {
+  .calls-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .calls-toolbar {
+    padding: 14px 16px;
+  }
+  .calls-search {
+    max-width: none;
+  }
+  .calls-person {
+    width: 100%;
+  }
+  .calls-person select {
+    flex: 1;
+    min-width: 0;
+  }
+  .calls-table {
+    min-width: 0;
+  }
+  .calls-table thead {
+    display: none;
+  }
+  .calls-table tr {
+    display: block;
+    padding: 12px 16px;
+    border-top: 1px solid #edf1e6;
+  }
+  .calls-table td,
+  .calls-table td:first-child,
+  .calls-table td:last-child {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 6px 0;
+    border: 0;
+    text-align: right;
+  }
+  .calls-table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    text-align: left;
+  }
+  .calls-table td.calls-company-cell {
+    display: block;
+    max-width: none;
+    padding-bottom: 8px;
+    text-align: left;
+  }
+  .calls-table td.calls-company-cell::before {
+    content: none;
+  }
+  .calls-channels,
+  .calls-status {
+    align-items: flex-end;
+  }
+}

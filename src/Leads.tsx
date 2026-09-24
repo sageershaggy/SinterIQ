@@ -28,6 +28,7 @@ import {
   MessageSquareWarning,
   UserPlus,
   PhoneCall,
+  MessageSquare,
 } from 'lucide-react';
 import { nextStepBands } from '../shared/types';
 import type {
@@ -38,8 +39,6 @@ import type {
   CriterionResult,
   NextStep,
   LeadFeedback,
-  CallLog,
-  CallOutcome,
   EmailMessage,
   User,
   ResearchOutcome,
@@ -53,6 +52,9 @@ import { IncomingReplies } from './IncomingReplies';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
 import { leadLink, type LeadTab } from './navigation';
+import { LeadCalls } from './LeadCalls';
+import { LeadStatus } from './LeadStatus';
+import { LeadComments } from './LeadComments';
 
 export default function Leads({
   project,
@@ -1390,15 +1392,24 @@ function LeadDetail({
           <h1>{lead?.name || 'Loading company…'}</h1>
           <p>Research, conversations and follow-ups in one place.</p>
         </div>
-        <button
-          type="button"
-          className="button primary"
-          onClick={openEmailComposer}
-          aria-label={'Create email for ' + (lead?.name || 'company')}
-        >
-          <Mail size={16} />
-          Create email
-        </button>
+        <div className="heading-actions lead-heading-actions">
+          {lead && (
+            <LeadStatus
+              base={base}
+              lead={lead}
+              onSaved={(crm) => setLead((current) => current && { ...current, ...crm })}
+            />
+          )}
+          <button
+            type="button"
+            className="button primary"
+            onClick={openEmailComposer}
+            aria-label={'Create email for ' + (lead?.name || 'company')}
+          >
+            <Mail size={16} />
+            Create email
+          </button>
+        </div>
       </div>
       <div className="lead-detail">
         {error && <Alert>{error}</Alert>}
@@ -1525,6 +1536,7 @@ function LeadDetail({
                       title: 'Calls',
                       icon: PhoneCall,
                     },
+                    { id: 'comments', title: 'Comments', icon: MessageSquare },
                   ] as const
                 ).map((item) => (
                   <button
@@ -1851,15 +1863,22 @@ function LeadDetail({
                 </div>
               )}
               {tab === 'calls' && (
-                <CallsTab
-                  base={base}
+                <LeadCalls
+                  projectId={project.id}
                   lead={lead}
                   calls={lead.calls || []}
                   onSaved={() => {
                     setRefresh((n) => n + 1);
                     onChange();
-                    notify('Call logged.');
+                    notify('Call status saved to the call history.');
                   }}
+                />
+              )}
+              {tab === 'comments' && (
+                <LeadComments
+                  base={base}
+                  lead={lead}
+                  onSaved={(crm) => setLead((current) => current && { ...current, ...crm })}
                 />
               )}
               {tab === 'feedback' && (
@@ -2169,132 +2188,4 @@ function statusFilterGroups(queue: boolean): FilterGroup[] {
 
 function statusFilters(queue: boolean): FilterOption[] {
   return statusFilterGroups(queue).flatMap((g) => g.options);
-}
-
-const callOutcomes: Array<{ value: CallOutcome; label: string }> = [
-  { value: 'CONNECTED', label: 'Connected' },
-  { value: 'NO_ANSWER', label: 'No answer' },
-  { value: 'CALLBACK', label: 'Call back later' },
-  { value: 'MEETING_BOOKED', label: 'Meeting booked' },
-  { value: 'NOT_INTERESTED', label: 'Not interested' },
-  { value: 'WRONG_CONTACT', label: 'Wrong contact' },
-];
-/**
- * Call log for an assigned lead. Logging a call records what happened; it never
- * changes the qualification, the fit score or the decision.
- */
-function CallsTab({
-  base,
-  lead,
-  calls,
-  onSaved,
-}: {
-  base: string;
-  lead: Lead;
-  calls: CallLog[];
-  onSaved: () => void;
-}) {
-  const [outcome, setOutcome] = useState<CallOutcome>('CONNECTED');
-  const [notes, setNotes] = useState('');
-  const [error, setError] = useState(''),
-    [busy, setBusy] = useState(false);
-  return (
-    <div className="feedback-tab">
-      <div className="call-contact">
-        <div>
-          <span className="eyebrow">WHO TO CALL</span>
-          <strong>{lead.contact_name || 'No contact person recorded'}</strong>
-          {lead.contact_role && <small>{lead.contact_role}</small>}
-        </div>
-        <div className="call-contact-channels">
-          {lead.contact_phone ? (
-            <a href={'tel:' + lead.contact_phone.replace(/[^+d]/g, '')}>
-              <Phone size={14} />
-              {lead.contact_phone}
-            </a>
-          ) : (
-            <span className="muted">No phone number</span>
-          )}
-          {lead.contact_email ? (
-            <a href={'mailto:' + lead.contact_email}>
-              <Mail size={14} />
-              {lead.contact_email}
-            </a>
-          ) : (
-            <span className="muted">No email address</span>
-          )}
-        </div>
-      </div>
-      <p className="muted">
-        {lead.assigned_to_name
-          ? 'Assigned to ' + lead.assigned_to_name + '.'
-          : 'This lead is not assigned to anyone yet.'}{' '}
-        Logging a call records what happened; it never changes the qualification or the decision.
-      </p>
-      {error && <Alert>{error}</Alert>}
-      <form
-        className="form-stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            await api(base + '/calls', { method: 'POST', body: json({ outcome, notes }) });
-            setNotes('');
-            onSaved();
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label>
-          How did the call go?
-          <select value={outcome} onChange={(e) => setOutcome(e.target.value as CallOutcome)}>
-            {callOutcomes.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Call notes
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={4}
-            minLength={5}
-            maxLength={4000}
-            required
-            placeholder="Who you spoke to, what they said, and what happens next."
-          />
-        </label>
-        <div className="form-actions">
-          <button className="button primary" disabled={busy}>
-            {busy ? <Spinner text="Saving…" /> : 'Log this call'}
-          </button>
-        </div>
-      </form>
-      <h3>Call history</h3>
-      {calls.length ? (
-        calls.map((call) => (
-          <div className="human-review-history" key={call.id}>
-            <div>
-              <span className={'next-step call-' + call.outcome.toLowerCase()}>
-                {callOutcomes.find((o) => o.value === call.outcome)?.label || call.outcome}
-              </span>
-              <small>
-                {call.created_by} · {date(call.created_at)}
-              </small>
-            </div>
-            <p>{call.notes}</p>
-          </div>
-        ))
-      ) : (
-        <p className="muted">No calls logged yet.</p>
-      )}
-    </div>
-  );
 }
