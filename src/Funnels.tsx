@@ -8,15 +8,29 @@ import {
   Trash2,
   Users,
   GitBranch,
-  AlignLeft,
-  LayoutTemplate,
   ChevronDown,
+  Paperclip,
+  X,
+  Braces,
+  MessageSquareReply,
 } from 'lucide-react';
-import type { EmailBlock, Lead, Project, User, EmailTemplate } from '../shared/types';
-import type { Enrollment, Funnel, FunnelStep, OutreachOutcome } from '../shared/funnels';
+import type { Lead, Project, User, EmailTemplate } from '../shared/types';
+import type { EmailFile } from '../shared/email';
+import type {
+  Enrollment,
+  FitBand,
+  Funnel,
+  FunnelProgress,
+  FunnelStep,
+  OutreachOutcome,
+} from '../shared/funnels';
+import { fitBandLabels } from '../shared/funnels';
+import { blocksToHtml, htmlToText, mergeFieldsIn, textToHtml } from '../shared/email-html';
 import { api, json, label, date } from './api';
-import { BlockEditor, palette } from './BlockEditor';
+import { RichEmailEditor } from './RichEmailEditor';
+import { attachmentAccept, formatSize, uploadEmailFile } from './emailFiles';
 import { Alert, Badge, Empty, Modal, Spinner } from './ui';
+import './Funnels.css';
 
 const starterSteps: FunnelStep[] = [
   {
@@ -62,63 +76,46 @@ function daysFromLocalDate(value: string, minDays: number): number {
   return Math.min(90, Math.max(minDays, diff));
 }
 
-/** Prefer follow-up starters near the top of the funnel template menu. */
+/** Prefer the sequence templates (2nd, 3rd, last email) near the top of the template menu. */
 function funnelTemplateOrder(a: EmailTemplate, b: EmailTemplate): number {
-  const rank = (id: string) =>
-    id.startsWith('follow-up-') ? Number(id.slice('follow-up-'.length)) : 100 + id.length;
-  return rank(a.id) - rank(b.id) || a.name.localeCompare(b.name);
+  const rank = (template: EmailTemplate) =>
+    template.custom
+      ? 0
+      : template.id.startsWith('follow-up-')
+        ? Number(template.id.slice('follow-up-'.length))
+        : 100 + template.id.length;
+  return rank(a) - rank(b) || a.name.localeCompare(b.name);
 }
+/** A step's body as the rich-text editor shows it, however it was first written. */
+const stepHtml = (step: FunnelStep) =>
+  step.html || (step.blocks?.length ? blocksToHtml(step.blocks) : textToHtml(step.body));
+/** The lead data a funnel relies on: every merge field its messages and recipients use. */
+const funnelFields = (funnel: Pick<Funnel, 'steps'>) =>
+  mergeFieldsIn(
+    ...funnel.steps.flatMap((step) => [
+      step.to || '{{contact_email}}',
+      step.subject,
+      stepHtml(step),
+    ]),
+  );
+const emptyProgress: FunnelProgress = {
+  waiting: [0, 0, 0],
+  replied: 0,
+  bounced: 0,
+  stopped: 0,
+  blocked: 0,
+  completed: 0,
+  total: 0,
+};
 
-/** The server's ceiling on one designed message. */
-const blockLimit = 60;
-/** Flattens a design to plain text, for the text alternative and for template text. */
-function textFromBlocks(blocks: EmailBlock[]): string {
-  return blocks
-    .map((block) => {
-      if ('text' in block) return block.text;
-      if (block.type === 'button') return block.label + ': ' + block.url;
-      if (block.type === 'image') return block.alt + ': ' + block.url;
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n\n');
+interface StepDraft {
+  delay_days: number;
+  send_time: string;
+  to: string;
+  subject: string;
+  html: string;
+  attachments: EmailFile[];
 }
-/**
- * Seeds a design from the text already written, one text block per paragraph, so choosing
- * to design a message never costs the author what they typed. A long message is folded
- * into the last block rather than refused by the server for having too many blocks.
- */
-function blocksFromText(body: string): EmailBlock[] {
-  const paragraphs = body
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (paragraphs.length > blockLimit)
-    paragraphs.splice(blockLimit - 1, Infinity, paragraphs.slice(blockLimit - 1).join('\n\n'));
-  return paragraphs.length
-    ? paragraphs.map((text): EmailBlock => ({ type: 'text', text, align: 'left' }))
-    : [palette[1].make()];
-}
-/**
- * One message while it is being edited. Both formats sit side by side — the text and the
- * design — so switching between them is reversible; only the chosen one is sent.
- */
-interface StepDraft extends FunnelStep {
-  blocks: EmailBlock[];
-  designed: boolean;
-  /** The block the merge-field chips insert into. Editor state, never sent. */
-  selected: number;
-}
-const toDraft = (step: FunnelStep): StepDraft => ({
-  delay_days: step.delay_days,
-  send_time: step.send_time || '09:00',
-  to: step.to || '{{contact_email}}',
-  subject: step.subject,
-  body: step.body,
-  blocks: step.blocks?.length ? structuredClone(step.blocks) : [],
-  designed: Boolean(step.blocks?.length),
-  selected: 0,
-});
 
 export default function Funnels({
   project,
@@ -194,7 +191,9 @@ export default function Funnels({
           <h1>
             Email funnels<span className="heading-dot">.</span>
           </h1>
-          <p>Choose an audience, review the sequence, and follow every response.</p>
+          <p>
+            Each funnel shows the messages it sends, the lead data it uses and where every lead is.
+          </p>
         </div>
         {user.role === 'admin' && (
           <button className="button primary" onClick={() => setEditing('new')}>
@@ -227,30 +226,14 @@ export default function Funnels({
         <>
           <div className="funnel-policy">
             <span>Up to 3 emails per recipient</span>
-            <span>Delays in days or weeks</span>
-            <span>Stops on recorded response or opt-out</span>
+            <span>You set the date and time of each follow-up</span>
+            <span>Stops on a reply, a bounce or an opt-out</span>
           </div>
           {items.length ? (
-            <div className="funnel-grid">
+            <div className="funnel-list">
               {items.map((item) => (
-                <button className="funnel-card" key={item.id} onClick={() => setSelected(item.id)}>
-                  <div className="funnel-card-top">
-                    <GitBranch size={21} />
-                    <Badge value={item.status}>{label(item.status)}</Badge>
-                  </div>
-                  <h2>{item.name}</h2>
-                  <p>{item.audience || 'All relevant qualified leads'}</p>
-                  <div className="funnel-metrics">
-                    <span>
-                      <strong>{item.steps.length}</strong>messages
-                    </span>
-                    <span>
-                      <strong>{item.queued_count}</strong>in queue
-                    </span>
-                    <span>
-                      <strong>{item.converted_count}</strong>converted
-                    </span>
-                  </div>
+                <button className="funnel-row" key={item.id} onClick={() => setSelected(item.id)}>
+                  <FunnelSummary funnel={item} />
                 </button>
               ))}
             </div>
@@ -306,6 +289,9 @@ export default function Funnels({
               </>
             )}
           </div>
+          <section className="panel funnel-overview">
+            <FunnelSummary funnel={active} detailed />
+          </section>
           <div className="funnel-sequence">
             {active.steps.map((step, i) => (
               <details key={i} className="funnel-step">
@@ -321,13 +307,16 @@ export default function Funnels({
                           : 'When started'
                         : step.delay_days + ' days after the previous email'}
                       {step.send_time ? ' at ' + step.send_time : ''}
-                      {step.blocks?.length
-                        ? ' · designed with ' + step.blocks.length + ' blocks'
+                      {step.attachment_ids?.length
+                        ? ' · ' +
+                          step.attachment_ids.length +
+                          ' attachment' +
+                          (step.attachment_ids.length === 1 ? '' : 's')
                         : ''}
                     </small>
                   </span>
                 </summary>
-                <p className="preserve-text">{step.body}</p>
+                <p className="preserve-text">{htmlToText(stepHtml(step))}</p>
               </details>
             ))}
           </div>
@@ -343,6 +332,7 @@ export default function Funnels({
       {editing && (
         <FunnelEditor
           base={base}
+          projectId={project.id}
           initial={editing === 'new' ? undefined : editing}
           onClose={() => setEditing(null)}
           onSaved={(f) => {
@@ -375,9 +365,12 @@ export default function Funnels({
             </p>
             <p>
               Messages are sent from this project’s mailbox, with a copy to the configured address
-              and an unsubscribe link. Record replies from that mailbox here to stop follow-ups;
-              link opt-outs stop them automatically. Messages already handed to the mailbox cannot
-              be recalled.
+              and an unsubscribe link.{' '}
+              {active.stop_on_reply
+                ? 'A reply received in this project’s mailbox stops the remaining follow-ups.'
+                : 'This funnel keeps sending after a reply; record a response to stop it.'}{' '}
+              A bounced address and an opt-out stop it automatically. Messages already handed to the
+              mailbox cannot be recalled.
             </p>
             {error && <Alert>{error}</Alert>}
             {!ready && (
@@ -409,37 +402,158 @@ export default function Funnels({
   );
 }
 
+/**
+ * One funnel, simply: which messages it sends and when, which lead data it uses, and how its
+ * leads are progressing — waiting for message 1, 2 or 3, replied, bounced, stopped or done.
+ */
+function FunnelSummary({ funnel, detailed = false }: { funnel: Funnel; detailed?: boolean }) {
+  const progress = funnel.progress || emptyProgress;
+  const fields = funnelFields(funnel);
+  const stages = [
+    ...funnel.steps.map((_, index) => ({
+      key: 'm' + index,
+      label: 'Next: message ' + (index + 1),
+      value: progress.waiting[index] || 0,
+      tone: 'waiting',
+    })),
+    { key: 'replied', label: 'Replied', value: progress.replied, tone: 'good' },
+    { key: 'completed', label: 'Completed', value: progress.completed, tone: 'good' },
+    { key: 'bounced', label: 'Bounced', value: progress.bounced, tone: 'bad' },
+    { key: 'stopped', label: 'Stopped', value: progress.stopped, tone: 'muted' },
+    ...(progress.blocked
+      ? [{ key: 'blocked', label: 'Needs attention', value: progress.blocked, tone: 'bad' }]
+      : []),
+  ];
+  return (
+    <div className={'funnel-summary' + (detailed ? ' is-detailed' : '')}>
+      <div className="funnel-summary-head">
+        <GitBranch size={19} />
+        <div>
+          <strong>{funnel.name}</strong>
+          <small>{funnel.audience || 'All relevant qualified leads'}</small>
+        </div>
+        <Badge value={funnel.status}>{label(funnel.status)}</Badge>
+      </div>
+      <div className="funnel-tags">
+        <span>{fitBandLabels[funnel.fit_band || 'ANY']}</span>
+        <span>
+          <MessageSquareReply size={12} />
+          {funnel.stop_on_reply ? 'Stops when the lead replies' : 'Keeps going after a reply'}
+        </span>
+      </div>
+      <div className="funnel-summary-grid">
+        <div>
+          <span className="funnel-summary-label">Messages it sends</span>
+          <ol className="funnel-messages">
+            {funnel.steps.map((step, index) => (
+              <li key={index}>
+                <strong>{step.subject}</strong>
+                <small>
+                  {index === 0
+                    ? step.delay_days
+                      ? 'Day ' + step.delay_days
+                      : 'First'
+                    : '+' + step.delay_days + ' day' + (step.delay_days === 1 ? '' : 's')}
+                  {step.send_time ? ' · ' + step.send_time : ''}
+                  {step.attachment_ids?.length
+                    ? ' · ' + step.attachment_ids.length + ' file(s)'
+                    : ''}
+                </small>
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div>
+          <span className="funnel-summary-label">Lead data it uses</span>
+          <div className="funnel-fields">
+            {fields.length ? (
+              fields.map((field) => (
+                <code key={field}>
+                  <Braces size={11} />
+                  {field}
+                </code>
+              ))
+            ) : (
+              <small className="muted">No merge fields</small>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="funnel-progress" aria-label="How leads are progressing">
+        <span className="funnel-summary-label">
+          How leads are progressing · {progress.total} in total
+        </span>
+        <ol>
+          {stages.map((stage) => (
+            <li key={stage.key} className={'tone-' + stage.tone + (stage.value ? '' : ' is-zero')}>
+              <strong>{stage.value}</strong>
+              <small>{stage.label}</small>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
 function FunnelEditor({
   base,
+  projectId,
   initial,
   onClose,
   onSaved,
 }: {
   base: string;
+  projectId: number;
   initial?: Funnel;
   onClose: () => void;
   onSaved: (f: Funnel) => void;
 }) {
   const [name, setName] = useState(initial?.name || ''),
     [audience, setAudience] = useState(initial?.audience || '');
+  const [fitBand, setFitBand] = useState<FitBand>(initial?.fit_band || 'ANY'),
+    [stopOnReply, setStopOnReply] = useState(initial?.stop_on_reply ?? true);
   const [steps, setSteps] = useState<StepDraft[]>(() =>
-    (initial?.steps || starterSteps).map(toDraft),
+    (initial?.steps || starterSteps).map((step) => ({
+      delay_days: step.delay_days,
+      send_time: step.send_time || '09:00',
+      to: step.to || '{{contact_email}}',
+      subject: step.subject,
+      html: stepHtml(step),
+      attachments: [],
+    })),
   );
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [mergeFields, setMergeFields] = useState<string[]>([]);
   const [templateMenu, setTemplateMenu] = useState<number | null>(null);
+  const [uploading, setUploading] = useState<number | null>(null);
   const templateMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     let cancelled = false;
-    api<{ templates: EmailTemplate[]; merge_fields: string[] }>(
-      base.replace(/\/funnels$/, '') + '/email/templates',
-    )
-      .then((result) => {
+    const ids = [...new Set((initial?.steps || []).flatMap((step) => step.attachment_ids || []))];
+    Promise.all([
+      api<{ templates: EmailTemplate[]; merge_fields: string[] }>(
+        base.replace(/\/funnels$/, '') + '/email/templates',
+      ),
+      ids.length
+        ? api<EmailFile[]>(base.replace(/\/funnels$/, '') + '/email/files?ids=' + ids.join(','))
+        : Promise.resolve([] as EmailFile[]),
+    ])
+      .then(([result, files]) => {
         if (cancelled) return;
         setTemplates(result.templates);
         setMergeFields(result.merge_fields);
+        if (files.length)
+          setSteps((list) =>
+            list.map((step, index) => ({
+              ...step,
+              attachments: (initial?.steps[index]?.attachment_ids || [])
+                .map((id) => files.find((file) => file.id === id))
+                .filter((file): file is EmailFile => Boolean(file)),
+            })),
+          );
       })
       .catch((e) => {
         if (!cancelled) setError((e as Error).message);
@@ -465,23 +579,24 @@ function FunnelEditor({
   }, [templateMenu]);
   const update = (i: number, value: Partial<StepDraft>) =>
     setSteps((list) => list.map((s, index) => (index === i ? { ...s, ...value } : s)));
-  /** Seeding in both directions is what makes the choice reversible: neither format is lost. */
-  const setFormat = (i: number, designed: boolean) =>
-    setSteps((list) =>
-      list.map((step, index) =>
-        index === i
-          ? {
-              ...step,
-              designed,
-              blocks: designed && !step.blocks.length ? blocksFromText(step.body) : step.blocks,
-              body:
-                !designed && !step.body.trim() && step.blocks.length
-                  ? textFromBlocks(step.blocks)
-                  : step.body,
-            }
-          : step,
-      ),
-    );
+  async function attach(i: number, files: File[]) {
+    setUploading(i);
+    setError('');
+    try {
+      for (const file of files) {
+        const stored = await uploadEmailFile(projectId, file, 'attachment');
+        setSteps((list) =>
+          list.map((step, index) =>
+            index === i ? { ...step, attachments: [...step.attachments, stored] } : step,
+          ),
+        );
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setUploading(null);
+    }
+  }
   return (
     <Modal
       title={initial ? 'Edit funnel' : 'New email funnel'}
@@ -501,19 +616,17 @@ function FunnelEditor({
                 body: json({
                   name,
                   audience,
-                  // A plain message must not carry blocks at all, so a funnel written
-                  // before designed messages existed keeps its exact stored shape.
+                  fit_band: fitBand,
+                  stop_on_reply: stopOnReply,
                   steps: steps.map((step) => ({
                     delay_days: step.delay_days,
                     send_time: step.send_time?.trim() || '',
                     to: step.to?.trim() || '{{contact_email}}',
                     subject: step.subject,
-                    ...(step.designed
-                      ? {
-                          body: step.body.trim() || textFromBlocks(step.blocks),
-                          blocks: step.blocks,
-                        }
-                      : { body: step.body }),
+                    // The plain-text alternative travels with the rich text it came from.
+                    body: htmlToText(step.html).slice(0, 10000),
+                    html: step.html,
+                    attachment_ids: step.attachments.map((file) => file.id),
                   })),
                   ...(initial ? { revision: initial.revision } : {}),
                 }),
@@ -547,40 +660,68 @@ function FunnelEditor({
             />
           </label>
         </div>
+        <div className="form-grid">
+          <label>
+            Which leads is this campaign for?
+            <select value={fitBand} onChange={(e) => setFitBand(e.target.value as FitBand)}>
+              {(Object.keys(fitBandLabels) as FitBand[]).map((band) => (
+                <option key={band} value={band}>
+                  {fitBandLabels[band]}
+                </option>
+              ))}
+            </select>
+            <small>
+              When someone emails a lead, this campaign is suggested for leads in this fit-score
+              band. They can still pick another.
+            </small>
+          </label>
+          <label className="funnel-toggle">
+            <span>
+              <input
+                type="checkbox"
+                checked={stopOnReply}
+                onChange={(e) => setStopOnReply(e.target.checked)}
+              />
+              Stop the sequence when the lead replies
+            </span>
+            <small>
+              On: a reply received in this project’s mailbox cancels the remaining follow-ups. A
+              bounce, an opt-out or a response you record always stops it.
+            </small>
+          </label>
+        </div>
         <p className="muted">
-          Edit the starter messages for this audience. Write each one as plain text, or design it
-          with blocks that are delivered as email-safe HTML. Set each message’s To address (default{' '}
-          {'{{contact_email}}'}
-          ).{' '}
-          {mergeFields.length
-            ? 'Merge fields work in both: ' +
-              mergeFields.map((field) => '{{' + field + '}}').join(', ') +
-              '. '
-            : ''}
-          Missing fields block enrollment.
+          Write each message in the editor; it is delivered as email-safe HTML with a plain-text
+          copy. Set each message’s To address (default {'{{contact_email}}'}). Missing merge fields
+          block enrollment.
         </p>
         {steps.map((step, i) => (
           <fieldset className="form-fieldset" key={i}>
-            <legend>Message {i + 1}</legend>
+            <legend>
+              {i === 0
+                ? 'Message 1'
+                : i === steps.length - 1
+                  ? 'Last message'
+                  : 'Message ' + (i + 1)}
+            </legend>
             <label>
               To (Recipient)
               <input
-                value={step.to ?? '{{contact_email}}'}
+                value={step.to}
                 maxLength={200}
                 placeholder="{{contact_email}}"
                 onChange={(e) => update(i, { to: e.target.value })}
               />
               <small>
-                Default is {'{{contact_email}}'}. You can use another merge field or a fixed address.
+                Default is {'{{contact_email}}'}. You can use another merge field or a fixed
+                address.
               </small>
             </label>
             <div
               className="funnel-template-picker"
               ref={templateMenu === i ? templateMenuRef : undefined}
             >
-              <span className="field-label">
-                {step.designed ? 'Use template design' : 'Use template text'}
-              </span>
+              <span className="field-label">Start from a template</span>
               <div className="funnel-template-trigger-wrap">
                 <button
                   type="button"
@@ -601,19 +742,10 @@ function FunnelEditor({
                           type="button"
                           role="option"
                           onClick={() => {
-                            update(
-                              i,
-                              step.designed
-                                ? {
-                                    subject: template.subject,
-                                    blocks: structuredClone(template.blocks),
-                                    selected: 0,
-                                  }
-                                : {
-                                    subject: template.subject,
-                                    body: textFromBlocks(template.blocks),
-                                  },
-                            );
+                            update(i, {
+                              subject: template.subject,
+                              html: template.html || blocksToHtml(template.blocks),
+                            });
                             setTemplateMenu(null);
                           }}
                         >
@@ -627,9 +759,7 @@ function FunnelEditor({
                 )}
               </div>
               <small>
-                {step.designed
-                  ? 'Copies the template’s blocks into this campaign message. Review it before saving.'
-                  : 'Copies the text and links into this campaign message. Review it before saving.'}
+                Copies the template’s subject and message, images included. Review it before saving.
               </small>
             </div>
             <div className="funnel-schedule">
@@ -676,7 +806,8 @@ function FunnelEditor({
             </div>
             <small className="funnel-schedule-hint">
               Sequences stay relative to each enrollment. The date is a planner for “if enrolled
-              today”; the time is when the message may leave on its due day.
+              today”; the time is when the message may leave on its due day. When a lead starts this
+              campaign from its Email tab, the sender picks each follow-up’s date and time.
             </small>
             <label>
               Subject
@@ -687,69 +818,73 @@ function FunnelEditor({
                 onChange={(e) => update(i, { subject: e.target.value })}
               />
             </label>
-            <div
-              className="funnel-format"
-              role="group"
-              aria-label={'Message ' + (i + 1) + ' format'}
-            >
-              <button
-                type="button"
-                className={'chip ' + (step.designed ? '' : 'is-on')}
-                aria-pressed={!step.designed}
-                onClick={() => setFormat(i, false)}
-              >
-                <AlignLeft size={13} />
-                Plain text
-              </button>
-              <button
-                type="button"
-                className={'chip ' + (step.designed ? 'is-on' : '')}
-                aria-pressed={step.designed}
-                onClick={() => setFormat(i, true)}
-              >
-                <LayoutTemplate size={13} />
-                Designed
-              </button>
-              <small>
-                {step.designed
-                  ? 'Delivered as email-safe HTML. Your plain text is kept, so you can switch back.'
-                  : 'Delivered as one plain-text message. Designing it starts from this text.'}
-              </small>
-            </div>
-            {step.designed ? (
-              <div className="form-stack funnel-design">
-                {/* Per-block checks come from the lead-scoped composer preview, which a
-                    sequence has no lead for. The server validates this design on save and
-                    again before every delivery. */}
-                <BlockEditor
-                  blocks={step.blocks}
-                  onChange={(blocks) => update(i, { blocks })}
-                  mergeFields={mergeFields}
-                  problems={[]}
-                  selected={step.selected}
-                  onSelect={(selected) => update(i, { selected })}
-                />
-              </div>
-            ) : (
-              <label>
-                Message
-                <textarea
-                  rows={7}
-                  value={step.body}
-                  required
-                  minLength={20}
-                  maxLength={10000}
-                  onChange={(e) => update(i, { body: e.target.value })}
+            <RichEmailEditor
+              label={'Message ' + (i + 1)}
+              value={step.html}
+              onChange={(html) => update(i, { html })}
+              projectId={projectId}
+              mergeFields={mergeFields}
+              onError={setError}
+            />
+            <div className="funnel-attachments">
+              <label className="button secondary small funnel-attach">
+                <Paperclip size={14} />
+                {uploading === i ? 'Uploading…' : 'Attach files'}
+                <input
+                  type="file"
+                  multiple
+                  hidden
+                  accept={attachmentAccept}
+                  disabled={uploading !== null}
+                  onChange={(e) => {
+                    const files = [...(e.target.files || [])];
+                    e.target.value = '';
+                    void attach(i, files);
+                  }}
                 />
               </label>
-            )}
+              {step.attachments.map((file) => (
+                <span key={file.id} className="funnel-file">
+                  <Paperclip size={12} />
+                  {file.filename}
+                  <small>{formatSize(file.size)}</small>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={'Remove ' + file.filename}
+                    onClick={() =>
+                      update(i, {
+                        attachments: step.attachments.filter((item) => item.id !== file.id),
+                      })
+                    }
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
+              ))}
+            </div>
           </fieldset>
         ))}
         {steps.length < 3 && (
           <button
             type="button"
             className="button secondary"
-            onClick={() => setSteps((list) => [...list, toDraft(starterSteps[list.length])])}
+            onClick={() =>
+              setSteps((list) => {
+                const starter = starterSteps[list.length];
+                return [
+                  ...list,
+                  {
+                    delay_days: starter.delay_days,
+                    send_time: starter.send_time || '09:00',
+                    to: starter.to || '{{contact_email}}',
+                    subject: starter.subject,
+                    html: stepHtml(starter),
+                    attachments: [],
+                  },
+                ];
+              })
+            }
           >
             <Plus size={15} />
             Add follow-up
@@ -760,7 +895,7 @@ function FunnelEditor({
           <button type="button" className="button secondary" disabled={busy} onClick={onClose}>
             Cancel
           </button>
-          <button className="button primary" disabled={busy}>
+          <button className="button primary" disabled={busy || uploading !== null}>
             {busy ? <Spinner /> : 'Save draft'}
           </button>
         </div>
@@ -1060,7 +1195,11 @@ function FunnelQueue({
                     <small className="table-subtext">{row.recipient}</small>
                   </td>
                   <td>
-                    <Badge value={row.status} />
+                    {row.stop_cause === 'BOUNCED' ? (
+                      <Badge value="blocked">Bounced</Badge>
+                    ) : (
+                      <Badge value={row.status} />
+                    )}
                     <small className="table-subtext">
                       {row.next_step} / {funnel.steps.length} sent
                     </small>

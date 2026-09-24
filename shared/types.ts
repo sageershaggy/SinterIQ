@@ -188,6 +188,10 @@ export interface Lead {
     created_at: string;
     created_by: string;
   }>;
+  /** Archived leads are hidden from the default lists and can be restored; nothing is deleted. */
+  archived_at?: string | null;
+  archived_reason?: string;
+  archived_by?: string;
 }
 export type CallOutcome =
   | 'CONNECTED'
@@ -331,6 +335,8 @@ export interface EmailTemplate {
   subject: string;
   preview_text: string;
   blocks: EmailBlock[];
+  /** The body as the rich-text editor opens it (converted from blocks when needed). */
+  html?: string;
 }
 /** One outbound email, logged whether it was accepted or refused. */
 export interface EmailMessage {

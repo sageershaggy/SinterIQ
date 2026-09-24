@@ -206,6 +206,50 @@ export function renderEmail(options: {
   );
 }
 
+/** A file sent with a message. With a cid it is an inline image the HTML refers to. */
+export interface MailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+  cid?: string;
+}
+/**
+ * The receiving server refused the recipient outright (a 5xx reply to RCPT TO). Unlike a
+ * dropped connection this is not ambiguous: the message was not accepted for that address,
+ * so the caller may record a bounce. The SMTP reply text is never passed on.
+ */
+export class RecipientRejected extends HttpError {
+  constructor(
+    public recipient: string,
+    public responseCode: number,
+  ) {
+    super(
+      422,
+      'The recipient’s mail server rejected this address permanently (SMTP ' +
+        responseCode +
+        '). It will not be emailed again.',
+    );
+  }
+}
+interface SmtpFailure {
+  code?: string;
+  command?: string;
+  responseCode?: number;
+  recipient?: string;
+  rejectedErrors?: SmtpFailure[];
+}
+/** The permanent RCPT rejection for this address, if the transport reported one. */
+function permanentRejection(failures: SmtpFailure[] | undefined, address: string) {
+  const found = (failures || []).find(
+    (failure) =>
+      failure.command === 'RCPT TO' &&
+      String(failure.recipient || '').toLowerCase() === address.toLowerCase() &&
+      Number(failure.responseCode) >= 500 &&
+      Number(failure.responseCode) < 600,
+  );
+  return found ? new RecipientRejected(address, Number(found.responseCode)) : null;
+}
+
 export type Send = (
   config: SmtpConfig,
   message: {
@@ -218,6 +262,7 @@ export type Send = (
     unsubscribeUrl?: string;
     messageId?: string;
     inReplyTo?: string;
+    attachments?: MailAttachment[];
     beforeSend?: () => void;
   },
 ) => Promise<void>;
@@ -256,16 +301,37 @@ export const sendMail: Send = async (config, message) => {
       references: message.inReplyTo,
       text: message.text,
       html: message.html,
+      attachments: message.attachments?.map((file) => ({
+        filename: file.filename.replace(/[\r\n]+/g, ' '),
+        content: file.content,
+        contentType: file.contentType,
+        ...(file.cid ? { cid: file.cid, contentDisposition: 'inline' as const } : {}),
+      })),
     });
     // Partial acceptance must not look like a confirmed send with its required copy.
-    const accepted = result.accepted.map((address) => address.toLowerCase());
+    const accepted = result.accepted.map((address) => String(address).toLowerCase());
+    if (!accepted.includes(message.to.toLowerCase())) {
+      const rejected = permanentRejection(
+        (result as { rejectedErrors?: SmtpFailure[] }).rejectedErrors,
+        message.to,
+      );
+      if (rejected) throw rejected;
+    }
     if (
       ![message.to, ...(message.bcc ? [message.bcc] : [])].every((address) =>
         accepted.includes(address.toLowerCase()),
       )
     )
       throw new Error('A recipient was not accepted.');
-  } catch {
+  } catch (error) {
+    if (error instanceof RecipientRejected) throw error;
+    // Every recipient refused at RCPT TO: the transport says which, and with what reply code.
+    const failure = error as SmtpFailure;
+    const rejected =
+      failure?.code === 'EENVELOPE'
+        ? permanentRejection([failure, ...(failure.rejectedErrors || [])], message.to)
+        : null;
+    if (rejected) throw rejected;
     // Provider errors can carry credentials and full message content.
     throw new HttpError(
       502,

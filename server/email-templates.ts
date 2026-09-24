@@ -1,4 +1,5 @@
 import type { EmailBlock } from './email-blocks';
+import { blocksToHtml } from '../shared/email-html';
 
 export type TemplateCategory = 'outreach' | 'follow_up' | 'meeting' | 'transactional';
 export interface EmailTemplate {
@@ -150,11 +151,13 @@ export const emailTemplates: EmailTemplate[] = [
       { type: 'text', text: 'Best regards', align: 'left' },
     ],
   },
+  // The follow-ups are named for where they sit in a sequence, because that is how people look
+  // for them: the 2nd, the 3rd and the last email after the first one.
   {
     id: 'follow-up-1',
-    name: 'Follow-up Email 1',
+    name: '2nd email · first follow-up',
     category: 'follow_up',
-    description: 'First follow-up after the introduction, still light and easy to answer.',
+    description: 'The second email in a sequence: a light follow-up that is easy to answer.',
     subject: 'Following up with {{company}}',
     preview_text: 'A short follow-up on the introduction.',
     blocks: [
@@ -173,9 +176,9 @@ export const emailTemplates: EmailTemplate[] = [
   },
   {
     id: 'follow-up-2',
-    name: 'Follow-up Email 2',
+    name: '3rd email · second follow-up',
     category: 'follow_up',
-    description: 'Second follow-up that closes the loop without pressure.',
+    description: 'The third email: closes the loop without pressure.',
     subject: 'Closing the loop with {{company}}',
     preview_text: 'A final follow-up before leaving it here.',
     blocks: [
@@ -194,9 +197,9 @@ export const emailTemplates: EmailTemplate[] = [
   },
   {
     id: 'follow-up-3',
-    name: 'Follow-up Email 3',
+    name: 'Last email · final follow-up',
     category: 'follow_up',
-    description: 'Final follow-up in a three-message sequence.',
+    description: 'The last email in a sequence: a polite final note.',
     subject: 'Last note for {{company}}',
     preview_text: 'A polite last note before ending the sequence.',
     blocks: [
@@ -214,6 +217,11 @@ export const emailTemplates: EmailTemplate[] = [
     ],
   },
 ];
+/** The starters as the rich-text editor opens them. */
+export const starterTemplates = emailTemplates.map((template) => ({
+  ...template,
+  html: blocksToHtml(template.blocks),
+}));
 export const templateCategories: Array<{ value: TemplateCategory | 'all'; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'outreach', label: 'Outreach' },

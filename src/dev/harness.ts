@@ -6,13 +6,15 @@
  * with data shaped like the team's (a project of imported leads with blank fields, several
  * training versions, a lead with an email but no name).
  *
- * Only GETs return data; writes answer {} so buttons can be clicked without anything persisting.
+ * Only GETs return data; writes answer {} (or a canned email fixture) so buttons can be clicked
+ * without anything persisting.
  * Development only — see harness.html. Nothing here is imported by the production entry.
  */
 import { harnessAssignees, leadFacets, leadsPage } from './lead-fixtures';
 import { callStage } from '../../shared/calls';
 import type { CallOutcome } from '../../shared/types';
 import { shellRoutes } from './shell-fixtures';
+import { emailRoutes, emailWrites } from './emailFixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -575,6 +577,8 @@ const routes: Array<[RegExp, (route: string) => unknown]> = [
   [/^\/projects\/2\/training\/analyses$/, () => []],
   [/^\/projects\/2\/assignees$/, () => harnessAssignees],
   [/^\/projects\/2\/calls(\?.*)?$/, () => callQueue],
+  // The email composer, campaign picker, archive tools and funnels page (see emailFixtures.ts).
+  ...emailRoutes(lead),
 ];
 
 const realFetch = window.fetch.bind(window);
@@ -588,7 +592,11 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const headers = { 'Content-Type': 'application/json' };
   if (method === 'POST' && /^\/projects\/2\/training\/analyze$/.test(route))
     return new Response(JSON.stringify(proposal), { status: 200, headers });
-  if (method !== 'GET') return new Response('{}', { status: 200, headers });
+  if (method !== 'GET') {
+    const write = emailWrites.find(([verb, pattern]) => verb === method && pattern.test(route));
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify(write ? write[2](body) : {}), { status: 200, headers });
+  }
   // A missing fixture answers like a missing route, so the screen shows its own error instead
   // of receiving the wrong shape and taking the whole app down.
   if (!match)

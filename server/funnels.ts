@@ -12,11 +12,31 @@ import {
   renderBlocks,
   validateBlocks,
 } from './email-blocks';
-import { assertCanContact, recipientKey, suppressRecipient, type createOutreach } from './outreach';
-import type { Funnel, FunnelStep } from '../shared/funnels';
+import { renderHtmlEmail, type ImageLoader } from './email-html';
+import { fileMeta, imageLoader, loadFiles } from './email-files';
+import {
+  assertCanContact,
+  recipientKey,
+  suppressRecipient,
+  type createOutreach,
+  type OutgoingFile,
+} from './outreach';
+import {
+  blocksToHtml,
+  fileIds,
+  hasContent,
+  maxEmailHtml,
+  parseEmailHtml,
+  sanitizeEmailHtml,
+  textToHtml,
+} from '../shared/email-html';
+import { suggestCampaign } from '../shared/funnels';
+import type { Funnel, FunnelProgress, FunnelStep } from '../shared/funnels';
+import type { CampaignOption } from '../shared/email';
 import type { Lead, Project, User } from '../shared/types';
 
 const day = 86_400_000;
+const hour = 3_600_000;
 
 /** HH:mm on a 24-hour clock, or empty to send as soon as the delay elapses. */
 const sendTimeSchema = text(5)
@@ -59,6 +79,10 @@ export const funnelSchema = z
   .object({
     name: requiredText(120),
     audience: text(500).default(''),
+    /** A matched incoming reply stops the rest of the sequence. On unless someone turns it off. */
+    stop_on_reply: z.boolean().default(true),
+    /** Which fit scores this campaign is for; the composer pre-selects by it. */
+    fit_band: z.enum(['ANY', 'HIGH', 'EMAIL']).default('ANY'),
     steps: z
       .array(
         z
@@ -75,10 +99,15 @@ export const funnelSchema = z
             ),
             body: text(10000).default(''),
             blocks: blocksSchema.optional(),
+            html: z.string().max(maxEmailHtml).optional(),
+            attachment_ids: z.array(z.number().int().positive()).max(10).optional(),
           })
           .strict()
           .refine(
-            (step) => Boolean(step.blocks?.length) || step.body.trim().length >= 20,
+            (step) =>
+              Boolean(step.blocks?.length) ||
+              Boolean(step.html && hasContent(step.html)) ||
+              step.body.trim().length >= 20,
             'Write the message, or design it with blocks.',
           ),
       )
@@ -90,7 +119,10 @@ export const funnelSchema = z
     (f) => f.steps.slice(1).every((s) => s.delay_days >= 1),
     'Follow-ups must be at least one day apart.',
   );
-type StoredFunnel = Omit<Funnel, 'steps'> & { steps_json: string };
+type StoredFunnel = Omit<Funnel, 'steps' | 'stop_on_reply'> & {
+  steps_json: string;
+  stop_on_reply: number;
+};
 interface Job {
   id: number;
   project_id: number;
@@ -104,16 +136,34 @@ interface Job {
   status: string;
   next_step: number;
   next_send_at: number;
+  schedule_json: string;
 }
 const selectFunnel = `SELECT f.*,
   (SELECT COUNT(*) FROM funnel_enrollments e WHERE e.funnel_id=f.id AND e.project_id=f.project_id) enrolled_count,
   (SELECT COUNT(*) FROM funnel_enrollments e WHERE e.funnel_id=f.id AND e.project_id=f.project_id AND e.status IN ('QUEUED','SENDING')) queued_count,
   (SELECT COUNT(*) FROM funnel_enrollments e WHERE e.funnel_id=f.id AND e.project_id=f.project_id AND e.status='CONVERTED') converted_count
   FROM funnels f`;
-const serialize = ({ steps_json, ...row }: StoredFunnel): Funnel => ({
+const serialize = ({ steps_json, stop_on_reply, ...row }: StoredFunnel): Funnel => ({
   ...row,
+  stop_on_reply: Boolean(stop_on_reply),
   steps: JSON.parse(steps_json),
 });
+/** The body a step shows in the rich-text editor, whichever way it was written. */
+export function stepHtml(step: FunnelStep) {
+  if (step.html) return step.html;
+  if (step.blocks?.length) return blocksToHtml(step.blocks);
+  return textToHtml(step.body);
+}
+/** Follow-up times chosen when a campaign started from a hand-sent first message. */
+function parseSchedule(value: string): Array<number | null> {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map((v) => (typeof v === 'number' ? v : null)) : [];
+  } catch {
+    return [];
+  }
+}
 
 export function createFunnels(options: {
   db: DB;
@@ -129,11 +179,55 @@ export function createFunnels(options: {
     if (!row) throw new HttpError(404, 'Funnel not found in this project.');
     return serialize(row);
   };
-  function eligible(project: Project, leadId: number): Lead {
+  /** Where each funnel's leads are: waiting for which message, or how their sequence ended. */
+  function progress(projectId: number) {
+    const rows = db
+      .prepare(
+        `SELECT funnel_id,status,next_step,stop_cause,COUNT(*) n FROM funnel_enrollments
+        WHERE project_id=? GROUP BY funnel_id,status,next_step,stop_cause`,
+      )
+      .all(projectId) as Array<{
+      funnel_id: number;
+      status: string;
+      next_step: number;
+      stop_cause: string;
+      n: number;
+    }>;
+    const byFunnel = new Map<number, FunnelProgress>();
+    for (const row of rows) {
+      const entry = byFunnel.get(row.funnel_id) || {
+        waiting: [0, 0, 0],
+        replied: 0,
+        bounced: 0,
+        stopped: 0,
+        blocked: 0,
+        completed: 0,
+        total: 0,
+      };
+      entry.total += row.n;
+      if (row.status === 'QUEUED' || row.status === 'SENDING')
+        entry.waiting[Math.min(2, Math.max(0, row.next_step))] += row.n;
+      else if (row.stop_cause === 'BOUNCED') entry.bounced += row.n;
+      else if (['REPLIED', 'INTERESTED', 'CONVERTED'].includes(row.status)) entry.replied += row.n;
+      else if (row.status === 'COMPLETED') entry.completed += row.n;
+      else if (row.status === 'BLOCKED') entry.blocked += row.n;
+      else entry.stopped += row.n;
+      byFunnel.set(row.funnel_id, entry);
+    }
+    return byFunnel;
+  }
+  function eligible(
+    project: Project,
+    leadId: number,
+    rules: { allowReplied?: boolean } = {},
+  ): Lead {
     const lead = db
       .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
-      .get(leadId, project.id) as (Lead & { outreach_status: string }) | undefined;
+      .get(leadId, project.id) as
+      (Lead & { outreach_status: string; archived_at: string | null }) | undefined;
     if (!lead) throw new HttpError(404, 'Lead not found in this project.');
+    if (lead.archived_at)
+      throw new HttpError(409, lead.name + ' is archived. Restore it before emailing it.');
     if (
       lead.status !== 'QUALIFIED' ||
       !lead.latest_run_id ||
@@ -146,15 +240,58 @@ export function createFunnels(options: {
         409,
         lead.name + ' needs a current, qualified result before enrollment or sending.',
       );
+    if (lead.outreach_status === 'BOUNCED')
+      throw new HttpError(409, 'Email to ' + lead.name + ' bounced. Update the contact first.');
     if (
-      ['REPLIED', 'INTERESTED', 'CONVERTED', 'UNSUBSCRIBED', 'STOPPED'].includes(
-        lead.outreach_status,
-      )
+      ['INTERESTED', 'CONVERTED', 'UNSUBSCRIBED', 'STOPPED'].includes(lead.outreach_status) ||
+      (lead.outreach_status === 'REPLIED' && !rules.allowReplied)
     )
       throw new HttpError(409, lead.name + ' has a response or stop recorded.');
     return lead;
   }
-  function compose(step: FunnelStep, lead: Lead, config: SmtpConfig, sender: string) {
+  /** Checks that every file a step names still belongs to the project and fits one message. */
+  function assertStepFiles(projectId: number, steps: FunnelStep[]) {
+    steps.forEach((step, index) => {
+      const inline = step.html ? fileIds(parseEmailHtml(step.html, { projectId }), projectId) : [];
+      const ids = [...new Set([...(step.attachment_ids || []), ...inline])];
+      const found = fileMeta(db, projectId, ids);
+      if (found.length !== ids.length)
+        throw new HttpError(
+          400,
+          'Message ' +
+            (index + 1) +
+            ' — a file is no longer available. Remove it and add it again.',
+        );
+      const size = found.reduce((sum, file) => sum + file.size, 0);
+      if (size > 20 * 1024 * 1024)
+        throw new HttpError(413, 'Message ' + (index + 1) + ' — files add up to more than 20 MB.');
+    });
+  }
+  /** The stored form: rich text re-sanitized here, and nothing added a step did not have. */
+  function storedSteps(projectId: number, steps: z.infer<typeof funnelSchema>['steps']) {
+    const stored = steps.map((step) => {
+      const { html, attachment_ids, blocks, ...rest } = step;
+      return {
+        ...rest,
+        ...(blocks ? { blocks } : {}),
+        ...(html !== undefined ? { html: sanitizeEmailHtml(html, { projectId }) } : {}),
+        ...(attachment_ids?.length ? { attachment_ids: [...new Set(attachment_ids)] } : {}),
+      } as FunnelStep;
+    });
+    assertStepFiles(projectId, stored);
+    return stored;
+  }
+  /**
+   * Builds one message for one lead. 'send' attaches files and inline images; 'preview' embeds
+   * images for the preview frame; 'check' only proves every merge field resolves.
+   */
+  function compose(
+    step: FunnelStep,
+    lead: Lead,
+    config: SmtpConfig,
+    sender: string,
+    mode: 'send' | 'preview' | 'check' = 'send',
+  ) {
     const context = mergeContext(lead, sender);
     const subject = applyMerge(step.subject, context);
     const to = step.to ? applyMerge(step.to, context) : null;
@@ -168,6 +305,41 @@ export function createFunnels(options: {
     if (to?.missing.length) {
       refuse(to.missing);
     }
+    const attachments = (inline: number[]): OutgoingFile[] =>
+      mode === 'send'
+        ? loadFiles(db, lead.project_id, step.attachment_ids || [], inline).attachments.map(
+            (file) => ({
+              fileId: file.id,
+              filename: file.filename,
+              content: file.data,
+              contentType: file.content_type,
+            }),
+          )
+        : [];
+    if (step.html) {
+      const noImages: ImageLoader = () => new Map();
+      const rendered = renderHtmlEmail(step.html, {
+        projectId: lead.project_id,
+        context,
+        fromName: sender,
+        fromEmail: config.from_email,
+        signature: config.signature,
+        previewText: '',
+        includeFooter: false,
+        images: mode === 'send' ? 'cid' : 'data',
+        loadImages: mode === 'check' ? noImages : imageLoader(db, lead.project_id),
+      });
+      refuse([
+        ...new Set([...(to?.missing || []), ...subject.missing, ...rendered.missingMergeFields]),
+      ]);
+      return {
+        to: to?.merged,
+        subject: subject.merged,
+        body: rendered.text,
+        html: rendered.html,
+        files: [...rendered.inline, ...attachments(rendered.inline.map((file) => file.fileId))],
+      };
+    }
     if (step.blocks?.length) {
       // Rendered by the same server-side renderer the composer previews, so a designed
       // funnel message is delivered as the editor showed it, Outlook-safe tables and all.
@@ -180,17 +352,25 @@ export function createFunnels(options: {
         includeFooter: false,
       });
       refuse([
-        ...new Set([
-          ...(to?.missing || []),
-          ...subject.missing,
-          ...rendered.missingMergeFields,
-        ]),
+        ...new Set([...(to?.missing || []), ...subject.missing, ...rendered.missingMergeFields]),
       ]);
-      return { to: to?.merged, subject: subject.merged, body: rendered.text, html: rendered.html };
+      return {
+        to: to?.merged,
+        subject: subject.merged,
+        body: rendered.text,
+        html: rendered.html,
+        files: attachments([]),
+      };
     }
     const body = applyMerge(step.body, context);
     refuse([...new Set([...(to?.missing || []), ...subject.missing, ...body.missing])]);
-    return { to: to?.merged, subject: subject.merged, body: body.merged, html: '' };
+    return {
+      to: to?.merged,
+      subject: subject.merged,
+      body: body.merged,
+      html: '',
+      files: attachments([]),
+    };
   }
   /** Every step may name its own recipient; fall back to the lead contact when unset. */
   function stepRecipient(built: { to?: string }, fallback: string) {
@@ -245,6 +425,160 @@ export function createFunnels(options: {
       );
     })();
   }
+  /** The reason this lead cannot start this campaign, or '' when it can. */
+  function blockedReason(project: Project, leadId: number, funnel: Funnel) {
+    try {
+      const lead = eligible(project, leadId);
+      if (!lead.contact_email) return 'Add a contact email to this lead first.';
+      const recipient = recipientKey(lead.contact_email);
+      assertCanContact(db, recipient);
+      if (
+        db
+          .prepare(
+            'SELECT 1 FROM funnel_enrollments WHERE project_id=? AND funnel_id=? AND lead_id=?',
+          )
+          .get(project.id, funnel.id, lead.id)
+      )
+        return lead.name + ' has already been in this campaign.';
+      if (
+        db
+          .prepare(
+            "SELECT 1 FROM funnel_enrollments WHERE (lead_id=? OR recipient=?) AND status IN ('QUEUED','SENDING')",
+          )
+          .get(lead.id, recipient)
+      )
+        return lead.name + ' already has an active sequence.';
+      if (funnel.steps.length > 3) return 'This campaign has too many messages.';
+      return '';
+    } catch (error) {
+      return error instanceof HttpError ? error.message : 'This lead cannot join this campaign.';
+    }
+  }
+  /** The project's campaigns as the composer offers them, and which one to pre-select. */
+  function campaignOptions(project: Project, lead: Lead & { stale?: boolean }) {
+    const campaigns: CampaignOption[] = (
+      db
+        .prepare(selectFunnel + ' WHERE f.project_id=? ORDER BY f.id DESC')
+        .all(project.id) as StoredFunnel[]
+    )
+      .map(serialize)
+      .map((funnel) => ({
+        id: funnel.id,
+        name: funnel.name,
+        audience: funnel.audience,
+        status: funnel.status,
+        fit_band: funnel.fit_band,
+        stop_on_reply: funnel.stop_on_reply,
+        steps: funnel.steps.map((step) => ({
+          subject: step.subject,
+          html: stepHtml(step),
+          delay_days: step.delay_days,
+          send_time: step.send_time || '',
+          attachment_ids: step.attachment_ids || [],
+        })),
+        blocked: blockedReason(project, lead.id, funnel),
+      }));
+    return { campaigns, suggested: suggestCampaign(lead, campaigns) };
+  }
+  /**
+   * Validates, BEFORE the first message is sent by hand, that this lead can start the
+   * campaign: eligibility, recipient, every later message's merge fields, and the follow-up
+   * times the author picked. Nothing is sent when any of it fails.
+   */
+  function planCampaign(
+    project: Project,
+    leadId: number,
+    funnelId: number,
+    to: string,
+    followups: string[] | undefined,
+    config: SmtpConfig,
+    sender: string,
+  ) {
+    const funnel = getFunnel(project.id, funnelId);
+    const reason = blockedReason(project, leadId, funnel);
+    if (reason) throw new HttpError(409, reason);
+    const lead = eligible(project, leadId);
+    const recipient = recipientKey(lead.contact_email);
+    if (recipientKey(to) !== recipient)
+      throw new HttpError(
+        400,
+        'A campaign continues to the lead’s contact email (' +
+          lead.contact_email +
+          '). Send to that address, or choose One-off email.',
+      );
+    for (const step of funnel.steps.slice(1)) {
+      const built = compose(step, lead, config, sender, 'check');
+      assertCanContact(db, stepRecipient(built, lead.contact_email));
+    }
+    const start = Date.now();
+    let times: number[];
+    if (followups === undefined) {
+      times = [];
+      let previous = start;
+      for (const step of funnel.steps.slice(1)) {
+        previous = scheduleNextSend(previous, step.delay_days, step.send_time);
+        times.push(previous);
+      }
+    } else {
+      if (followups.length !== funnel.steps.length - 1)
+        throw new HttpError(400, 'Choose a date and time for each follow-up.');
+      times = followups.map((value) => Date.parse(value));
+      let previous = start;
+      for (const time of times) {
+        if (!Number.isFinite(time))
+          throw new HttpError(400, 'Choose a date and time for each follow-up.');
+        if (time - previous < 12 * hour)
+          throw new HttpError(
+            400,
+            'Space each follow-up at least 12 hours after the message before it.',
+          );
+        if (time - start > 180 * day)
+          throw new HttpError(400, 'Schedule follow-ups within the next 180 days.');
+        previous = time;
+      }
+    }
+    return { funnel, lead, recipient, schedule: [null, ...times] as Array<number | null> };
+  }
+  /** Enrolls the lead with its first message already sent and its follow-ups scheduled. */
+  function startCampaign(project: Project, plan: ReturnType<typeof planCampaign>, user: User) {
+    const next = plan.schedule[1] ?? Date.now();
+    const done = plan.funnel.steps.length <= 1;
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO funnel_enrollments
+        (project_id,funnel_id,lead_id,recipient,lead_revision,training_version,account_id,created_by,
+         status,next_step,next_send_at,schedule_json,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?)`,
+      ).run(
+        project.id,
+        plan.funnel.id,
+        plan.lead.id,
+        plan.recipient,
+        plan.lead.revision,
+        project.active_version,
+        user.id,
+        user.name,
+        done ? 'COMPLETED' : 'QUEUED',
+        next,
+        JSON.stringify(plan.schedule),
+        now(),
+        now(),
+      );
+      audit(
+        db,
+        project.id,
+        user.name,
+        'funnel.enrolled',
+        plan.lead.name + ' started ' + plan.funnel.name + ' with a hand-sent first message.',
+      );
+    })();
+    return {
+      funnel_id: plan.funnel.id,
+      funnel_name: plan.funnel.name,
+      funnel_status: plan.funnel.status,
+      followups: plan.schedule.slice(1).map((time) => (time ? new Date(time).toISOString() : '')),
+    };
+  }
 
   function install(app: Express) {
     const base = '/api/projects/:projectId/funnels';
@@ -255,12 +589,26 @@ export function createFunnels(options: {
     });
     app.get(base, (req, res) => {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
+      const counts = progress(p.id);
       res.json({
         funnels: (
           db
             .prepare(selectFunnel + ' WHERE f.project_id=? ORDER BY f.id DESC')
             .all(p.id) as StoredFunnel[]
-        ).map(serialize),
+        )
+          .map(serialize)
+          .map((funnel) => ({
+            ...funnel,
+            progress: counts.get(funnel.id) || {
+              waiting: [0, 0, 0],
+              replied: 0,
+              bounced: 0,
+              stopped: 0,
+              blocked: 0,
+              completed: 0,
+              total: 0,
+            },
+          })),
         delivery_ready: (() => {
           const config = getEmailConfig(db, secrets, p.id);
           return Boolean(
@@ -273,13 +621,22 @@ export function createFunnels(options: {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
       assertDesignedSteps(req.body);
       const input = funnelSchema.parse(req.body);
+      const steps = storedSteps(p.id, input.steps);
       const id = Number(
         db
           .prepare(
-            'INSERT INTO funnels (project_id,name,audience,steps_json,created_at,created_by) VALUES (?,?,?,?,?,?)',
+            'INSERT INTO funnels (project_id,name,audience,steps_json,stop_on_reply,fit_band,created_at,created_by) VALUES (?,?,?,?,?,?,?,?)',
           )
-          .run(p.id, input.name, input.audience, JSON.stringify(input.steps), now(), req.user.name)
-          .lastInsertRowid,
+          .run(
+            p.id,
+            input.name,
+            input.audience,
+            JSON.stringify(steps),
+            input.stop_on_reply ? 1 : 0,
+            input.fit_band,
+            now(),
+            req.user.name,
+          ).lastInsertRowid,
       );
       audit(db, p.id, req.user.name, 'funnel.created', input.name);
       res.status(201).json(getFunnel(p.id, id));
@@ -297,9 +654,18 @@ export function createFunnels(options: {
         );
       assertDesignedSteps(body);
       const input = funnelSchema.parse(body);
+      const steps = storedSteps(p.id, input.steps);
       db.prepare(
-        'UPDATE funnels SET name=?,audience=?,steps_json=?,revision=revision+1 WHERE id=? AND project_id=?',
-      ).run(input.name, input.audience, JSON.stringify(input.steps), f.id, p.id);
+        'UPDATE funnels SET name=?,audience=?,steps_json=?,stop_on_reply=?,fit_band=?,revision=revision+1 WHERE id=? AND project_id=?',
+      ).run(
+        input.name,
+        input.audience,
+        JSON.stringify(steps),
+        input.stop_on_reply ? 1 : 0,
+        input.fit_band,
+        f.id,
+        p.id,
+      );
       res.json(getFunnel(p.id, f.id));
     });
     app.patch(base + '/:funnelId', adminOnly, (req, res) => {
@@ -395,7 +761,7 @@ export function createFunnels(options: {
             );
           const stepRecipients = new Set<string>();
           for (const step of f.steps) {
-            const built = compose(step, lead, config, config.from_name || req.user.name);
+            const built = compose(step, lead, config, config.from_name || req.user.name, 'check');
             const stepTo = stepRecipient(built, lead.contact_email);
             assertCanContact(db, stepTo);
             stepRecipients.add(stepTo);
@@ -454,8 +820,15 @@ export function createFunnels(options: {
       if (!f.steps[input.step]) throw new HttpError(400, 'Message not found.');
       const lead = eligible(p, input.lead_id),
         config = getEmailConfig(db, secrets, p.id);
-      const built = compose(f.steps[input.step], lead, config, config.from_name || req.user.name);
-      res.json({ ...built, to: stepRecipient(built, lead.contact_email) });
+      const step = f.steps[input.step];
+      const built = compose(step, lead, config, config.from_name || req.user.name, 'preview');
+      res.json({
+        to: stepRecipient(built, lead.contact_email),
+        subject: built.subject,
+        body: built.body,
+        html: built.html,
+        attachments: fileMeta(db, p.id, step.attachment_ids || []),
+      });
     });
     app.post('/api/projects/:projectId/leads/:leadId/outreach-events', (req, res) => {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
@@ -539,7 +912,9 @@ export function createFunnels(options: {
             .get(job.id, p.id) as { status: string };
           if (f.status !== 'ACTIVE' || current.status !== 'SENDING')
             throw new HttpError(409, 'The sequence was paused or stopped.');
-          const lead = eligible(p, job.lead_id);
+          // With stop-on-reply turned off, a reply keeps the sequence going. Every other
+          // recorded response, an opt-out or a bounce still stops it.
+          const lead = eligible(p, job.lead_id, { allowReplied: !f.stop_on_reply });
           if (
             lead.revision !== job.lead_revision ||
             p.active_version !== job.training_version ||
@@ -581,12 +956,13 @@ export function createFunnels(options: {
               leadName: lead.name,
               includeFooter: false,
             }),
+          files: built.files,
           deliveryKey: 'funnel:' + job.id + ':' + job.next_step,
           beforeSend: () => {
             // Do not call assertCanContact here: outreach already reserved a SENDING row,
             // which counts toward the three-email limit and would falsely block the 3rd send.
             const { lead: current } = verify();
-            const again = compose(step, current, config, config.from_name);
+            const again = compose(step, current, config, config.from_name, 'check');
             if (stepRecipient(again, job.recipient) !== sendTo)
               throw new HttpError(
                 409,
@@ -595,17 +971,20 @@ export function createFunnels(options: {
           },
         });
         const next = job.next_step + 1;
+        // A time the author picked for this follow-up wins over the funnel's own delay.
+        const chosen = parseSchedule(job.schedule_json)[next];
         db.prepare(
           `UPDATE funnel_enrollments SET next_step=?,status=?,next_send_at=?,updated_at=?
           WHERE id=? AND project_id=? AND status='SENDING'`,
         ).run(
           next,
           next === f.steps.length ? 'COMPLETED' : 'QUEUED',
-          scheduleNextSend(
-            Math.max(time, Date.now()),
-            f.steps[next]?.delay_days || 0,
-            f.steps[next]?.send_time,
-          ),
+          chosen ??
+            scheduleNextSend(
+              Math.max(time, Date.now()),
+              f.steps[next]?.delay_days || 0,
+              f.steps[next]?.send_time,
+            ),
           now(),
           job.id,
           job.project_id,
@@ -637,5 +1016,5 @@ export function createFunnels(options: {
       running = false;
     }
   }
-  return { install, tick };
+  return { install, tick, campaignOptions, planCampaign, startCampaign, compose };
 }

@@ -1,0 +1,208 @@
+/* The funnels page: one row per funnel with its messages, its data and its progress. */
+.funnel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.funnel-row {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  text-align: left;
+  color: var(--ink);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.funnel-row:hover {
+  border-color: #a3b891;
+  box-shadow: 0 5px 18px #25352e0a;
+}
+.funnel-overview {
+  padding: 0;
+  margin-bottom: 18px;
+}
+.funnel-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 22px;
+}
+.funnel-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--green);
+}
+.funnel-summary-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+}
+.funnel-summary-head strong {
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+.funnel-summary.is-detailed .funnel-summary-head {
+  display: none;
+}
+.funnel-summary-head small {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.funnel-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.funnel-tags span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f1f5ec;
+  color: #4d5a4d;
+  font-size: 11px;
+  font-weight: 600;
+}
+.funnel-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 18px;
+}
+.funnel-summary-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  font-weight: 650;
+  text-transform: uppercase;
+  color: #65755b;
+}
+.funnel-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+.funnel-messages li {
+  font-size: 13px;
+}
+.funnel-messages strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.funnel-messages small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.funnel-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.funnel-fields code {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fafbf7;
+  font-size: 11px;
+  color: #4d5a4d;
+}
+.funnel-progress ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.funnel-progress li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbf7;
+}
+.funnel-progress li strong {
+  font-size: 18px;
+  font-weight: 600;
+}
+.funnel-progress li small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.funnel-progress li.tone-waiting strong {
+  color: #826326;
+}
+.funnel-progress li.tone-good strong {
+  color: var(--green);
+}
+.funnel-progress li.tone-bad strong {
+  color: #944b35;
+}
+.funnel-progress li.is-zero strong {
+  color: #b5bcb0;
+}
+.funnel-toggle {
+  gap: 6px;
+}
+.funnel-toggle > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 40px;
+}
+.funnel-toggle input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+}
+.funnel-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+label.funnel-attach {
+  flex-direction: row;
+  cursor: pointer;
+}
+.funnel-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.funnel-file small {
+  color: var(--muted);
+}
+.funnel-file .icon-button {
+  width: 22px;
+  height: 22px;
+}
+@media (max-width: 760px) {
+  .funnel-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

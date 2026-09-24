@@ -47,6 +47,8 @@ import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { PreviousResearch } from './PreviousResearch';
 import { EmailComposer } from './EmailComposer';
+import { EmailHistory } from './EmailHistory';
+import { ArchiveTools, ArchivedNotice, LeadArchiveButton } from './ArchiveControls';
 import { IncomingReplies } from './IncomingReplies';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
@@ -339,18 +341,19 @@ export default function Leads({
         <div className="page-heading">
           <div>
             <span className="eyebrow">
-              {queue ? 'HUMAN JUDGMENT, IN THE LOOP' : 'RESEARCH THAT FOLLOWS YOUR RULES'}
+              {queue ? 'FOR REVIEWING ONLY' : 'RESEARCH THAT FOLLOWS YOUR RULES'}
             </span>
-            <h1>{queue ? 'A closer look.' : 'Find the right fit.'}</h1>
+            <h1>{queue ? 'Review queue.' : 'Find the right fit.'}</h1>
             <p>
               {queue
-                ? 'Review uncertain findings, research new leads and revisit results when training changes.'
+                ? 'This queue is only for reviewing: open a lead, check its findings and its email, and record your decision. Nothing here sends email or changes a lead by itself.'
                 : 'Analyze your leads against ' +
                   project.name +
                   ' training. Understand the evidence behind the fit.'}
             </p>
           </div>
           <div className="heading-actions">
+            {!queue && <ArchiveTools project={project} onChange={reload} notify={notify} />}
             <button className="button secondary" onClick={() => setImporting(true)}>
               <Upload size={16} />
               Import leads
@@ -1428,6 +1431,17 @@ function LeadDetail({
             notify={notify}
           />
         )}
+        {lead && (
+          <LeadArchiveButton
+            base={base}
+            lead={lead}
+            notify={notify}
+            onChange={() => {
+              setRefresh((n) => n + 1);
+              onChange();
+            }}
+          />
+        )}
       </LeadHeader>
       <div className="lead-detail">
         {error && <Alert>{error}</Alert>}
@@ -1435,6 +1449,7 @@ function LeadDetail({
           <Spinner text="Loading research…" />
         ) : (
           <>
+            <ArchivedNotice lead={lead} />
             {lead.legacy_json && <PreviousResearch lead={lead} projectName={project.name} />}
             <>
               <div className="result-tabs" role="tablist" aria-label="Lead details">
@@ -1776,28 +1791,7 @@ function LeadDetail({
                       onChange();
                     }}
                   />
-                  <h3>Outgoing email history</h3>
-                  {(lead.emails || []).length ? (
-                    (lead.emails || []).map((message) => (
-                      <div className="human-review-history" key={message.id}>
-                        <div>
-                          <Badge value={message.status === 'SENT' ? 'QUALIFIED' : 'NEEDS_REVIEW'}>
-                            {message.status === 'SENT' ? 'Sent' : 'Delivery not confirmed'}
-                          </Badge>
-                          <small>
-                            {message.to_email} · {message.created_by} · {date(message.created_at)}
-                          </small>
-                        </div>
-                        <p>
-                          <strong>{message.subject}</strong>
-                        </p>
-                        <p className="preserve-text">{message.body}</p>
-                        {message.error && <p className="muted">{message.error}</p>}
-                      </div>
-                    ))
-                  ) : (
-                    <p className="muted">No emails sent to this lead yet.</p>
-                  )}
+                  <EmailHistory base={base} emails={lead.emails || []} />
                 </div>
               )}
               {tab === 'calls' && (
