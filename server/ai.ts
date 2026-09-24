@@ -317,16 +317,50 @@ export async function qualify(
     evidence,
   };
   let result = await call(config, qualifySystem, input);
-  // A model that leaves rules out gets one more chance, told exactly which ones. The rules are
-  // the whole point of the evaluation, so a partial answer is never saved as if it were whole.
+  // Two recoverable faults get one more chance, told exactly what was wrong: rules left out,
+  // and evidence ids cited that were never supplied. Both are the model misreading the task
+  // rather than a bad answer worth keeping, and both are far likelier on the leads that carry
+  // little evidence — a lead with no website may supply no ids at all to cite.
+  //
+  // One combined repair pass, not one per fault: the cost stays at a single extra call, and an
+  // answer with both problems is fixed in one go instead of failing on the second.
   const missing = missingRules(result, snapshot);
-  if (missing.length)
+  const invented = invalidCitations(result, evidence);
+  if (missing.length || invented.length) {
+    const faults = [
+      missing.length ? 'did not evaluate every approved rule' : '',
+      invented.length ? 'cited evidence ids that were never supplied' : '',
+    ].filter(Boolean);
+    // Counts only: rule text and evidence are the caller's data, not ours to log.
+    console.error(
+      '[ai] Qualification repair pass for lead ' +
+        lead.id +
+        ': ' +
+        (missing.length ? missing.length + ' rule(s) missing ' : '') +
+        (invented.length ? invented.length + ' invented citation(s)' : ''),
+    );
     result = await call(
       config,
       qualifySystem +
-        ' Your previous answer did not evaluate every approved rule. missing_rules lists the rules it left out: return the complete JSON again, evaluating every criterion and every exclusion in order, including these.',
-      { ...input, missing_rules: missing },
+        ' Your previous answer ' +
+        faults.join(' and ') +
+        '.' +
+        (missing.length
+          ? ' missing_rules lists the rules it left out: evaluate every criterion and every exclusion in order, including these.'
+          : '') +
+        (invented.length
+          ? ' invalid_source_ids lists ids you cited that do not exist. valid_source_ids lists the only ids you may cite. Cite nothing outside that list, and when the supplied evidence does not settle a rule return UNKNOWN with an empty source_ids rather than inventing an id.'
+          : '') +
+        ' Return the complete JSON again.',
+      {
+        ...input,
+        ...(missing.length ? { missing_rules: missing } : {}),
+        ...(invented.length
+          ? { invalid_source_ids: invented, valid_source_ids: evidence.map((e) => e.id) }
+          : {}),
+      },
     );
+  }
   return validateQualification(result, snapshot, evidence);
 }
 /** Comparison form for rule text: numbering, quotes, case and spacing are not the rule. */
@@ -369,6 +403,23 @@ function alignRules<T extends { criterion: string }>(expected: string[], given: 
     aligned: aligned.map((item, i) => (item ? { ...item, criterion: expected[i] } : undefined)),
     missing: expected.filter((_, i) => !aligned[i]),
   };
+}
+/**
+ * Evidence ids an answer cites that were never supplied. An unreadable answer reports none.
+ *
+ * Only criteria and exclusions count: outreach.contact_source_ids is repaired further down
+ * (the contact is dropped with a gap note) rather than rejected, so an uncited contact must
+ * not cost a retry.
+ */
+export function invalidCitations(raw: unknown, evidence: Evidence[]) {
+  const parsed = qualificationSchema.safeParse(raw);
+  if (!parsed.success) return [];
+  const supplied = new Set(evidence.map((e) => e.id));
+  const invented = new Set<string>();
+  for (const kind of ['criteria', 'exclusions'] as const)
+    for (const item of parsed.data[kind])
+      for (const id of item.source_ids) if (!supplied.has(id)) invented.add(id);
+  return [...invented];
 }
 /** The approved rules a raw model answer leaves out. An unreadable answer reports none. */
 export function missingRules(raw: unknown, snapshot: TrainingSnapshot) {

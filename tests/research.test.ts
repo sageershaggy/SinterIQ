@@ -471,6 +471,105 @@ test('the retry happens once: a model that still leaves rules out saves nothing'
   }
 });
 
+test('an invented evidence id is asked for again once, with the valid ids named', async () => {
+  const home = 'https://cited-pumps.example.com';
+  const f = fixture(
+    {
+      qualify: (input, attempt) => {
+        const result = complete(input);
+        // The first answer cites an id that was never supplied — the shape seen in production
+        // on leads carrying little evidence, where the model invents a source rather than
+        // returning UNKNOWN with none.
+        if (attempt === 0)
+          result.criteria = result.criteria.map((item) => ({ ...item, source_ids: ['E9'] }));
+        return result;
+      },
+    },
+    { 'https://example.org': trainingSite, [home]: 'Cited Pumps manufactures pumps.' },
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const { base } = await addLead(f, project.id, { name: 'Cited Pumps', website: home });
+    const qualified = await f.post(base + '/qualify');
+    assert.equal(qualified.status, 200, JSON.stringify(qualified.body));
+    assert.equal(f.calls.qualify.length, 2);
+    const retry = f.calls.qualify[1] as {
+      invalid_source_ids: string[];
+      valid_source_ids: string[];
+      missing_rules?: string[];
+    };
+    assert.deepEqual(retry.invalid_source_ids, ['E9']);
+    assert.ok(retry.valid_source_ids.length > 0);
+    assert.ok(!retry.valid_source_ids.includes('E9'));
+    // Only the fault that occurred is named; a complete answer must not be told rules are missing.
+    assert.equal(retry.missing_rules, undefined);
+    assert.match(f.calls.systems.at(-1)!, /cited evidence ids that were never supplied/);
+    assert.doesNotMatch(f.calls.systems.at(-1)!, /did not evaluate every approved rule/);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('the citation retry happens once: a model that still invents an id saves nothing', async () => {
+  const home = 'https://invented-pumps.example.com';
+  const f = fixture(
+    {
+      qualify: (input) => {
+        const result = complete(input);
+        result.criteria = result.criteria.map((item) => ({ ...item, source_ids: ['E9'] }));
+        return result;
+      },
+    },
+    { 'https://example.org': trainingSite, [home]: 'Invented Pumps manufactures pumps.' },
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const { base } = await addLead(f, project.id, { name: 'Invented Pumps', website: home });
+    const qualified = await f.post(base + '/qualify');
+    assert.equal(qualified.status, 502, JSON.stringify(qualified.body));
+    assert.match(qualified.body.error, /cited evidence that was not supplied/);
+    assert.equal(f.calls.qualify.length, 2);
+    const after = (await f.get(base)).body as Lead & { runs: Run[] };
+    assert.equal(after.runs.length, 0);
+    assert.equal(after.status, 'UNREVIEWED');
+  } finally {
+    f.dispose();
+  }
+});
+
+test('both faults at once are repaired in a single retry, not two', async () => {
+  const home = 'https://both-pumps.example.com';
+  const f = fixture(
+    {
+      qualify: (input, attempt) => {
+        const result = complete(input);
+        if (attempt === 0) {
+          result.criteria = result.criteria.map((item) => ({ ...item, source_ids: ['E9'] }));
+          result.criteria.pop();
+        }
+        return result;
+      },
+    },
+    { 'https://example.org': trainingSite, [home]: 'Both Pumps manufactures pumps.' },
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const { base } = await addLead(f, project.id, { name: 'Both Pumps', website: home });
+    const qualified = await f.post(base + '/qualify');
+    assert.equal(qualified.status, 200, JSON.stringify(qualified.body));
+    assert.equal(f.calls.qualify.length, 2);
+    const retry = f.calls.qualify[1] as { invalid_source_ids: string[]; missing_rules: string[] };
+    assert.ok(retry.invalid_source_ids.length > 0);
+    assert.ok(retry.missing_rules.length > 0);
+    assert.match(f.calls.systems.at(-1)!, /did not evaluate every approved rule and cited evidence/);
+  } finally {
+    f.dispose();
+  }
+});
+
 test('the same rules in another order or with numbering are still every rule', async () => {
   const home = 'https://ordered-pumps.example.com';
   const f = fixture(
