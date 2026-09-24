@@ -14,6 +14,7 @@ import {
 import type { Account, Project, Settings as AiSettings, User } from '../shared/types';
 import { api, json, setSession, type Session } from './api';
 import { Alert, Badge, Modal, Spinner } from './ui';
+import { initials } from './AccountMenu';
 
 export default function Settings({
   user,
@@ -367,8 +368,20 @@ export default function Settings({
             <div className="section-title">
               <h2>
                 <LockKeyhole size={19} />
-                Your password
+                Your account
               </h2>
+            </div>
+            {/* The signed-in profile, also shown in the account menu at the top right. */}
+            <div className="account-profile settings-profile">
+              <span className="account-avatar large" aria-hidden="true">
+                {initials(user.name)}
+              </span>
+              <div>
+                <strong>{user.name}</strong>
+                <small>
+                  @{user.username} · {user.role === 'admin' ? 'Administrator' : 'Researcher'}
+                </small>
+              </div>
             </div>
             <form
               className="form-stack"

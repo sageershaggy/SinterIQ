@@ -279,6 +279,50 @@ export function renderBlocks(
       return rendered + gap;
     })
     .join('');
+  // The text alternative matters: some clients and most filters read it.
+  const plain = blocks
+    .map((block) => {
+      const merge = (value: string) => applyMerge(value, options.context).merged;
+      switch (block.type) {
+        case 'heading':
+          return merge(block.text).toUpperCase();
+        case 'text':
+          return merge(block.text);
+        case 'button':
+          return merge(block.label) + ': ' + block.url;
+        case 'image':
+          return '[' + merge(block.alt) + ']';
+        case 'quote':
+          return '"' + merge(block.text) + '"' + (block.cite ? ' — ' + merge(block.cite) : '');
+        case 'divider':
+          return '---';
+        case 'spacer':
+          return '';
+      }
+    })
+    .filter((line) => line !== '')
+    .join('\n\n');
+  return { ...emailDocument(body, plain, options), missingMergeFields: [...missing] };
+}
+/** One full-width row of the email panel. Content rows use the 32px side padding. */
+export const emailRow = row;
+/**
+ * The Outlook-safe frame every designed email shares: nested presentation tables with inline
+ * styles, the hidden preheader, the signature, and the sender footer (or the placeholder the
+ * outreach sender replaces with its unsubscribe footer). Also completes the text alternative.
+ */
+export function emailDocument(
+  body: string,
+  plain: string,
+  options: {
+    context: MergeContext;
+    fromName: string;
+    fromEmail: string;
+    signature: string;
+    previewText: string;
+    includeFooter?: boolean;
+  },
+) {
   const signature = options.signature.trim()
     ? row(
         '<div style="padding-top:16px;border-top:1px solid #e5e8e0;font-size:13px;line-height:1.6;color:#6b7566;">' +
@@ -319,29 +363,6 @@ export function renderBlocks(
     (options.includeFooter === false ? row('<!--outreach-footer-->') : footer) +
     row('<div style="height:28px;line-height:1px;">&nbsp;</div>', '0') +
     '</table></td></tr></table></body></html>';
-  // The text alternative matters: some clients and most filters read it.
-  const plain = blocks
-    .map((block) => {
-      const merge = (value: string) => applyMerge(value, options.context).merged;
-      switch (block.type) {
-        case 'heading':
-          return merge(block.text).toUpperCase();
-        case 'text':
-          return merge(block.text);
-        case 'button':
-          return merge(block.label) + ': ' + block.url;
-        case 'image':
-          return '[' + merge(block.alt) + ']';
-        case 'quote':
-          return '"' + merge(block.text) + '"' + (block.cite ? ' — ' + merge(block.cite) : '');
-        case 'divider':
-          return '---';
-        case 'spacer':
-          return '';
-      }
-    })
-    .filter((line) => line !== '')
-    .join('\n\n');
   return {
     html,
     text:
@@ -354,7 +375,6 @@ export function renderBlocks(
           ' <' +
           options.fromEmail +
           '>\nReply with "unsubscribe" and we will not contact you again.',
-    missingMergeFields: [...missing],
   };
 }
 

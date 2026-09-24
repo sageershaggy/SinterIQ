@@ -5,32 +5,34 @@ import {
   BookOpen,
   Check,
   ChevronDown,
-  FlaskConical,
   FolderOpen,
   History,
   LayoutGrid,
-  LogOut,
   Plus,
   ScanLine,
   Settings as SettingsIcon,
   ShieldCheck,
-  Sparkles,
   Users,
   X,
   Menu,
   GitBranch,
   Mail,
+  PhoneCall,
 } from 'lucide-react';
 import type { Project, User } from '../shared/types';
 import { api, date, json } from './api';
 import { Alert, Badge, Brand, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { Notifications } from './Notifications';
+import { AccountMenu } from './AccountMenu';
+import { HeaderQuote } from './Shell';
 import { readRoute, type View } from './navigation';
 const Training = lazy(() => import('./Training'));
 const Leads = lazy(() => import('./Leads'));
 const Funnels = lazy(() => import('./Funnels'));
 const Settings = lazy(() => import('./Settings'));
 const Mailbox = lazy(() => import('./Mailbox'));
+const Calls = lazy(() => import('./Calls'));
+const ResearchLog = lazy(() => import('./ResearchLog'));
 export default function App({ user, onLogout }: { user: User; onLogout: () => Promise<void> }) {
   const [projects, setProjects] = useState<Project[]>([]),
     [loading, setLoading] = useState(true),
@@ -38,7 +40,8 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
   const [route, setRoute] = useState(readRoute);
   const [view, setView] = useState<View>(route.view),
     [selected, setSelected] = useState<number | null>(route.projectId),
-    [expanded, setExpanded] = useState<number[]>([]);
+    [expanded, setExpanded] = useState<number[]>([]),
+    [projectsOpen, setProjectsOpen] = useState(true);
   const [newProject, setNewProject] = useState(false),
     [editProject, setEditProject] = useState(false),
     [menu, setMenu] = useState(false);
@@ -52,8 +55,10 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
       setRoute(next);
       setView(next.view);
       setSelected(next.projectId);
-      if (next.projectId)
+      if (next.projectId) {
         setExpanded((ids) => (ids.includes(next.projectId!) ? ids : [...ids, next.projectId!]));
+        setProjectsOpen(true);
+      }
       setMenu(false);
     };
     sync();
@@ -121,6 +126,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
       { id: 'training', label: 'Training library', icon: BookOpen },
       { id: 'leads', label: 'Lead research', icon: ScanLine },
       { id: 'review', label: 'Review queue', icon: ShieldCheck },
+      { id: 'calls', label: 'Calls', icon: PhoneCall },
       { id: 'funnels', label: 'Email funnels', icon: GitBranch },
       { id: 'mailbox', label: 'Mailbox', icon: Mail },
       { id: 'activity', label: 'Research history', icon: History },
@@ -136,6 +142,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     activity: 'Research history',
     settings: 'Workspace settings',
     mailbox: 'Project mailbox',
+    calls: 'Calls',
   };
   return (
     <div className="app-shell">
@@ -148,26 +155,45 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
       )}
       <aside className={'sidebar ' + (menu ? 'sidebar-open' : '')}>
         <Brand />
-        <div className="workspace-label">
-          <span className="workspace-avatar">IR</span>
-          <div>
-            Research workspace<small>Team workspace</small>
-          </div>
-          <ChevronDown size={14} />
-        </div>
+        {/* A plain line, not a control: there is one workspace, so nothing to switch. */}
+        <p className="workspace-line">
+          <strong>Research workspace</strong> <span>Team workspace</span>
+        </p>
         <span className="nav-caption">WORKSPACE</span>
         <nav aria-label="Workspace">
-          <button
-            className={'nav-item ' + (view === 'projects' ? 'active' : '')}
-            onClick={() => navigate('projects')}
-          >
-            <FolderOpen size={18} />
-            All projects<span className="nav-count">{projects.length}</span>
-          </button>
+          {/* "All projects" opens its page and drops down every project beneath it. */}
+          <div className={'all-projects-row' + (view === 'projects' ? ' is-active' : '')}>
+            <button
+              className={'nav-item ' + (view === 'projects' ? 'active' : '')}
+              onClick={() => {
+                navigate('projects');
+                setProjectsOpen(true);
+              }}
+            >
+              <FolderOpen size={18} />
+              All projects<span className="nav-count">{projects.length}</span>
+            </button>
+            <button
+              className="project-nav-toggle"
+              aria-expanded={projectsOpen}
+              aria-controls="sidebar-projects"
+              aria-label={(projectsOpen ? 'Hide' : 'Show') + ' the list of projects'}
+              onClick={() => setProjectsOpen((value) => !value)}
+            >
+              <ChevronDown size={14} className={projectsOpen ? 'is-open' : ''} />
+            </button>
+          </div>
         </nav>
-        <div className="nav-divider" />
-        <div className="nav-caption">PROJECTS</div>
-        <div className="project-nav">
+        <div
+          className="project-nav sidebar-projects"
+          id="sidebar-projects"
+          hidden={!projectsOpen}
+          aria-label="Projects"
+          role="group"
+        >
+          {!projects.length && !loading && (
+            <p className="sidebar-projects-empty">No projects yet</p>
+          )}
           {projects.map((p) => {
             // Each project owns its own section, rendered inside its group rather than
             // after the list, and expands independently of which project is active.
@@ -210,46 +236,8 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             );
           })}
         </div>
-        <div className="sidebar-bottom">
-          <div className="sidebar-note">
-            <Sparkles size={19} />
-            <strong>
-              Good research starts
-              <br />
-              with good context.
-            </strong>
-            <p>Give each project the knowledge it needs to qualify with confidence.</p>
-          </div>
-          {
-            <button
-              className={'nav-item ' + (view === 'settings' ? 'active' : '')}
-              onClick={() => navigate('settings')}
-            >
-              <SettingsIcon size={17} />
-              Workspace settings
-            </button>
-          }
-          <div className="user-card">
-            <span className="user-avatar">
-              {user.name
-                .split(' ')
-                .map((n) => n[0])
-                .slice(0, 2)
-                .join('')}
-            </span>
-            <div>
-              <strong>{user.name}</strong>
-              <small>{user.role === 'admin' ? 'Administrator' : 'Researcher'}</small>
-            </div>
-            <button
-              aria-label="Sign out"
-              title="Sign out"
-              onClick={() => onLogout().catch((e) => setError(e.message))}
-            >
-              <LogOut size={17} />
-            </button>
-          </div>
-        </div>
+        {/* Workspace settings, the profile and sign-out moved to the account menu in the header;
+            the quote moved to the header line. The sidebar is navigation only. */}
       </aside>
       <div className="main-shell">
         <header className="topbar">
@@ -271,13 +259,15 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             )}
             <strong>{headings[view]}</strong>
           </div>
+          {view !== 'settings' && <HeaderQuote />}
           <div className="topbar-right">
             <Notifications refresh={refresh} />
-            <span className="private-label">
-              <ShieldCheck size={14} />
-              Team workspace
-            </span>
-            <span className="top-avatar">{user.name[0]}</span>
+            <AccountMenu
+              user={user}
+              active={view === 'settings'}
+              onSettings={() => navigate('settings')}
+              onLogout={() => onLogout().catch((e) => setError(e.message))}
+            />
           </div>
         </header>
         <main className="main-content" id="main-content">
@@ -319,32 +309,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                       </button>
                     )}
                   </div>
-                  <div className="stat-grid">
-                    <Stat
-                      label="Projects"
-                      value={projects.length}
-                      detail={user.role === 'admin' ? 'In this workspace' : 'Assigned to you'}
-                      icon={<FolderOpen />}
-                    />
-                    <Stat
-                      label="Total leads"
-                      value={projects.reduce((total, p) => total + p.lead_count, 0)}
-                      detail="Across your projects"
-                      icon={<Users />}
-                    />
-                    <Stat
-                      label="Qualified leads"
-                      value={projects.reduce((total, p) => total + p.qualified_count, 0)}
-                      detail="Against current training"
-                      icon={<Check />}
-                    />
-                    <Stat
-                      label="Awaiting review"
-                      value={projects.reduce((total, p) => total + p.review_count, 0)}
-                      detail="Unreviewed, uncertain or outdated"
-                      icon={<ShieldCheck />}
-                    />
-                  </div>
+                  {/* No workspace totals here: each project card carries its own numbers. */}
                   <div className="section-title">
                     <h2>
                       Project library <span>{projects.length}</span>
@@ -396,10 +361,19 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                         {project.description || 'Build the context for your next research project.'}
                       </p>
                     </div>
-                    <button className="button secondary" onClick={() => setEditProject(true)}>
-                      <SettingsIcon size={16} />
-                      Project settings
-                    </button>
+                    <div className="heading-actions">
+                      <button className="button secondary" onClick={() => setEditProject(true)}>
+                        <SettingsIcon size={16} />
+                        Project settings
+                      </button>
+                      <button
+                        className="button primary"
+                        onClick={() => navigate(ready ? 'leads' : 'training')}
+                      >
+                        {ready ? 'Research leads' : 'Review training'}
+                        <ArrowRight size={16} />
+                      </button>
+                    </div>
                   </div>
                   <div className="project-meta">
                     <ExternalLink url={project.website} />
@@ -454,36 +428,23 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                       icon={<BookOpen />}
                     />
                   </div>
-                  <section className="overview-callout">
-                    <div className="callout-icon">
-                      <FlaskConical size={28} />
-                    </div>
-                    <div>
-                      <span className="eyebrow">
-                        {ready ? 'READY TO RESEARCH' : 'BUILD YOUR FOUNDATION'}
+                  {/* Ready training needs no announcement: the badge above says it and the
+                      header offers the next step. Only a missing prerequisite earns a line. */}
+                  {!ready && (
+                    <div className="inline-notice">
+                      <BookOpen size={20} />
+                      <span>
+                        <strong>Training comes first.</strong> Review the sources and rules, then
+                        publish a version to start qualifying leads.
                       </span>
-                      <h2>
-                        {ready
-                          ? 'Your training is ready. Put it to work.'
-                          : 'Great qualification begins with your knowledge.'}
-                      </h2>
-                      <p>
-                        {ready
-                          ? 'Every lead will be evaluated against training v' +
-                            project.active_version +
-                            ', with evidence and a clear rationale.'
-                          : 'Review the source library, refine your qualification rules, and publish an approved training version.'}
-                      </p>
                     </div>
-                    <button
-                      className="button primary"
-                      onClick={() => navigate(ready ? 'leads' : 'training')}
-                    >
-                      {ready ? 'Research leads' : 'Review training'}
-                      <ArrowRight size={17} />
-                    </button>
-                  </section>
-                  <Activity projectId={project.id} compact refresh={refresh} />
+                  )}
+                  <Activity
+                    projectId={project.id}
+                    compact
+                    refresh={refresh}
+                    onViewAll={() => navigate('activity')}
+                  />
                 </>
               )}
               {project &&
@@ -496,6 +457,9 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                     a company are available on that company’s Email tab.
                   </Alert>
                 ))}
+              {project && view === 'calls' && (
+                <Calls key={project.id} project={project} user={user} notify={setNotice} />
+              )}
               {project && view === 'funnels' && (
                 <Funnels
                   key={project.id}
@@ -527,16 +491,12 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                 />
               )}
               {project && view === 'activity' && (
-                <>
-                  <div className="page-heading">
-                    <div>
-                      <span className="eyebrow">THE RESEARCH RECORD</span>
-                      <h1>Every step, accounted for.</h1>
-                      <p>Training changes, analysis and human decisions for {project.name}.</p>
-                    </div>
-                  </div>
-                  <Activity projectId={project.id} refresh={refresh} />
-                </>
+                <ResearchLog
+                  key={project.id}
+                  project={project}
+                  refresh={refresh}
+                  activity={<Activity projectId={project.id} refresh={refresh} />}
+                />
               )}
               {view === 'settings' && (
                 <Settings
@@ -733,14 +693,75 @@ function ProjectForm({
     </Modal>
   );
 }
+/** Plain words for the audit actions a project log actually contains. */
+const activityLabels: Record<string, string> = {
+  'training.published': 'Training published',
+  'training.rubric_saved': 'Draft rules saved',
+  'training.analyzed': 'Training sources analyzed',
+  'training.feedback_added': 'Training feedback added',
+  'source.added': 'Source added',
+  'source.removed': 'Source removed',
+  'source.capture_pending': 'Website capture queued',
+  'project.created': 'Project created',
+  'project.updated': 'Project settings changed',
+  'lead.created': 'Lead added',
+  'lead.updated': 'Lead edited',
+  'lead.qualified': 'Lead analyzed',
+  'lead.reviewed': 'Lead reviewed',
+  'lead.researched': 'Missing details researched',
+  'lead.email_sent': 'Email sent',
+  'lead.call_logged': 'Call logged',
+  'lead.status_changed': 'Lead status changed',
+  'lead.comment_added': 'Comment added',
+  'lead.comment_edited': 'Comment edited',
+  'lead.comment_deleted': 'Comment deleted',
+  'lead.contact_removed': 'Contact removed',
+  'leads.imported': 'Leads imported',
+  'leads.deleted': 'Leads deleted',
+  'leads.assigned': 'Leads assigned for calling',
+  'leads.unassigned': 'Leads returned to the pool',
+  'leads.assignments_released': 'Calling assignments released',
+  'funnel.created': 'Campaign created',
+  'funnel.enrolled': 'Leads added to a campaign',
+  'email.template_created': 'Email template saved',
+  'settings.email_updated': 'Mailbox settings changed',
+  'settings.email_tested': 'Mailbox test sent',
+  'mailbox.incoming_settings': 'Incoming mail settings changed',
+};
+function activityLabel(action: string) {
+  const words = action.replaceAll('.', ' ').replaceAll('_', ' ');
+  return activityLabels[action] || words.charAt(0).toUpperCase() + words.slice(1);
+}
+function activityIcon(action: string) {
+  if (action.startsWith('training') || action.startsWith('source')) return <BookOpen size={15} />;
+  if (/^(funnel|email|mailbox|settings\.email)/.test(action) || action === 'lead.email_sent')
+    return <Mail size={15} />;
+  if (action.startsWith('lead')) return <Users size={15} />;
+  return <ScanLine size={15} />;
+}
+/** "12 min ago" reads faster than a date when most of a day's work happened today. */
+function relativeTime(value: string) {
+  const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return minutes + ' min ago';
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours + ' h ago';
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return days + ' days ago';
+  return date(value);
+}
 function Activity({
   projectId,
   compact,
   refresh,
+  onViewAll,
 }: {
   projectId: number;
   compact?: boolean;
   refresh: number;
+  /** The overview shows a summary; this leads to the full, ungrouped record. */
+  onViewAll?: () => void;
 }) {
   const [items, setItems] = useState<
       Array<{
@@ -768,6 +789,24 @@ function Activity({
       cancelled = true;
     };
   }, [projectId, refresh]);
+  // Saving a draft three times in a row is one thing that happened, not three: in the overview
+  // summary, consecutive entries with the same action, person and detail collapse into one row
+  // with a count. The history page is an audit record, so there every entry keeps its own row.
+  type Group = { first: (typeof items)[number]; count: number };
+  const groups: Group[] = !compact
+    ? items.map((item) => ({ first: item, count: 1 }))
+    : items.reduce<Group[]>((all, item) => {
+        const last = all[all.length - 1];
+        if (
+          last &&
+          last.first.action === item.action &&
+          last.first.actor === item.actor &&
+          last.first.detail === item.detail
+        )
+          last.count++;
+        else all.push({ first: item, count: 1 });
+        return all;
+      }, []);
   return (
     <section className="panel activity-panel">
       <div className="section-title">
@@ -780,22 +819,30 @@ function Activity({
           Your project activity will appear here.
         </Empty>
       ) : (
-        <div className="activity-list">
-          {items.slice(0, compact ? 5 : 100).map((item) => (
-            <div className="activity-item" key={item.id}>
-              <span className="activity-icon">
-                {item.action.includes('training') ? <BookOpen size={16} /> : <ScanLine size={16} />}
-              </span>
-              <div>
-                <strong>{item.action.replaceAll('.', ' ').replaceAll('_', ' ')}</strong>
-                <p>{item.detail}</p>
-                <small>
-                  {item.actor} · {date(item.created_at)}
-                </small>
+        <div className={'activity-list' + (compact ? ' is-compact' : '')}>
+          {groups.slice(0, compact ? 6 : 100).map(({ first, count }) => (
+            <div className="activity-item" key={first.id}>
+              <span className="activity-icon">{activityIcon(first.action)}</span>
+              <div className="activity-text">
+                <strong>
+                  {activityLabel(first.action)}
+                  {count > 1 && <span className="activity-count">×{count}</span>}
+                </strong>
+                {first.detail && <p title={first.detail}>{first.detail}</p>}
               </div>
+              <small className="activity-meta" title={new Date(first.created_at).toLocaleString()}>
+                <span>{first.actor}</span>
+                <span>{relativeTime(first.created_at)}</span>
+              </small>
             </div>
           ))}
         </div>
+      )}
+      {compact && onViewAll && items.length > 0 && (
+        <button type="button" className="text-button activity-all" onClick={onViewAll}>
+          View full history
+          <ArrowRight size={14} />
+        </button>
       )}
     </section>
   );

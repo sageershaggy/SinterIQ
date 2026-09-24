@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BookOpen,
   CheckCircle2,
+  ClipboardList,
   Download,
   FileText,
   Globe,
@@ -16,8 +17,17 @@ import {
   CircleHelp,
 } from 'lucide-react';
 import type { Project, Source, Rubric, TrainingSnapshot } from '../shared/types';
+import type { SourceUpload, TrainingGraph } from '../shared/research';
 import { api, date, json } from './api';
-import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
+import { Alert, Badge, Empty, ExternalLink, GrowingTextarea, Modal, Spinner } from './ui';
+import {
+  SourceStatus,
+  TrainedNotice,
+  TrainingDiff,
+  TrainingGraphView,
+  UploadProblems,
+} from './TrainingInsight';
+import { CriteriaTemplatePicker } from './CriteriaTemplates';
 
 interface Version {
   version: number;
@@ -68,7 +78,7 @@ export default function Training({
     [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(''),
     [error, setError] = useState(''),
-    [mode, setMode] = useState<'note' | 'website' | null>(null);
+    [mode, setMode] = useState<'note' | 'website' | 'template' | null>(null);
   const [preview, setPreview] = useState<Source | null>(null),
     [remove, setRemove] = useState<Source | null>(null);
   const [oldVersion, setOldVersion] = useState<{
@@ -79,6 +89,38 @@ export default function Training({
     Array<{ id: number; rubric: Rubric; revision: number; created_at: string }>
   >([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  // What happened to each upload, how the published rules played out, and the published
+  // version itself, for showing what a draft changes. None of these blocks the page.
+  const [uploads, setUploads] = useState<SourceUpload[]>([]),
+    [uploadsKey, setUploadsKey] = useState(0),
+    [graph, setGraph] = useState<TrainingGraph | null>(null),
+    [published, setPublished] = useState<TrainingSnapshot | null>(null),
+    [trained, setTrained] = useState(false);
+  const graphRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api<SourceUpload[]>(base + '/training/uploads')
+      .then((data) => !cancelled && setUploads(data))
+      .catch((e) => !cancelled && setError(e.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, project.revision, uploadsKey]);
+  useEffect(() => {
+    let cancelled = false;
+    api<TrainingGraph>(base + '/training/graph')
+      .then((data) => !cancelled && setGraph(data))
+      .catch((e) => !cancelled && setError(e.message));
+    if (project.active_version)
+      api<{ snapshot: TrainingSnapshot }>(base + '/training/versions/' + project.active_version)
+        .then((data) => !cancelled && setPublished(data.snapshot))
+        .catch((e) => !cancelled && setError(e.message));
+    else setPublished(null);
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, project.active_version]);
+  const publishedHashes = published ? new Set(published.sources.map((s) => s.sha256)) : null;
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -135,6 +177,7 @@ export default function Training({
       });
       onChange();
       setDirty(false);
+      setTrained(false);
       notify(message);
     });
   }
@@ -152,6 +195,11 @@ export default function Training({
     setEditor(next);
     await saveRubric(next, 'Open questions cleared. You can publish this training version now.');
   }
+  /**
+   * Train AI: reads every source (and outstanding lead feedback) and drafts updated rules. The
+   * draft lands in the editor with its changes against the published version and the graph;
+   * nothing is used for qualification until someone saves and publishes it.
+   */
   async function analyze() {
     await perform('analyze', async () => {
       const result = await api<{ rubric: Rubric; revision: number }>(base + '/training/analyze', {
@@ -160,7 +208,13 @@ export default function Training({
       });
       setEditor(edit(result.rubric));
       setDirty(true);
-      notify('Training analysis is ready. Review the proposed rules below.');
+      setTrained(true);
+      // The graph is how the draft is reviewed: which sources ground which rules.
+      setTimeout(
+        () => graphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        80,
+      );
+      notify('Train AI drafted updated rules. Review the changes, then save and publish.');
     });
   }
   async function publish() {
@@ -174,6 +228,10 @@ export default function Training({
     });
   }
   const ready = project.trained_revision === project.revision;
+  // The live version and the two before it answer almost every "what changed?" question.
+  const versionPreview = 3;
+  const [allVersions, setAllVersions] = useState(false);
+  const shownVersions = allVersions ? versions : versions.slice(0, versionPreview);
   const checklist = [
     {
       done: sources.some((s) => s.kind === 'document' || s.kind === 'note'),
@@ -232,28 +290,29 @@ export default function Training({
         </Badge>
       </div>
       {error && <Alert>{error}</Alert>}
-      <div className="training-status">
-        <div className="training-status-icon">
-          <BookOpen size={23} />
+      {!ready && (
+        <div className="training-status">
+          <div className="training-status-icon">
+            <BookOpen size={23} />
+          </div>
+          <div>
+            <strong>
+              {ready
+                ? 'Your project training is ready.'
+                : project.active_version
+                  ? 'Your training has changed.'
+                  : 'Build and approve your training.'}
+            </strong>
+            <p>
+              {ready
+                ? 'Each analysis uses this approved version and retains its original source context.'
+                : project.active_version
+                  ? 'Publish a new version to qualify with your latest context. Existing results are flagged for requalification.'
+                  : 'Add sources, review the rules, then publish. You stay in control of what qualifies a lead.'}
+            </p>
+          </div>
         </div>
-        <div>
-          <strong>
-            {ready
-              ? 'Your project training is ready.'
-              : project.active_version
-                ? 'Your training has changed.'
-                : 'Build and approve your training.'}
-          </strong>
-          <p>
-            {ready
-              ? 'Each analysis uses this approved version and retains its original source context.'
-              : project.active_version
-                ? 'Publish a new version to qualify with your latest context. Existing results are flagged for requalification.'
-                : 'Add sources, review the rules, then publish. You stay in control of what qualifies a lead.'}
-          </p>
-        </div>
-        {ready && <CheckCircle2 size={25} className="green" />}
-      </div>
+      )}
       <div className="training-layout">
         <div>
           <section className="panel">
@@ -288,6 +347,14 @@ export default function Training({
                 <Plus size={16} />
                 Write notes
               </button>
+              <button
+                className="button secondary"
+                disabled={!!busy}
+                onClick={() => setMode('template')}
+              >
+                <ClipboardList size={16} />
+                Add criteria document
+              </button>
               <input
                 ref={fileRef}
                 className="visually-hidden"
@@ -297,17 +364,34 @@ export default function Training({
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   e.target.value = '';
+                  if (file && file.size > 5_000_000) {
+                    setError(
+                      file.name +
+                        ' was not uploaded: it is larger than 5 MB. Split it or export the text, then upload it again.',
+                    );
+                    return;
+                  }
                   if (file)
                     void perform('upload', async () => {
                       const data = new FormData();
                       data.set('file', file);
                       data.set('revision', String(project.revision));
-                      await api(base + '/sources/upload', {
-                        method: 'POST',
-                        body: data,
-                      });
-                      onChange();
-                      notify('Document attached and text extracted.');
+                      try {
+                        const source = await api<Source>(base + '/sources/upload', {
+                          method: 'POST',
+                          body: data,
+                        });
+                        onChange();
+                        notify(
+                          source.title +
+                            ' uploaded and read: ' +
+                            source.content.length.toLocaleString() +
+                            ' characters.',
+                        );
+                      } finally {
+                        // A refused upload is logged too, so the library can say why.
+                        setUploadsKey((n) => n + 1);
+                      }
                     });
                 }}
               />
@@ -335,9 +419,16 @@ export default function Training({
                           ? 'Website snapshot'
                           : source.kind === 'document'
                             ? 'Training document'
-                            : 'Research notes'}{' '}
-                        · {source.content.length.toLocaleString()} characters
+                            : 'Research notes'}
                       </small>
+                      <SourceStatus
+                        source={source}
+                        upload={uploads.find(
+                          (item) => item.source_id === source.id && item.status === 'READ',
+                        )}
+                        publishedHashes={publishedHashes}
+                        activeVersion={project.active_version}
+                      />
                       <span className="source-date">Added {date(source.created_at)}</span>
                     </div>
                     <button
@@ -358,6 +449,7 @@ export default function Training({
                 research brief.
               </Empty>
             )}
+            <UploadProblems uploads={uploads} sources={sources} />
             <div className="source-library-footer">
               <Globe size={15} />
               <ExternalLink url={project.website} />
@@ -366,29 +458,31 @@ export default function Training({
               </button>
             </div>
           </section>
-          <section className="panel training-checklist">
-            <div className="section-title">
-              <h2>Ready to qualify?</h2>
-              <ShieldCheckIcon />
-            </div>
-            {checklist.map((item) => (
-              <div className={'checklist-row ' + (item.done ? 'complete' : '')} key={item.text}>
-                {item.done ? <CheckCircle2 size={18} /> : <span className="empty-check" />}
-                <span>{item.text}</span>
+          {!ready && (
+            <section className="panel training-checklist">
+              <div className="section-title">
+                <h2>Ready to qualify?</h2>
+                <ShieldCheckIcon />
               </div>
-            ))}
-            <p className="fine-print">
-              Publishing saves a version of your sources and rules. Future changes will require a
-              new version.
-            </p>
-          </section>
+              {checklist.map((item) => (
+                <div className={'checklist-row ' + (item.done ? 'complete' : '')} key={item.text}>
+                  {item.done ? <CheckCircle2 size={18} /> : <span className="empty-check" />}
+                  <span>{item.text}</span>
+                </div>
+              ))}
+              <p className="fine-print">
+                Publishing saves a version of your sources and rules. Future changes will require a
+                new version.
+              </p>
+            </section>
+          )}
           <section className="panel versions">
             <div className="section-title">
               <h2>Training versions</h2>
               <History size={18} />
             </div>
             {versions.length ? (
-              versions.map((version) => (
+              shownVersions.map((version) => (
                 <button
                   key={version.version}
                   className="version-row"
@@ -414,6 +508,20 @@ export default function Training({
               ))
             ) : (
               <p className="muted">Your first published version will appear here.</p>
+            )}
+            {versions.length > versionPreview && (
+              <button
+                type="button"
+                className="text-button versions-toggle"
+                onClick={() => setAllVersions((current) => !current)}
+              >
+                {allVersions
+                  ? 'Show fewer versions'
+                  : 'Show ' +
+                    (versions.length - versionPreview) +
+                    ' earlier version' +
+                    (versions.length - versionPreview === 1 ? '' : 's')}
+              </button>
             )}
             {analyses.length > 0 && (
               <details>
@@ -448,8 +556,8 @@ export default function Training({
             <Sparkles size={21} />
           </div>
           <p className="muted">
-            Analyze your sources to draft rules, or write them yourself. Review every rule before
-            publishing.
+            Train AI reads every source and drafts updated rules, or write them yourself. Nothing
+            is used for qualification until you approve and publish it.
           </p>
           {project.pending_feedback_count > 0 && (
             <div className="inline-notice">
@@ -459,30 +567,50 @@ export default function Training({
                   {project.pending_feedback_count} lead correction
                   {project.pending_feedback_count === 1 ? '' : 's'} waiting.
                 </strong>{' '}
-                Analyzing now rewrites the criteria and exclusions around this feedback. Publishing
+                Train AI rewrites the criteria and exclusions around this feedback. Publishing
                 applies it to future research.
               </span>
             </div>
           )}
           <button
-            className="button analyze-button"
+            className="button analyze-button train-ai-button"
             disabled={!!busy || !sources.length}
             onClick={analyze}
+            title="Reads every source and drafts updated rules. Publishing stays your decision."
           >
             {busy === 'analyze' ? (
-              <Spinner text="Analyzing your training…" />
+              <Spinner text="Training on your sources…" />
             ) : (
               <>
                 <Sparkles size={17} />
-                Analyze training sources
+                Train AI
                 <ArrowRight size={16} />
               </>
             )}
           </button>
+          {trained && dirty && <TrainedNotice version={project.active_version} />}
+          {published && project.active_version && (
+            <TrainingDiff
+              published={published.rubric}
+              version={project.active_version}
+              draft={{
+                summary: editor.summary,
+                criteria: lines(editor.criteria),
+                exclusions: lines(editor.exclusions),
+              }}
+            />
+          )}
+          <button
+            type="button"
+            className="text-button graph-link"
+            onClick={() => graphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            See the graph view
+          </button>
           <form onSubmit={save} className="form-stack">
             <label>
               Business context & ideal customer
-              <textarea
+              <GrowingTextarea
                 rows={5}
                 value={editor.summary}
                 onChange={(e) => update('summary', e.target.value)}
@@ -496,7 +624,7 @@ export default function Training({
               <small>
                 One criterion per line. Each criterion contributes equally to the fit score.
               </small>
-              <textarea
+              <GrowingTextarea
                 rows={7}
                 value={editor.criteria}
                 onChange={(e) => update('criteria', e.target.value)}
@@ -507,7 +635,7 @@ export default function Training({
             <label>
               Exclusion rules
               <small>One exclusion per line. A supported exclusion can disqualify a lead.</small>
-              <textarea
+              <GrowingTextarea
                 rows={6}
                 value={editor.exclusions}
                 onChange={(e) => update('exclusions', e.target.value)}
@@ -517,7 +645,7 @@ export default function Training({
             <label>
               Open questions
               <small>Resolve these questions, then remove them before publishing.</small>
-              <textarea
+              <GrowingTextarea
                 rows={3}
                 value={editor.questions}
                 onChange={(e) => update('questions', e.target.value)}
@@ -540,57 +668,113 @@ export default function Training({
               </button>
             </div>
           </form>
-          <div className="publish-box">
-            <div>
-              <strong>
-                {ready
-                  ? 'Training v' + project.active_version + ' is published'
-                  : 'Approve this training version'}
-              </strong>
-              <p>
-                {ready
-                  ? 'Every qualification runs against this version until you publish another.'
-                  : dirty
-                    ? 'Save your draft before publishing.'
-                    : blocker ||
-                      'Confirm that the sources and rules reflect how this project should qualify leads.'}
-              </p>
+          {ready && !dirty ? (
+            <div className="publish-box is-live">
+              <CheckCircle2 size={20} />
+              <div>
+                <strong>Training v{project.active_version} is live</strong>
+                <p>
+                  Every qualification runs against this version. Edit the rules and save to prepare
+                  the next one.
+                </p>
+              </div>
             </div>
-            {!ready && openQuestions > 0 && (
+          ) : (
+            <div className="publish-box">
+              <div>
+                <strong>{ready ? 'Unsaved changes' : 'Approve this training version'}</strong>
+                <p>
+                  {ready
+                    ? 'Save your changes to start a new version, then review and publish it.'
+                    : dirty
+                      ? 'Save your draft before publishing.'
+                      : blocker ||
+                        'Confirm that the sources and rules reflect how this project should qualify leads.'}
+                </p>
+              </div>
+              {!ready && openQuestions > 0 && (
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={!!busy}
+                  onClick={resolveQuestions}
+                >
+                  {busy === 'save' ? (
+                    <Spinner />
+                  ) : (
+                    <>
+                      <CheckCircle2 size={15} />
+                      Mark resolved &amp; clear
+                    </>
+                  )}
+                </button>
+              )}
               <button
-                className="button secondary"
-                type="button"
-                disabled={!!busy}
-                onClick={resolveQuestions}
+                className="button primary"
+                disabled={!!busy || dirty || ready || !checklist.every((c) => c.done)}
+                onClick={publish}
               >
-                {busy === 'save' ? (
+                {busy === 'publish' ? (
                   <Spinner />
                 ) : (
                   <>
-                    <CheckCircle2 size={15} />
-                    Mark resolved &amp; clear
+                    <CheckCircle2 size={16} />
+                    Approve &amp; publish
                   </>
                 )}
               </button>
-            )}
-            <button
-              className="button primary"
-              disabled={!!busy || dirty || ready || !checklist.every((c) => c.done)}
-              onClick={publish}
-            >
-              {busy === 'publish' ? (
-                <Spinner />
-              ) : (
-                <>
-                  <CheckCircle2 size={16} />
-                  {ready ? 'Published' : 'Approve & publish'}
-                </>
-              )}
-            </button>
-          </div>
+            </div>
+          )}
         </section>
       </div>
-      {mode && (
+      <section className="panel training-graph-panel" ref={graphRef} aria-labelledby="graph-title">
+        <div className="section-title">
+          <div>
+            <span className="eyebrow">GRAPH VIEW</span>
+            <h2 id="graph-title">How the training connects</h2>
+          </div>
+        </div>
+        <p className="muted">
+          {dirty
+            ? 'Your sources, the draft rules in the editor, and how the leads qualified on the published version came out on each rule.'
+            : 'Your sources, the rules, and how the leads qualified on the published version came out on each rule.'}
+        </p>
+        <TrainingGraphView
+          sources={sources}
+          graph={graph}
+          draft={{
+            summary: editor.summary,
+            criteria: lines(editor.criteria),
+            exclusions: lines(editor.exclusions),
+          }}
+        />
+      </section>
+      {mode === 'template' && (
+        <CriteriaTemplatePicker
+          busy={!!busy}
+          error={error}
+          onClose={() => setMode(null)}
+          onAdd={(template) =>
+            void perform('template', async () => {
+              try {
+                const source = await api<Source>(base + '/sources/template', {
+                  method: 'POST',
+                  body: json({ template, revision: project.revision }),
+                });
+                setMode(null);
+                onChange();
+                notify(
+                  source.title +
+                    ' added to the source library. Run Train AI to turn it into draft rules.',
+                );
+              } finally {
+                setUploadsKey((n) => n + 1);
+              }
+            })
+          }
+        />
+      )}
+      {(mode === 'note' || mode === 'website') && (
         <SourceForm
           mode={mode}
           website={project.website}

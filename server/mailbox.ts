@@ -12,6 +12,7 @@ import {
 } from './imap';
 import { HttpError, positiveId } from './validation';
 import { notifyLead } from './workspace';
+import { applyIncomingBounce } from './bounces';
 import type { IncomingSettings, MailFolder, MailRow } from '../shared/mailbox';
 import type { Project, User } from '../shared/types';
 
@@ -159,14 +160,24 @@ export function createMailbox(options: {
       AND outreach_status IN ('NOT_CONTACTED','CONTACTED')
       AND NOT EXISTS(SELECT 1 FROM outreach_events e WHERE e.project_id=? AND e.lead_id=? AND e.outcome!='REPLIED' AND e.created_at>?)`,
     ).run(projectId, leadId, projectId, leadId, mail.received_at);
+    // A funnel whose author turned "stop when the lead replies" off keeps going; every other
+    // sequence that is still due to reach this address stops.
+    const stops = `AND EXISTS (SELECT 1 FROM funnels f WHERE f.id=funnel_enrollments.funnel_id
+      AND f.project_id=funnel_enrollments.project_id AND f.stop_on_reply=1)`;
     db.prepare(
-      `UPDATE funnel_enrollments SET status='REPLIED',reason='An incoming reply was received.',updated_at=?
-      WHERE project_id=? AND lead_id=? AND recipient=? AND status IN ('QUEUED','SENDING') AND created_at<=?`,
+      `UPDATE funnel_enrollments SET status='REPLIED',reason='An incoming reply was received.',stop_cause='REPLIED',updated_at=?
+      WHERE project_id=? AND lead_id=? AND recipient=? AND status IN ('QUEUED','SENDING') AND created_at<=? ${stops}`,
     ).run(now(), projectId, leadId, mail.from_email, mail.received_at);
     db.prepare(
-      `UPDATE funnel_enrollments SET status='STOPPED',reason='Recipient response received.',updated_at=?
-      WHERE recipient=? AND status IN ('QUEUED','SENDING') AND created_at<=?`,
+      `UPDATE funnel_enrollments SET status='STOPPED',reason='Recipient response received.',stop_cause='REPLIED',updated_at=?
+      WHERE recipient=? AND status IN ('QUEUED','SENDING') AND created_at<=? ${stops}`,
     ).run(now(), mail.from_email, mail.received_at);
+    // "If the lead responds, no further follow-ups": a reply from anyone at the company stops
+    // the sequences to the other people there as well, under the same stop-on-reply option.
+    db.prepare(
+      `UPDATE funnel_enrollments SET status='STOPPED',reason='Someone at this company replied, so the follow-ups stopped.',stop_cause='REPLIED',updated_at=?
+      WHERE project_id=? AND lead_id=? AND status IN ('QUEUED','SENDING') AND created_at<=? ${stops}`,
+    ).run(now(), projectId, leadId, mail.received_at);
     notifyLead(db, projectId, leadId, 'email', 'New email reply received');
   }
   async function runSync(projectId: number) {
@@ -242,6 +253,12 @@ export function createMailbox(options: {
             );
           if (!inserted.changes) continue;
           received++;
+          // A delivery-failure report is not a reply: it removes the bounced address from
+          // every sequence instead, and is filed with the lead it was about.
+          if (mail.bounce?.permanent) {
+            applyIncomingBounce(db, projectId, Number(inserted.lastInsertRowid), mail);
+            continue;
+          }
           // Match an app-generated unpredictable Message-ID AND its original recipient. No guessed contact matching.
           const matches = new Map<string, { project_id: number; lead_id: number }>();
           for (const reference of mail.references) {

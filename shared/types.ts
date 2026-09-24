@@ -27,6 +27,12 @@ export interface Rubric {
   exclusions: string[];
   questions: string[];
 }
+/** A qualification criteria document a project can add to its library (server/criteria-templates.ts). */
+export interface CriteriaTemplate {
+  id: string;
+  title: string;
+  summary: string;
+}
 export interface Project {
   id: number;
   name: string;
@@ -99,6 +105,8 @@ export interface Qualification {
   gaps: string[];
   next_steps: string[];
   outreach: Outreach;
+  /** The research pass that ran (or was reused) before this evaluation. */
+  research?: import('./research').QualificationResearch;
 }
 export interface Evidence {
   id: string;
@@ -166,6 +174,10 @@ export interface Lead {
   reviews?: Review[];
   feedback?: LeadFeedback[];
   calls?: CallLog[];
+  /** Manual CRM layer (shared/crm.ts); never part of the qualification. */
+  pipeline_status?: import('./crm').PipelineStatus;
+  pipeline_changes?: import('./crm').PipelineChange[];
+  comments?: import('./crm').LeadComment[];
   emails?: EmailMessage[];
   outreach_status?: string;
   campaigns?: Array<
@@ -182,9 +194,21 @@ export interface Lead {
     created_at: string;
     created_by: string;
   }>;
+  /** Archived leads are hidden from the default lists and can be restored; nothing is deleted. */
+  archived_at?: string | null;
+  archived_reason?: string;
+  archived_by?: string;
 }
 export type CallOutcome =
-  'CONNECTED' | 'NO_ANSWER' | 'CALLBACK' | 'NOT_INTERESTED' | 'WRONG_CONTACT' | 'MEETING_BOOKED';
+  | 'CONNECTED'
+  | 'NO_ANSWER'
+  | 'CALLBACK'
+  | 'NOT_INTERESTED'
+  | 'WRONG_CONTACT'
+  | 'MEETING_BOOKED'
+  // Added for the Calls page; the order and labels live in shared/calls.ts.
+  | 'INTERESTED'
+  | 'FOLLOW_UP';
 /** A logged call attempt against an assigned lead. Append-only. */
 export interface CallLog {
   id: number;
@@ -192,6 +216,8 @@ export interface CallLog {
   lead_id: number;
   outcome: CallOutcome;
   notes: string;
+  /** YYYY-MM-DD for a call-back or follow-up; null otherwise and on older entries. */
+  next_action_at?: string | null;
   created_by: string;
   created_at: string;
 }
@@ -272,6 +298,13 @@ export interface ResearchOutcome {
   refused: Array<{ field: ResearchableField; value: string; reason: string }>;
   notes: string[];
   applied?: ResearchableField[];
+  /** People the company's own pages name, each kept only with a sentence that names them. */
+  contacts?: import('./research').ContactFinding[];
+  contacts_added?: number;
+  /** Sentences from the site that bear on the qualification rules. */
+  facts?: import('./research').ResearchFact[];
+  /** The company pages that were read. */
+  pages?: string[];
 }
 /** One project's mailbox. The password is never returned to the browser. */
 export interface EmailSettings {
@@ -308,6 +341,8 @@ export interface EmailTemplate {
   subject: string;
   preview_text: string;
   blocks: EmailBlock[];
+  /** The body as the rich-text editor opens it (converted from blocks when needed). */
+  html?: string;
 }
 /** One outbound email, logged whether it was accepted or refused. */
 export interface EmailMessage {

@@ -1,0 +1,174 @@
+/* A researched contact's campaigns, under their row on the "People at this company" card. */
+.contact-campaigns {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.contact-campaign-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.contact-campaign-status li {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #eef3e4;
+  color: #36592b;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.contact-campaign-status li strong {
+  font-weight: 650;
+}
+.contact-campaign-status li.is-replied,
+.contact-campaign-status li.is-interested,
+.contact-campaign-status li.is-converted {
+  background: #e3eef6;
+  color: #2f4f67;
+}
+.contact-campaign-status li.is-stopped,
+.contact-campaign-status li.is-blocked,
+.contact-campaign-status li.is-unsubscribed {
+  background: #f5efe4;
+  color: #7a5a22;
+}
+.contact-campaign-status li.is-completed {
+  background: #f0f2ec;
+  color: #5b6458;
+}
+.contact-campaign-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.contact-campaign-none {
+  font-size: 11px;
+  color: var(--muted);
+}
+.contact-campaign-panel {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcf8;
+}
+.contact-campaign-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+.contact-campaign-panel .muted {
+  margin: 0;
+  font-size: 12px;
+}
+.contact-campaign-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 8px;
+}
+.contact-campaign-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 400;
+}
+.contact-campaign-option.is-selected {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(49, 90, 63, 0.1);
+}
+.contact-campaign-option.is-blocked {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+/* The global text-input rule would otherwise give the radio a text field's width and border. */
+.contact-campaign-options .contact-campaign-option input[type='radio'] {
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: #567845;
+}
+.contact-campaign-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.contact-campaign-option strong {
+  font-size: 13px;
+}
+.contact-campaign-option small {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.contact-campaign-option small.contact-campaign-blocked {
+  color: #8a6a24;
+}
+.contact-campaign-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.contact-campaign-joined {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: #2f4a2c;
+}
+.contact-campaign-joined > svg {
+  flex: none;
+  margin-top: 2px;
+  color: #3f7a3a;
+}
+.contact-campaign-joined p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.contact-campaign-joined p.muted {
+  font-size: 12px;
+}
+.contact-campaign-joined ol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.contact-campaign-joined li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.contact-campaign-error {
+  margin: 0;
+  font-size: 12px;
+  color: #8d4a41;
+}

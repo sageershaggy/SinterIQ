@@ -9,8 +9,13 @@ import { installAuth, adminOnly } from './auth';
 import { createOutreach, installUnsubscribe } from './outreach';
 import { createFunnels } from './funnels';
 import { createMailbox } from './mailbox';
-import { messageIds, type ReadInbox } from './imap';
-import { installWorkspace, notifyLead, savedDraft } from './workspace';
+import type { ReadInbox } from './imap';
+import { installWorkspace, notifyLead } from './workspace';
+import { installNotifications, notifyProject } from './notifications';
+import { installResearchLog, recordResearchPass } from './research-log';
+import { installCompose } from './compose';
+import { installEmailFiles } from './email-files';
+import { installArchive } from './archive';
 import { fetchWebsite, checkedUrl } from './network';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
@@ -30,7 +35,17 @@ import {
   isOpenRouterBase,
   DEFAULT_JEV_MODEL,
 } from './decisions';
-import { researchMissing, researchableFields } from './enrich';
+import { installCalls, recordCall } from './calls';
+import { installCrm, leadCrm } from './crm';
+import {
+  facetWhere,
+  installLeadFilters,
+  leadFacetShape,
+  leadOrder,
+  leadSummary,
+} from './lead-filters';
+import { createLeadResearch } from './lead-research';
+import { createTrainingLibrary } from './training-library';
 import {
   HttpError,
   positiveId,
@@ -41,29 +56,17 @@ import {
   feedbackSchema,
   callSchema,
   emailSettingsSchema,
-  emailSendSchema,
   requiredText,
   text,
   webUrl,
 } from './validation';
 import { readImportRows, mapImportRows } from './import';
-import {
-  applyMerge,
-  blocksSchema,
-  validateBlocks,
-  checkBlocks,
-  mergeFields,
-  renderBlocks,
-  mergeContext,
-} from './email-blocks';
-import { emailTemplates, templateCategories } from './email-templates';
+import { criteriaTemplate, listCriteriaTemplates } from './criteria-templates';
 import {
   assertAddress,
   assertMailHost,
-  draftFor,
   getEmailConfig,
   publicEmailSettings,
-  renderEmail,
   saveEmailConfig,
   sendMail,
   type Send,
@@ -72,7 +75,6 @@ import { nextStepFor, nextStepBands, leadStatusFilters } from '../shared/types';
 import type {
   Lead,
   Project,
-  ResearchableField,
   Source,
   TrainingSnapshot,
   Evidence,
@@ -88,9 +90,9 @@ const projectSelect = `SELECT p.*,
   (SELECT COUNT(*) FROM sources WHERE project_id=p.id) source_count,
   (SELECT COUNT(*) FROM project_members WHERE project_id=p.id) member_count,
   (SELECT COUNT(*) FROM lead_feedback WHERE project_id=p.id AND applied_version IS NULL) pending_feedback_count,
-  (SELECT COUNT(*) FROM leads WHERE project_id=p.id) lead_count,
-  (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND status='QUALIFIED' AND training_version=p.active_version AND qualified_revision=revision AND p.trained_revision=p.revision) qualified_count,
-  (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND (status IN ('UNREVIEWED','NEEDS_REVIEW') OR training_version IS NOT p.active_version OR qualified_revision IS NOT revision OR p.trained_revision IS NOT p.revision)) review_count
+  (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND archived_at IS NULL) lead_count,
+  (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND archived_at IS NULL AND status='QUALIFIED' AND training_version=p.active_version AND qualified_revision=revision AND p.trained_revision=p.revision) qualified_count,
+  (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND archived_at IS NULL AND (status IN ('UNREVIEWED','NEEDS_REVIEW') OR training_version IS NOT p.active_version OR qualified_revision IS NOT revision OR p.trained_revision IS NOT p.revision)) review_count
   FROM projects p`;
 const serializeProject = (row: Record<string, unknown>) => {
   const { rubric_json, ...rest } = row;
@@ -169,6 +171,11 @@ export const leadQuerySchema = z.object({
   search: text(200).default(''),
   status: z.enum(leadStatusFilters).default('ALL'),
   assigned_to: z.enum(['any', 'me']).default('any'),
+  // The Filters panel: qualification, fit score, calls, industry, location, assignee, lead
+  // status, research, date added and the sort order (server/lead-filters.ts).
+  ...leadFacetShape,
+  // Archived leads are hidden from every default list; 'only' lists them for restoring.
+  archived: z.enum(['exclude', 'only']).default('exclude'),
 });
 /**
  * One filter definition, shared by the lead list and the CSV export so both agree.
@@ -177,6 +184,7 @@ export const leadQuerySchema = z.object({
 function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, viewerId: number) {
   let where = 'l.project_id=?';
   const params: (string | number)[] = [project.id];
+  where += input.archived === 'only' ? ' AND l.archived_at IS NOT NULL' : ' AND l.archived_at IS NULL';
   if (input.search) {
     where +=
       " AND (l.name LIKE ? ESCAPE '\\' OR l.industry LIKE ? ESCAPE '\\' OR l.country LIKE ? ESCAPE '\\' OR l.city LIKE ? ESCAPE '\\' OR l.contact_name LIKE ? ESCAPE '\\')";
@@ -237,6 +245,7 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, vi
     where += ' AND l.assigned_to=?';
     params.push(viewerId);
   }
+  where += facetWhere(project, input, params);
   return { where, params };
 }
 const fieldLabels: Record<string, string> = {
@@ -403,8 +412,29 @@ export function createApp(options: {
   installUnsubscribe(app, db);
   installAuth(app, db, production);
   installWorkspace(app, db, getProject);
+  installLeadFilters(app, {
+    db,
+    getProject,
+    scope: (project, user) => leadFilter(project, leadQuerySchema.parse({}), user.id),
+  });
+  installNotifications(app, db);
+  installResearchLog(app, db, getProject);
   funnels.install(app);
   mailbox.install(app);
+  installCalls(app, db, getProject);
+  installCrm(app, db, getProject);
+  const leadResearch = createLeadResearch({
+    db,
+    getProject,
+    generate: callAi,
+    fetchPage: readWebsite,
+  });
+  leadResearch.install(app);
+  const trainingLibrary = createTrainingLibrary({ db, getProject });
+  trainingLibrary.install(app);
+  installEmailFiles(app, { db, getProject });
+  installCompose(app, { db, secrets, getProject, getLead, outreach, funnels, generate: callAi });
+  installArchive(app, { db, getProject });
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -601,6 +631,46 @@ export function createApp(options: {
         ),
       );
   });
+  /** The qualification criteria documents a project can start from (docs/qualification-criteria). */
+  app.get('/api/criteria-templates', (_req, res) => {
+    res.json(listCriteriaTemplates());
+  });
+  /**
+   * Adds a criteria template to the library as an ordinary training document, logged like an
+   * upload. It proposes nothing by itself: Train AI turns it into draft rules to publish.
+   */
+  app.post('/api/projects/:projectId/sources/template', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const input = z
+      .object({ template: z.string().trim().max(80), revision: z.number().int().positive() })
+      .strict()
+      .parse(req.body);
+    assertRevision(project.revision, input.revision);
+    const template = criteriaTemplate(input.template);
+    if (!template) throw new HttpError(404, 'That criteria template does not exist.');
+    const filename = template.id + '.md';
+    const source = addSource(
+      project,
+      {
+        kind: 'document',
+        title: 'Qualification criteria · ' + template.title,
+        filename,
+        original: Buffer.from(template.content, 'utf8'),
+        content: template.content,
+        mime: 'text/markdown',
+      },
+      req.user.name,
+    ) as { id: number };
+    trainingLibrary.recordUpload({
+      projectId: project.id,
+      filename,
+      size: Buffer.byteLength(template.content),
+      actor: req.user.name,
+      sourceId: source.id,
+      content: template.content,
+    });
+    res.status(201).json(source);
+  });
   app.post(
     '/api/projects/:projectId/sources/upload',
     fileLimit,
@@ -609,10 +679,19 @@ export function createApp(options: {
       const project = getProject(db, positiveId(req.params.projectId), req.user);
       assertRevision(project.revision, req.body.revision);
       if (!req.file) throw new HttpError(400, 'Select a training document.');
-      const content = await single('document:' + req.user.id, () => readDocument(req.file!));
       const filename = req.file.originalname.replace(/[^\p{L}\p{N} ._-]/gu, '_').slice(0, 180);
-      res.status(201).json(
-        addSource(
+      // Every attempt is logged, read or refused, so the library can show what happened to it.
+      const attempt = {
+        projectId: project.id,
+        filename,
+        size: req.file.size,
+        actor: req.user.name,
+      };
+      let content: string;
+      let source: { id: number };
+      try {
+        content = await single('document:' + req.user.id, () => readDocument(req.file!));
+        source = addSource(
           project,
           {
             kind: 'document',
@@ -623,8 +702,13 @@ export function createApp(options: {
             mime: 'application/octet-stream',
           },
           req.user.name,
-        ),
-      );
+        ) as { id: number };
+      } catch (error) {
+        trainingLibrary.recordUpload({ ...attempt, error });
+        throw error;
+      }
+      trainingLibrary.recordUpload({ ...attempt, sourceId: source.id, content });
+      res.status(201).json(source);
     },
   );
   app.post('/api/projects/:projectId/sources/website', expensiveLimit, async (req, res) => {
@@ -714,6 +798,7 @@ export function createApp(options: {
       'training.analyzed',
       'Proposed rules generated; approval required before use.',
     );
+    notifyProject(db, project.id, 'training_draft', 'New training draft ready for review');
     res.json({ rubric: result, revision: project.revision });
   });
   app.get('/api/projects/:projectId/training/analyses', (req, res) => {
@@ -770,6 +855,7 @@ export function createApp(options: {
         'training.published',
         'Version ' + version + ' approved for qualification.',
       );
+      notifyProject(db, project.id, 'training_published', 'Training v' + version + ' published');
     })();
     res.json(getProject(db, project.id));
   });
@@ -795,19 +881,30 @@ export function createApp(options: {
     const { count } = db
       .prepare('SELECT COUNT(*) count FROM leads l WHERE ' + where)
       .get(...params) as { count: number };
+    // A page past the end (a filter narrowed the list, or a lead was deleted) shows the last one.
+    const pages = Math.max(1, Math.ceil(count / input.page_size));
+    const page = Math.min(input.page, pages);
     const rows = db
       .prepare(
         'SELECT l.*,a.name assigned_to_name,(SELECT COUNT(*) FROM call_logs c WHERE c.lead_id=l.id) call_count' +
           ' FROM leads l LEFT JOIN accounts a ON a.id=l.assigned_to WHERE ' +
           where +
-          ' ORDER BY l.updated_at DESC,l.id DESC LIMIT ? OFFSET ?',
+          ' ORDER BY ' +
+          leadOrder(input.sort) +
+          ' LIMIT ? OFFSET ?',
       )
-      .all(...params, input.page_size, (input.page - 1) * input.page_size) as Lead[];
+      .all(...params, input.page_size, (page - 1) * input.page_size) as Lead[];
     res.json({
       leads: rows.map((row) => serializeLead(row, project)),
       total: count,
-      page: input.page,
+      page,
+      pages,
       page_size: input.page_size,
+      summary: leadSummary(
+        db,
+        project,
+        leadFilter(project, leadQuerySchema.parse({}), req.user.id),
+      ),
     });
   });
   app.post('/api/projects/:projectId/leads', (req, res) => {
@@ -933,6 +1030,13 @@ export function createApp(options: {
             problems.length +
             ' rows could not be read.',
         );
+        if (created || updated)
+          notifyProject(
+            db,
+            project.id,
+            'leads_imported',
+            `Leads imported: ${created} new, ${updated} updated`,
+          );
         return {
           updated,
           total: rows.length,
@@ -960,7 +1064,8 @@ export function createApp(options: {
       .prepare(
         'SELECT l.*,a.name assigned_to_name FROM leads l LEFT JOIN accounts a ON a.id=l.assigned_to WHERE ' +
           where +
-          ' ORDER BY l.name',
+          ' ORDER BY ' +
+          leadOrder(input.sort),
       )
       .all(...params) as Lead[];
     const cell = (value: unknown) => {
@@ -1099,6 +1204,7 @@ export function createApp(options: {
           'SELECT * FROM call_logs WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
         )
         .all(lead.id, project.id),
+      ...leadCrm(db, project.id, lead.id, req.user),
       emails: db
         .prepare(
           'SELECT * FROM email_messages WHERE lead_id=? AND project_id=? ORDER BY id DESC LIMIT 100',
@@ -1181,127 +1287,34 @@ export function createApp(options: {
       const config = getAiConfig(db, secrets);
       if (!config.api_key && !options.generate)
         throw new HttpError(409, 'Configure an AI provider in Settings first.');
-      return researchMissing({
-        lead,
-        config,
-        generate: options.generate || generate,
-        fetchPage: options.fetchWebsite,
-      });
+      // The pass, the gap-only write-back and the research log live in server/lead-research.ts.
+      return leadResearch.run({ project, lead, actor: req.user.name, origin: 'manual', config });
     });
-    const applied: ResearchableField[] = [];
-    const fieldSchemas = leadSchema.shape as Record<string, z.ZodTypeAny>;
-    if (outcome.proposals.length)
-      db.transaction(() => {
-        // Re-read inside the transaction. The pass spends real time on the network, and
-        // someone may have typed the very value we are about to write: research fills gaps,
-        // it never overwrites what a person entered.
-        const current = db
-          .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
-          .get(lead.id, project.id) as Record<string, string> | undefined;
-        if (!current) throw new HttpError(404, 'Lead not found in this project.');
-        const site = outcome.proposals.find((proposal) => proposal.field === 'website');
-        const clash = site
-          ? (db
-              .prepare(
-                "SELECT name FROM leads WHERE project_id=? AND id<>? AND website_key=? AND website_key<>''",
-              )
-              .get(project.id, lead.id, websiteKey(site.value)) as { name: string } | undefined)
-          : undefined;
-        if (clash) {
-          // The site belongs to another lead here, so this record is most likely a duplicate
-          // of that one. Nothing read from that page is written, not merely the address.
-          for (const proposal of outcome.proposals)
-            outcome.refused.push({
-              field: proposal.field,
-              value: proposal.value,
-              reason:
-                'That website already belongs to ' +
-                clash.name +
-                ' in this project, so this lead may be a duplicate of it. Nothing was saved.',
-            });
-          return;
-        }
-        for (const proposal of outcome.proposals) {
-          // The column name comes from this closed list, never from the response.
-          if (!researchableFields.includes(proposal.field)) continue;
-          if (String(current[proposal.field] ?? '').trim()) {
-            outcome.refused.push({
-              field: proposal.field,
-              value: proposal.value,
-              reason: 'This was filled in while the research was running, so it was left alone.',
-            });
-            continue;
-          }
-          // The same validator the edit form uses, so research can never write a value a
-          // person could not have typed, and the lead stays saveable afterwards.
-          const parsed = fieldSchemas[proposal.field]?.safeParse(proposal.value);
-          if (!parsed?.success) {
-            outcome.refused.push({
-              field: proposal.field,
-              value: proposal.value,
-              reason: 'The lead form would not accept that value, so it was not saved.',
-            });
-            continue;
-          }
-          const value = parsed.data as string;
-          if (proposal.field === 'website')
-            db.prepare('UPDATE leads SET website=?,website_key=? WHERE id=? AND project_id=?').run(
-              value,
-              websiteKey(value),
-              lead.id,
-              project.id,
-            );
-          else
-            db.prepare('UPDATE leads SET ' + proposal.field + '=? WHERE id=? AND project_id=?').run(
-              value,
-              lead.id,
-              project.id,
-            );
-          // Keep the provenance with the value, not only in this response.
-          db.prepare(
-            `INSERT INTO lead_research_citations
-              (project_id,lead_id,field,value,evidence,source_url,created_at,created_by)
-            VALUES (?,?,?,?,?,?,?,?)`,
-          ).run(
-            project.id,
-            lead.id,
-            proposal.field,
-            value,
-            proposal.evidence,
-            proposal.source_url,
-            now(),
-            req.user.name,
-          );
-          applied.push(proposal.field);
-        }
-        if (applied.length) {
-          db.prepare(
-            'UPDATE leads SET revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
-          ).run(now(), lead.id, project.id);
-          audit(
-            db,
-            project.id,
-            req.user.name,
-            'lead.researched',
-            'Filled ' + applied.join(', ') + ' for ' + lead.name + ' from ' + outcome.website + '.',
-          );
-        }
-      })();
-    res.json({ ...outcome, applied });
+    res.json(outcome);
   });
   app.post('/api/projects/:projectId/leads/:leadId/qualify', expensiveLimit, async (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const before = getLead(db, project, positiveId(req.params.leadId));
     if (!project.active_version || project.revision !== project.trained_revision)
       throw new HttpError(409, 'Publish the current project training before qualifying leads.');
     const version = db
       .prepare('SELECT snapshot_json FROM training_versions WHERE project_id=? AND version=?')
       .get(project.id, project.active_version) as { snapshot_json: string };
     const snapshot = JSON.parse(version.snapshot_json) as TrainingSnapshot;
-    const result = await single('lead:' + lead.id, async () => {
+    const result = await single('lead:' + before.id, async () => {
       const config = getAiConfig(db, secrets);
       if (!config.api_key && !options.generate)
         throw new HttpError(409, 'Configure an AI provider in Settings first.');
+      // Research before judging: a blank field is a reason to look, never evidence that the
+      // fact does not exist. The pass writes only what it proves, so the record is re-read.
+      const { research, facts } = await leadResearch.beforeQualification({
+        project,
+        lead: before,
+        actor: req.user.name,
+        config,
+      });
+      const lead = getLead(db, project, before.id);
+      const found = leadResearch.qualificationContext(project, lead, research, facts, 'E0');
       const evidence: Evidence[] = [
         {
           id: 'E1',
@@ -1309,12 +1322,9 @@ export function createApp(options: {
           title: 'User-provided lead record (unverified)',
           url: '',
           captured_at: now(),
-          content: JSON.stringify({
-            name: lead.name,
-            country: lead.country,
-            industry: lead.industry,
-            notes: lead.notes,
-          }),
+          // Only what was entered in the record. Details research found arrive separately,
+          // with the sentence and page each came from.
+          content: JSON.stringify({ name: lead.name, ...found.recordOnly, notes: lead.notes }),
         },
       ];
       const fetchFailures: string[] = [];
@@ -1353,9 +1363,24 @@ export function createApp(options: {
           captured_at: now(),
           content: previous,
         });
-      const qualified = await qualify(config, snapshot, lead, evidence, callAi);
+      if (found.evidence) evidence.push({ ...found.evidence, id: 'E' + (evidence.length + 1) });
+      const qualified = await qualify(config, snapshot, lead, evidence, callAi, {
+        research: found.context,
+        origin: found.origin,
+      });
       if (fetchFailures.length)
         qualified.next_steps.push('Some pages were unavailable: ' + fetchFailures.join(', '));
+      if (research) {
+        qualified.research = research;
+        // "Impossible to assess" is not an answer when nobody looked. When the website could
+        // not be verified, the result says what was checked, whatever the model wrote.
+        if (!research.website_found) {
+          const checked = research.checked.slice(0, 4).join(' ');
+          qualified.summary +=
+            ' Research before this evaluation could not verify a company website. ' + checked;
+          qualified.gaps.push('Research checked: ' + checked);
+        }
+      }
       return db.transaction(() => {
         const current = getProject(db, project.id),
           currentLead = getLead(db, current, lead.id);
@@ -1603,20 +1628,7 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
     const input = callSchema.parse(req.body);
-    const id = Number(
-      db
-        .prepare(
-          'INSERT INTO call_logs (project_id,lead_id,outcome,notes,created_by,created_at) VALUES (?,?,?,?,?,?)',
-        )
-        .run(project.id, lead.id, input.outcome, input.notes, req.user.name, now()).lastInsertRowid,
-    );
-    db.prepare('UPDATE leads SET updated_at=? WHERE id=? AND project_id=?').run(
-      now(),
-      lead.id,
-      project.id,
-    );
-    audit(db, project.id, req.user.name, 'lead.call_logged', lead.name + ': ' + input.outcome);
-    notifyLead(db, project.id, lead.id, 'call', 'Call recorded for ' + lead.name);
+    const id = recordCall(db, project, lead, input, req.user.name);
     res.status(201).json({ id });
   });
   /**
@@ -1962,179 +1974,6 @@ export function createApp(options: {
       res.json({ ok: true, sent_to: config.from_email });
     },
   );
-  /** The draft a researcher edits before sending, built from the approved qualification. */
-  app.get('/api/projects/:projectId/leads/:leadId/email/draft', (req, res) => {
-    const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
-    const run = lead.latest_run_id
-      ? (db
-          .prepare('SELECT result_json FROM qualification_runs WHERE id=? AND project_id=?')
-          .get(lead.latest_run_id, project.id) as { result_json: string } | undefined)
-      : undefined;
-    const result = run ? JSON.parse(run.result_json) : undefined;
-    res.json({
-      ...draftFor(lead, result?.outreach?.why_qualified || '', result?.outreach?.call_script || ''),
-      to: lead.contact_email,
-      saved: savedDraft(db, project.id, lead.id, req.user.id),
-      mailbox: (() => {
-        const config = getEmailConfig(db, secrets, project.id);
-        return {
-          configured: config.configured,
-          from_email: config.from_email,
-          from_name: config.from_name,
-        };
-      })(),
-    });
-  });
-  app.post('/api/projects/:projectId/leads/:leadId/email', mailLimit, async (req, res) => {
-    const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
-    const input = emailSendSchema.parse(req.body);
-    const config = getEmailConfig(db, secrets, project.id);
-    if (!config.configured)
-      throw new HttpError(
-        409,
-        'This project has no mailbox yet. An administrator sets one up in the project Mailbox settings.',
-      );
-    // One header-safe recipient per request. Bulk sending is a separate, throttled path.
-    const to = assertAddress(input.to, 'The recipient address');
-    let inReplyTo: string | undefined;
-    if (input.reply_to_message_id) {
-      const incoming = db
-        .prepare(
-          'SELECT internet_message_id,from_email FROM incoming_messages WHERE project_id=? AND lead_id=? AND id=?',
-        )
-        .get(project.id, lead.id, input.reply_to_message_id) as
-        { internet_message_id: string; from_email: string } | undefined;
-      if (!incoming) throw new HttpError(404, 'Reply message not found for this lead.');
-      if (incoming.from_email.toLowerCase() !== to.toLowerCase())
-        throw new HttpError(400, 'Send this reply to the original sender.');
-      inReplyTo = messageIds(incoming.internet_message_id)[0];
-    }
-    // The subject carries merge fields too. A template subject is the most visible place
-    // an unresolved {{company}} would surface, so it is merged like the body.
-    const mergedSubject = applyMerge(
-      input.subject.replace(/[\r\n]+/g, ' ').trim(),
-      mergeContext(lead, config.from_name || req.user.name),
-    );
-    if (mergedSubject.missing.length)
-      throw new HttpError(400, 'Fill missing subject fields: ' + mergedSubject.missing.join(', '));
-    const subject = mergedSubject.merged;
-    // The editor sends a block document; a quick note sends plain text.
-    const built = input.blocks
-      ? (() => {
-          const { blocks, problems } = validateBlocks(input.blocks);
-          if (problems.length) throw new HttpError(400, problems[0].message);
-          if (!blocks.length) throw new HttpError(400, 'Add at least one block before sending.');
-          const rendered = renderBlocks(blocks, {
-            context: mergeContext(lead, config.from_name || req.user.name),
-            fromName: config.from_name,
-            fromEmail: config.from_email,
-            signature: config.signature,
-            previewText: input.preview_text,
-            includeFooter: false,
-          });
-          if (rendered.missingMergeFields.length)
-            throw new HttpError(
-              400,
-              'Fill missing message fields: ' + rendered.missingMergeFields.join(', '),
-            );
-          return { html: rendered.html, text: rendered.text };
-        })()
-      : (() => {
-          if (input.body.trim().length < 20)
-            throw new HttpError(400, 'Write a message of at least 20 characters.');
-          const body = applyMerge(
-            input.body,
-            mergeContext(lead, config.from_name || req.user.name),
-          );
-          if (body.missing.length)
-            throw new HttpError(400, 'Fill missing message fields: ' + body.missing.join(', '));
-          return {
-            html: renderEmail({
-              body: body.merged,
-              fromName: config.from_name,
-              fromEmail: config.from_email,
-              signature: config.signature,
-              leadName: lead.name,
-              includeFooter: false,
-            }),
-            text: body.merged,
-          };
-        })();
-    const id = await outreach.send({
-      projectId: project.id,
-      leadId: lead.id,
-      actor: req.user.name,
-      config,
-      to,
-      subject,
-      text: built.text,
-      html: built.html,
-      inReplyTo,
-      beforeSend: () => {
-        const account = db
-          .prepare('SELECT id,username,name,role FROM accounts WHERE id=? AND active=1')
-          .get(req.user.id) as User | undefined;
-        if (!account) throw new HttpError(409, 'Your account is no longer active.');
-        getProject(db, project.id, account);
-        const current = getLead(db, project, lead.id);
-        if (current.revision !== lead.revision)
-          throw new HttpError(409, 'Lead details changed. Review the message again.');
-      },
-    });
-    res.status(201).json({ id });
-  });
-  /** Starter templates for the editor, grouped the way the picker shows them. */
-  app.get('/api/email/templates', (_req, res) =>
-    res.json({
-      templates: emailTemplates,
-      categories: templateCategories,
-      merge_fields: mergeFields,
-    }),
-  );
-  /** Renders a block document for the desktop/mobile preview, and returns the pre-send checks. */
-  app.post('/api/projects/:projectId/leads/:leadId/email/preview', (req, res) => {
-    const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
-    const input = z
-      .object({
-        subject: text(200).default(''),
-        preview_text: text(200).default(''),
-        blocks: z.array(z.unknown()).max(60),
-      })
-      .strict()
-      .parse(req.body);
-    // Problems are reported, not thrown: the editor shows them beside the block.
-    const { blocks, problems } = validateBlocks(input.blocks);
-    if (!blocks.length)
-      return void res.json({ html: '', text: '', warnings: [], block_problems: problems });
-    const config = getEmailConfig(db, secrets, project.id);
-    const rendered = renderBlocks(blocks, {
-      context: mergeContext(lead, config.from_name || req.user.name),
-      fromName: config.from_name,
-      fromEmail: config.from_email || 'not-configured@example.invalid',
-      signature: config.signature,
-      previewText: input.preview_text,
-    });
-    res.json({
-      html: rendered.html,
-      text: rendered.text,
-      missing_merge_fields: [
-        ...new Set([
-          ...rendered.missingMergeFields,
-          ...applyMerge(input.subject, mergeContext(lead, config.from_name || req.user.name))
-            .missing,
-        ]),
-      ],
-      warnings: checkBlocks(
-        blocks,
-        rendered,
-        applyMerge(input.subject, mergeContext(lead, config.from_name || req.user.name)).merged,
-      ),
-      block_problems: problems,
-    });
-  });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
     if (res.headersSent) return;

@@ -4,9 +4,24 @@
     {
       "name": "innovista-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
+    },
+    {
+      "name": "ui-harness",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "5199",
+        "--strictPort"
+      ],
+      "port": 5199,
+      "url": "http://127.0.0.1:5199"
     }
   ]
 }

@@ -1,0 +1,45 @@
+/*
+ * The lead's Email tab below the composer. The incoming-replies heading carried a 26px top
+ * margin and a 10px bottom margin inside a title row that added 21px more, which left a large
+ * empty band between "Incoming replies" and the first line under it.
+ */
+.feedback-tab .incoming-replies {
+  margin: 24px 0 8px;
+}
+.feedback-tab .incoming-replies .section-title {
+  margin-bottom: 6px;
+}
+.feedback-tab .incoming-replies .section-title h3 {
+  margin: 0;
+}
+.feedback-tab .incoming-replies > .muted {
+  margin: 0;
+}
+.feedback-tab .email-history > h3 {
+  margin: 20px 0 8px;
+}
+.email-history-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.email-history-files li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  color: #4d5a4d;
+}
+.email-history-files a {
+  color: var(--ink);
+}
+.email-history-files small {
+  color: var(--muted);
+}

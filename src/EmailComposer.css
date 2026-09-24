@@ -1,0 +1,341 @@
+/* The lead email: campaign bar, single-screen editor beside its preview, follow-ups, actions. */
+.compose .composer-grid {
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+}
+.compose .composer-preview {
+  position: sticky;
+  top: 12px;
+}
+.compose-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f7f9f3;
+}
+.compose-campaign {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--green);
+  min-width: 0;
+}
+.compose-campaign span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: var(--ink);
+}
+.compose-campaign small {
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  font-weight: 650;
+  color: #65755b;
+}
+.compose-campaign strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.compose-save {
+  font-size: 11px;
+  color: var(--muted);
+}
+.compose-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.compose-templates {
+  position: relative;
+}
+.compose-template-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: min(360px, 86vw);
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 30px #1d302b24;
+}
+.compose-template-group {
+  display: block;
+  padding: 10px 10px 4px;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  font-weight: 650;
+  text-transform: uppercase;
+  color: #65755b;
+}
+.compose-template-menu button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  color: var(--ink);
+}
+.compose-template-menu button:hover {
+  background: #f1f5ec;
+}
+.compose-template-menu strong {
+  font-size: 13px;
+}
+.compose-template-menu small {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.compose-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+.compose-fields label:nth-of-type(n + 2) {
+  grid-column: 1 / -1;
+}
+.compose-from {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 550;
+  min-width: 0;
+}
+.compose-from strong {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px dashed #dfe4d9;
+  border-radius: 7px;
+  background: #fafbf7;
+  font-size: 13px;
+  font-weight: 500;
+  color: #4d5a4d;
+  overflow-wrap: anywhere;
+}
+.compose-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.compose-attachments > small {
+  font-size: 11px;
+}
+.compose-files {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.compose-files li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  color: #4d5a4d;
+}
+.compose-files a {
+  color: var(--ink);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compose-files small {
+  color: var(--muted);
+}
+.compose-files .icon-button {
+  width: 24px;
+  height: 24px;
+}
+.compose-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.compose-preview-head .eyebrow {
+  margin: 0;
+}
+.ai-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #cbd8bd;
+  border-radius: 10px;
+  background: #f7faf2;
+}
+.ai-suggestion-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--green);
+}
+.ai-suggestion-head small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.ai-subject {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ai-subject small {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.ai-suggestion iframe {
+  width: 100%;
+  min-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.compose-followups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.compose-followups-head {
+  display: flex;
+  gap: 10px;
+  color: var(--green);
+}
+.compose-followups-head div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--ink);
+}
+.compose-followups-head small {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.compose-followup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.compose-followup-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px 120px;
+  align-items: end;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.compose-followup-list li > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+.compose-followup-list strong {
+  font-size: 13px;
+}
+.compose-followup-list small {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.compose-followup-problem {
+  margin: 0;
+  font-size: 12px;
+  color: #a25952;
+}
+.compose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-top: 4px;
+}
+.compose-actions-gap {
+  flex: 1;
+}
+.compose-autosave {
+  margin: 0;
+}
+.composer-sent {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #cbd8bd;
+  border-radius: 12px;
+  background: #f5f9ef;
+  color: var(--green);
+}
+.composer-sent > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink);
+}
+.composer-sent p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+@media (max-width: 1100px) {
+  .compose .composer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .compose .composer-preview {
+    position: static;
+  }
+}
+@media (max-width: 640px) {
+  .compose-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .compose-followup-list li {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .compose-followup-list li > span {
+    grid-column: 1 / -1;
+  }
+  .composer-sent {
+    flex-direction: column;
+  }
+}

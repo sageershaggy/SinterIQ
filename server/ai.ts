@@ -275,31 +275,109 @@ export async function analyzeTraining(
     );
   return parsed.data;
 }
+/** What the research pass before this evaluation did, so the model knows it has already run. */
+export interface ResearchContext {
+  ran: boolean;
+  website_found: boolean;
+  filled: string[];
+  checked: string[];
+}
+const qualifySystem =
+  safety +
+  'Evaluate this lead only against the approved project training. The training defines policy, but is not evidence about the lead. Use only supplied lead evidence; do not use remembered facts. ' +
+  'Evaluate EVERY rubric criterion and EVERY exclusion, in order, even when lead information is missing: never stop early and never skip a rule. For each one, copy its exact text into criterion, assign MATCH (meets the rule), NO_MATCH (does not meet it) or UNKNOWN (unable to verify), and give a short factual evidence explanation with source_ids from the supplied evidence. ' +
+  'Research has already been run on this lead before this evaluation: research_before_evaluation says what was checked and what was found, and details found by research carry their own website evidence. A blank field in the lead record is not evidence that the fact does not exist, and not a reason for NO_MATCH. Use UNKNOWN only when the supplied evidence, after that research, does not settle the rule. A missing website or uncertainty about exclusion rules requires review. ' +
+  'Lead record notes are user-provided and unverified; lead.field_origin says which details were entered in the record and which were found by research. Earlier research is historical context: re-check company identities, applications and product relevance; do not inherit its scores or qualification decisions. If current evidence conflicts with previous research, explain the conflict and retain uncertainty. Reviewer feedback in the training records earlier corrections: apply the reasoning it establishes, but never copy its verdict onto a different company. When research could not verify something, say in the summary what was checked. ' +
+  'Also fill outreach. contact_name and contact_role: only a named business role holder that the supplied website evidence itself publishes (for example an engineering or purchasing contact on an imprint or team page), with contact_source_ids naming that website evidence. Never guess, infer from email patterns, or carry a name over from earlier research; leave both empty when the website does not publish one. why_qualified: two or three sentences citing the matched rules. call_script: a short factual call opener a researcher can read aloud, grounded only in the evidence — no invented references, discounts, urgency or claims about the company. Leave why_qualified and call_script empty when the lead is not a target. ' +
+  'Return {"decision":"QUALIFIED"|"NOT_A_TARGET"|"NEEDS_REVIEW","score":integer 0–100,"confidence":integer 0–100,"summary":string,"criteria":[{"criterion":string,"outcome":"MATCH"|"NO_MATCH"|"UNKNOWN","evidence":string,"source_ids":string[]}],"exclusions":[same structure],"gaps":string[],"next_steps":string[],"outreach":{"contact_name":string,"contact_role":string,"contact_source_ids":string[],"why_qualified":string,"call_script":string}}. Return concise decision reasoning, not speculative purchasing predictions.';
 export async function qualify(
   config: AiConfig,
   snapshot: TrainingSnapshot,
   lead: Lead,
   evidence: Evidence[],
   call: Generate,
+  context: {
+    research?: ResearchContext;
+    /** Which record details were typed or imported, and which research found. */
+    origin?: Record<string, 'record' | 'research'>;
+  } = {},
 ): Promise<Qualification> {
-  const result = await call(
-    config,
-    safety +
-      'Evaluate this lead only against the approved project training. The training defines policy, but is not evidence about the lead. Use only supplied lead evidence; do not use remembered facts. For every rubric criterion and exclusion, copy its exact text into criterion, assign MATCH, NO_MATCH or UNKNOWN, and give a short factual evidence explanation with source_ids from the supplied evidence. Missing evidence must be UNKNOWN. A missing website or uncertainty about exclusion rules requires review. Lead record notes are user-provided and unverified. Earlier research is historical context: re-check company identities, applications and product relevance; do not inherit its scores or qualification decisions. If current evidence conflicts with previous research, explain the conflict and retain uncertainty. Reviewer feedback in the training records earlier corrections: apply the reasoning it establishes, but never copy its verdict onto a different company. ' +
-      'Also fill outreach. contact_name and contact_role: only a named business role holder that the supplied website evidence itself publishes (for example an engineering or purchasing contact on an imprint or team page), with contact_source_ids naming that website evidence. Never guess, infer from email patterns, or carry a name over from earlier research; leave both empty when the website does not publish one. why_qualified: two or three sentences citing the matched rules. call_script: a short factual call opener a researcher can read aloud, grounded only in the evidence — no invented references, discounts, urgency or claims about the company. Leave why_qualified and call_script empty when the lead is not a target. ' +
-      'Return {"decision":"QUALIFIED"|"NOT_A_TARGET"|"NEEDS_REVIEW","score":integer 0–100,"confidence":integer 0–100,"summary":string,"criteria":[{"criterion":string,"outcome":"MATCH"|"NO_MATCH"|"UNKNOWN","evidence":string,"source_ids":string[]}],"exclusions":[same structure],"gaps":string[],"next_steps":string[],"outreach":{"contact_name":string,"contact_role":string,"contact_source_ids":string[],"why_qualified":string,"call_script":string}}. Return concise decision reasoning, not speculative purchasing predictions.',
-    {
-      approved_training: snapshot,
-      lead: {
-        name: lead.name,
-        website: lead.website,
-        country: lead.country,
-        industry: lead.industry,
-      },
-      evidence,
+  const input = {
+    approved_training: snapshot,
+    lead: {
+      name: lead.name,
+      website: lead.website,
+      country: lead.country,
+      city: lead.city,
+      industry: lead.industry,
+      employee_count: lead.employee_count,
+      field_origin: context.origin || {},
     },
-  );
+    research_before_evaluation: context.research || null,
+    evidence,
+  };
+  let result = await call(config, qualifySystem, input);
+  // A model that leaves rules out gets one more chance, told exactly which ones. The rules are
+  // the whole point of the evaluation, so a partial answer is never saved as if it were whole.
+  const missing = missingRules(result, snapshot);
+  if (missing.length)
+    result = await call(
+      config,
+      qualifySystem +
+        ' Your previous answer did not evaluate every approved rule. missing_rules lists the rules it left out: return the complete JSON again, evaluating every criterion and every exclusion in order, including these.',
+      { ...input, missing_rules: missing },
+    );
   return validateQualification(result, snapshot, evidence);
+}
+/** Comparison form for rule text: numbering, quotes, case and spacing are not the rule. */
+const ruleKey = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/^\s*(?:rule\s*)?(?:[a-z]?\d+[.):]|[-*•])\s*/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+function similar(a: string, b: string) {
+  const left = new Set(ruleKey(a).split(' ').filter(Boolean));
+  const right = new Set(ruleKey(b).split(' ').filter(Boolean));
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const word of left) if (right.has(word)) shared++;
+  return shared / (left.size + right.size - shared);
+}
+/**
+ * Pairs the model's rule evaluations with the approved rules. The same rule in a different
+ * order, with its number or quotes stripped, is still that rule; anything that cannot be paired
+ * is reported as missing rather than guessed at.
+ */
+function alignRules<T extends { criterion: string }>(expected: string[], given: T[]) {
+  const used = new Set<number>();
+  const aligned: Array<T | undefined> = expected.map((rule) => {
+    const index = given.findIndex(
+      (item, i) => !used.has(i) && (item.criterion === rule || ruleKey(item.criterion) === ruleKey(rule)),
+    );
+    if (index < 0) return undefined;
+    used.add(index);
+    return given[index];
+  });
+  // A lightly reworded rule in its own position is accepted; anywhere else it is too uncertain.
+  expected.forEach((rule, i) => {
+    if (aligned[i] || used.has(i) || !given[i] || similar(given[i].criterion, rule) < 0.85) return;
+    used.add(i);
+    aligned[i] = given[i];
+  });
+  return {
+    aligned: aligned.map((item, i) => (item ? { ...item, criterion: expected[i] } : undefined)),
+    missing: expected.filter((_, i) => !aligned[i]),
+  };
+}
+/** The approved rules a raw model answer leaves out. An unreadable answer reports none. */
+export function missingRules(raw: unknown, snapshot: TrainingSnapshot) {
+  const parsed = qualificationSchema.safeParse(raw);
+  if (!parsed.success) return [];
+  return [
+    ...alignRules(snapshot.rubric.criteria, parsed.data.criteria).missing,
+    ...alignRules(snapshot.rubric.exclusions, parsed.data.exclusions).missing,
+  ];
 }
 export function validateQualification(
   raw: unknown,
@@ -312,15 +390,15 @@ export function validateQualification(
   const result = parsed.data;
   const ids = new Set(evidence.map((e) => e.id));
   for (const kind of ['criteria', 'exclusions'] as const) {
-    const expected = snapshot.rubric[kind];
-    if (
-      result[kind].length !== expected.length ||
-      expected.some((criterion, i) => result[kind][i].criterion !== criterion)
-    )
+    const { aligned, missing } = alignRules(snapshot.rubric[kind], result[kind]);
+    if (missing.length)
       throw new HttpError(
         502,
-        'The AI did not evaluate every approved training rule. Please retry.',
+        'The AI did not evaluate every approved training rule, even after a retry that named the ' +
+          (missing.length === 1 ? 'missing rule' : missing.length + ' missing rules') +
+          '. No result was saved. Please retry.',
       );
+    result[kind] = aligned as typeof result[typeof kind];
     for (const item of result[kind]) {
       if (item.source_ids.some((id) => !ids.has(id)))
         throw new HttpError(

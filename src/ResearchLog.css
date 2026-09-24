@@ -1,0 +1,268 @@
+/* Research log: one readable line of what happened per entry, the evidence beneath it. */
+.research-log-tabs {
+  margin-top: 0;
+}
+.research-log-panel {
+  padding: 22px 26px 26px;
+}
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.log-kinds {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  background: #f2f5ec;
+  border: 1px solid #e3e9da;
+  border-radius: 9px;
+}
+.log-kinds button {
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #5d6a55;
+}
+.log-kinds button:hover {
+  color: #2f4430;
+}
+.log-kinds button.active {
+  background: #fff;
+  color: #2f4430;
+  font-weight: 600;
+  box-shadow: 0 1px 2px #1d302b1a;
+}
+.log-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.log-lead-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 12px;
+  border-radius: 999px;
+  background: #e8f1da;
+  color: #3f5539;
+  font-size: 12px;
+}
+.log-lead-filter button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #4d6444;
+}
+.log-lead-filter button:hover {
+  background: #d5e5bf;
+}
+.log-day + .log-day {
+  margin-top: 22px;
+}
+.log-day > h2 {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #6c7a62;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.log-entry {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 16px 0;
+  border-bottom: 1px solid #eef1ea;
+}
+.log-entry:last-child {
+  border-bottom: 0;
+}
+.log-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: #eef4e6;
+  color: #55744a;
+}
+.log-entry.is-qualification .log-icon {
+  background: #eef1f6;
+  color: #4d6283;
+}
+.log-entry.is-review .log-icon {
+  background: #f5f0e4;
+  color: #7c6533;
+}
+.log-body {
+  min-width: 0;
+}
+.log-body > header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 4px;
+}
+.log-lead {
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.log-lead:hover {
+  color: #3d6a33;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.log-kind {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #74826b;
+}
+.log-when {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.log-headline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #34463a;
+}
+.log-headline-muted {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.log-score {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5d42;
+}
+.log-findings {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 2px;
+  padding: 12px 14px;
+  background: #f8faf4;
+  border: 1px solid #e9efe0;
+  border-radius: 8px;
+}
+.log-findings > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+}
+.log-findings dt {
+  font-size: 11px;
+  font-weight: 600;
+  color: #65735d;
+  padding-top: 2px;
+}
+.log-findings dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  font-size: 12px;
+  min-width: 0;
+}
+.log-findings dd strong {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.log-findings q {
+  flex-basis: 100%;
+  color: #5d6858;
+  font-style: italic;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.log-findings .is-erased dd {
+  color: var(--muted);
+  font-style: italic;
+}
+.log-check {
+  color: #5e7a4a;
+}
+.log-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #56753f;
+  overflow-wrap: anywhere;
+}
+a.log-source:hover {
+  text-decoration: underline;
+}
+.log-meta-line {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #66725f;
+  overflow-wrap: anywhere;
+}
+.log-summary {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #4f5c4a;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.log-notes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #66725f;
+}
+.log-open {
+  width: 32px;
+  height: 32px;
+}
+.log-older {
+  display: flex;
+  margin: 20px auto 0;
+}
+@media (max-width: 640px) {
+  .research-log-panel {
+    padding: 16px;
+  }
+  .log-entry {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .log-icon {
+    display: none;
+  }
+  .log-when {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .log-findings > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

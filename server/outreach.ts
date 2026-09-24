@@ -1,9 +1,19 @@
 import crypto from 'node:crypto';
 import type { Express } from 'express';
 import { audit, hash, now, type DB } from './database';
-import { assertAddress, type Send, type SmtpConfig } from './email';
+import { assertAddress, RecipientRejected, type Send, type SmtpConfig } from './email';
 import { HttpError } from './validation';
 import { notifyLead } from './workspace';
+import { primaryMailTo, recordBounce } from './bounces';
+
+/** A stored file going out with a message; a cid makes it an inline image. */
+export interface OutgoingFile {
+  fileId: number;
+  filename: string;
+  content: Buffer;
+  contentType: string;
+  cid?: string;
+}
 
 const escapeHtml = (value: string) =>
   value.replace(
@@ -39,12 +49,19 @@ export function suppressRecipient(db: DB, recipient: string, reason: string) {
       `UPDATE funnel_enrollments SET status='UNSUBSCRIBED',reason=?,updated_at=?
       WHERE status IN ('QUEUED','SENDING','BLOCKED') AND (
         recipient=?
-        OR lead_id IN (
-          SELECT lead_id FROM email_deliveries
-          WHERE recipient=? AND status IN ('SENDING','SENT','UNKNOWN')
-        )
+        OR (contact_id IS NULL AND lead_id IN (${primaryMailTo("'SENDING','SENT','UNKNOWN'")}))
       )`,
     ).run(reason, now(), recipient, recipient);
+    // An opt-out is an answer from the company: the sequences to the other people there stop
+    // too. They did not opt out themselves, so their own addresses stay unsuppressed.
+    db.prepare(
+      `UPDATE funnel_enrollments SET status='STOPPED',stop_cause='OPTED_OUT',
+        reason='Someone at this company opted out, so the follow-ups stopped.',updated_at=?
+      WHERE status IN ('QUEUED','SENDING','BLOCKED') AND lead_id IN (
+        SELECT lead_id FROM email_deliveries
+        WHERE recipient=? AND status IN ('SENDING','SENT','UNKNOWN')
+      )`,
+    ).run(now(), recipient);
     db.prepare(
       "UPDATE leads SET outreach_status='UNSUBSCRIBED' WHERE lower(trim(contact_email))=?",
     ).run(recipient);
@@ -52,8 +69,16 @@ export function suppressRecipient(db: DB, recipient: string, reason: string) {
 }
 
 export function assertCanContact(db: DB, recipient: string) {
-  if (db.prepare('SELECT 1 FROM email_suppressions WHERE recipient=?').get(recipient))
-    throw new HttpError(409, 'This recipient has opted out. No further email can be sent.');
+  const suppressed = db
+    .prepare('SELECT reason FROM email_suppressions WHERE recipient=?')
+    .get(recipient) as { reason: string } | undefined;
+  if (suppressed)
+    throw new HttpError(
+      409,
+      /^Email bounced/.test(suppressed.reason)
+        ? 'Email to this address bounced. No further email can be sent to it.'
+        : 'This recipient has opted out. No further email can be sent.',
+    );
   if (!remainingSends(db, recipient))
     throw new HttpError(409, 'The three-email limit for this recipient has been reached.');
 }
@@ -85,6 +110,7 @@ export function createOutreach(db: DB, deliver: Send, publicOrigin: string) {
     deliveryKey?: string;
     beforeSend?: () => void;
     inReplyTo?: string;
+    files?: OutgoingFile[];
   }) {
     const recipient = recipientKey(options.to);
     const key = options.deliveryKey || crypto.randomUUID();
@@ -177,6 +203,12 @@ export function createOutreach(db: DB, deliver: Send, publicOrigin: string) {
           'Delivery pending; mailbox acceptance is not yet confirmed.',
         );
         db.prepare('UPDATE email_deliveries SET message_id=? WHERE id=?').run(messageId, id);
+        // The history shows what a message carried, whether or not it was accepted.
+        const attach = db.prepare(
+          'INSERT OR IGNORE INTO email_message_files (message_id,file_id,disposition) VALUES (?,?,?)',
+        );
+        for (const file of options.files || [])
+          attach.run(messageId, file.fileId, file.cid ? 'inline' : 'attachment');
         return { id, messageId };
       })();
       deliveryId = reservation.id;
@@ -234,6 +266,12 @@ export function createOutreach(db: DB, deliver: Send, publicOrigin: string) {
           ? assertAddress(options.config.copy_to, 'Copy address')
           : undefined,
         unsubscribeUrl: unsubscribeUrl || undefined,
+        attachments: options.files?.map((file) => ({
+          filename: file.filename,
+          content: file.content,
+          contentType: file.contentType,
+          cid: file.cid,
+        })),
         beforeSend: () => {
           if (db.prepare('SELECT 1 FROM email_suppressions WHERE recipient=?').get(recipient))
             throw new HttpError(409, 'The recipient opted out before delivery.');
@@ -246,6 +284,15 @@ export function createOutreach(db: DB, deliver: Send, publicOrigin: string) {
         db.prepare(
           "UPDATE email_deliveries SET status='BLOCKED',message_id=?,error=? WHERE id=?",
         ).run(messageId, error.message, deliveryId);
+        // A permanent refusal of the address is a bounce: stop its sequences and suppress it.
+        if (error instanceof RecipientRejected && error.recipient.toLowerCase() === recipient)
+          recordBounce(db, {
+            recipient,
+            projectId: options.projectId,
+            leadId: options.leadId,
+            source: 'SMTP',
+            status: String(error.responseCode),
+          });
         throw error;
       }
       // An SMTP connection failure can occur after acceptance. Count it conservatively.

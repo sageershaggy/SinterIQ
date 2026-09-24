@@ -119,32 +119,38 @@ export async function publicRequest(
     contentType: response.type,
   };
 }
-export function researchLinks(html: string, base: string): string[] {
+const productLinks =
+  /about|company|product|application|engineering|unternehmen|ueber|produkte|anwendung/i;
+/** Where a company's own site names its people: contact, team, imprint and about pages. */
+const contactLinkPattern =
+  /contact|kontakt|team|people|staff|leadership|management|imprint|impressum|about|ueber-uns|uber-uns|who-we-are/i;
+export function researchLinks(
+  html: string,
+  base: string,
+  pattern: RegExp = productLinks,
+  limit = 2,
+): string[] {
   const links = new Set<string>();
   const origin = new URL(base);
   for (const match of html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
     try {
       const url = new URL(match[1].replace(/&amp;/g, '&'), origin);
       url.hash = '';
-      if (
-        url.origin === origin.origin &&
-        /about|company|product|application|engineering|unternehmen|ueber|produkte|anwendung/i.test(
-          url.pathname,
-        ) &&
-        url.href !== origin.href
-      )
+      if (url.origin === origin.origin && pattern.test(url.pathname) && url.href !== origin.href)
         links.add(url.href);
     } catch {
       /* Ignore malformed links in untrusted HTML. */
     }
   }
-  return [...links].slice(0, 2);
+  return [...links].slice(0, limit);
 }
 export interface WebsitePage {
   url: string;
   content: string;
   truncated: boolean;
   links?: string[];
+  /** Same-site contact, team, imprint and about pages, for finding the company's people. */
+  contact_links?: string[];
 }
 export async function fetchWebsite(raw: string): Promise<WebsitePage> {
   const response = await publicRequest(raw);
@@ -181,5 +187,6 @@ export async function fetchWebsite(raw: string): Promise<WebsitePage> {
     content: text.slice(0, 30000),
     truncated: text.length > 30000,
     links: researchLinks(response.text, response.url),
+    contact_links: researchLinks(response.text, response.url, contactLinkPattern, 3),
   };
 }

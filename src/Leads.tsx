@@ -6,7 +6,6 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
-  ChevronRight,
   ClipboardCheck,
   Download,
   FileText,
@@ -28,6 +27,7 @@ import {
   MessageSquareWarning,
   UserPlus,
   PhoneCall,
+  MessageSquare,
 } from 'lucide-react';
 import { nextStepBands } from '../shared/types';
 import type {
@@ -38,8 +38,6 @@ import type {
   CriterionResult,
   NextStep,
   LeadFeedback,
-  CallLog,
-  CallOutcome,
   EmailMessage,
   User,
   ResearchOutcome,
@@ -49,10 +47,33 @@ import { api, date, json, label } from './api';
 import { Alert, Badge, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { PreviousResearch } from './PreviousResearch';
 import { EmailComposer } from './EmailComposer';
+import { EmailHistory } from './EmailHistory';
+import { ArchiveTools, ArchivedNotice, LeadArchiveButton } from './ArchiveControls';
 import { IncomingReplies } from './IncomingReplies';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
+import { FitBands, LeadHeader, fitBandsText, ruleOutcomeLabel } from './LeadInsight';
 import { leadLink, type LeadTab } from './navigation';
+import { LeadCalls } from './LeadCalls';
+import { LeadStatus } from './LeadStatus';
+import { LeadComments } from './LeadComments';
+import {
+  FitQualification,
+  LeadCounts,
+  LeadFilterChips,
+  LeadFilters,
+  Pager,
+  countView,
+  useLeadFacetOptions,
+} from './LeadFilters';
+import { AssignForCalling, AssignRowButton } from './LeadAssign';
+import {
+  emptyFacets,
+  facetParams,
+  activeFacetCount,
+  type LeadFacets,
+  type LeadSummary,
+} from '../shared/lead-filters';
 
 export default function Leads({
   project,
@@ -81,6 +102,30 @@ export default function Leads({
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
     [refresh, setRefresh] = useState(0);
+  // The Filters panel's facets and sort, and what the server says about the whole project.
+  const [facets, setFacets] = useState<LeadFacets>(emptyFacets),
+    [pages, setPages] = useState(1),
+    [summary, setSummary] = useState<LeadSummary | null>(null);
+  const facetOptions = useLeadFacetOptions(base, refresh);
+  const defaultStatus = queue ? 'REVIEW_QUEUE' : 'ALL';
+  const filtered = Boolean(query) || status !== 'ALL' || activeFacetCount(facets) > 0;
+  const changeFacets = (next: LeadFacets) => {
+    setFacets(next);
+    setPage(1);
+  };
+  /** A count tile shows the whole project, or one qualification state of it. */
+  const showCount = (state: LeadFacets['qualification'][number] | null) => {
+    setSearch('');
+    setQuery('');
+    setStatus('ALL');
+    changeFacets({ ...emptyFacets, sort: facets.sort, qualification: state ? [state] : [] });
+  };
+  const clearAll = () => {
+    setSearch('');
+    setQuery('');
+    setStatus(defaultStatus);
+    changeFacets(emptyFacets);
+  };
   const [selected, setSelected] = useState<number[]>([]),
     [create, setCreate] = useState(false),
     [importing, setImporting] = useState(false);
@@ -156,11 +201,18 @@ export default function Leads({
       page: String(page),
       page_size: '30',
     });
-    api<{ leads: Lead[]; total: number }>(base + '/leads?' + params)
+    for (const [key, value] of facetParams(facets)) params.append(key, value);
+    api<{ leads: Lead[]; total: number; page: number; pages: number; summary: LeadSummary }>(
+      base + '/leads?' + params,
+    )
       .then((data) => {
         if (!cancelled) {
           setLeads(data.leads);
           setTotal(data.total);
+          setPages(data.pages);
+          setSummary(data.summary);
+          // The server answers a page past the end with the last page.
+          if (data.page !== page) setPage(data.page);
           setError('');
         }
       })
@@ -173,7 +225,7 @@ export default function Leads({
     return () => {
       cancelled = true;
     };
-  }, [project.id, project.active_version, project.revision, refresh, page, query, status]);
+  }, [project.id, project.active_version, project.revision, refresh, page, query, status, facets]);
   async function qualifyOne(lead: Lead) {
     setBusy('lead-' + lead.id);
     setError('');
@@ -289,18 +341,19 @@ export default function Leads({
         <div className="page-heading">
           <div>
             <span className="eyebrow">
-              {queue ? 'HUMAN JUDGMENT, IN THE LOOP' : 'RESEARCH THAT FOLLOWS YOUR RULES'}
+              {queue ? 'FOR REVIEWING ONLY' : 'RESEARCH THAT FOLLOWS YOUR RULES'}
             </span>
-            <h1>{queue ? 'A closer look.' : 'Find the right fit.'}</h1>
+            <h1>{queue ? 'Review queue.' : 'Find the right fit.'}</h1>
             <p>
               {queue
-                ? 'Review uncertain findings, research new leads and revisit results when training changes.'
+                ? 'This queue is only for reviewing: open a lead, check its findings and its email, and record your decision. Nothing here sends email or changes a lead by itself.'
                 : 'Analyze your leads against ' +
                   project.name +
                   ' training. Understand the evidence behind the fit.'}
             </p>
           </div>
           <div className="heading-actions">
+            {!queue && <ArchiveTools project={project} onChange={reload} notify={notify} />}
             <button className="button secondary" onClick={() => setImporting(true)}>
               <Upload size={16} />
               Import leads
@@ -324,26 +377,12 @@ export default function Leads({
             </button>
           </div>
         )}
-        <div className="lead-summary">
-          <span>
-            <Users size={16} />
-            <strong>{project.lead_count}</strong> total leads
-          </span>
-          <span>
-            <span className="small-dot green-dot" />
-            <strong>{project.qualified_count}</strong> qualified on current training
-          </span>
-          <span>
-            <span className="small-dot amber-dot" />
-            <strong>{project.review_count}</strong> awaiting research
-          </span>
-          {ready && (
-            <span className="training-version">
-              <BookOpen size={14} />
-              Training v{project.active_version}
-            </span>
-          )}
-        </div>
+        <LeadCounts
+          summary={summary}
+          active={countView(facets, !query && status === 'ALL')}
+          onPick={showCount}
+          trainingVersion={ready ? project.active_version : null}
+        />
         {error && <Alert>{error}</Alert>}
         <section className="panel leads-panel">
           <div className="table-toolbar">
@@ -356,6 +395,12 @@ export default function Leads({
                 placeholder="Search company, industry or country…"
               />
             </div>
+            <LeadFilters
+              facets={facets}
+              options={facetOptions}
+              total={total}
+              onChange={changeFacets}
+            />
             {/* A real dropdown rather than a native select: the OS popup cannot be aligned
                 or padded, and its hit area does not match the control, which is why it kept
                 reading as unclickable. */}
@@ -426,18 +471,27 @@ export default function Leads({
                       '/api' +
                       base +
                       '/leads/export?' +
-                      new URLSearchParams({
-                        status: status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status,
-                        ...(status === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
-                        search: query,
-                      })
+                      new URLSearchParams([
+                        ['status', status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status],
+                        ...(status === 'ASSIGNED_TO_ME' ? [['assigned_to', 'me']] : []),
+                        ['search', query],
+                        // The same facets and sort as the table, from the same function.
+                        ...facetParams(facets),
+                      ])
                     }
                     onClick={() => setExportOpen(false)}
                   >
                     <strong>This view</strong>
                     <small>
                       {statusFilters(queue).find((o) => o.value === status)?.label}
-                      {query ? ' · matching “' + query + '”' : ''} · {total} lead
+                      {query ? ' · matching “' + query + '”' : ''}
+                      {activeFacetCount(facets)
+                        ? ' · ' +
+                          activeFacetCount(facets) +
+                          ' filter' +
+                          (activeFacetCount(facets) === 1 ? '' : 's')
+                        : ''}{' '}
+                      · {total} lead
                       {total === 1 ? '' : 's'}
                     </small>
                   </a>
@@ -466,6 +520,37 @@ export default function Leads({
               )}
             </div>
           </div>
+          <LeadFilterChips
+            facets={facets}
+            options={facetOptions}
+            onChange={changeFacets}
+            onClearAll={clearAll}
+            extra={[
+              ...(query
+                ? [
+                    {
+                      key: 'search',
+                      label: 'Search: “' + query + '”',
+                      onRemove: () => setSearch(''),
+                    },
+                  ]
+                : []),
+              ...(status !== defaultStatus
+                ? [
+                    {
+                      key: 'status',
+                      label:
+                        'View: ' +
+                        (statusFilters(queue).find((o) => o.value === status)?.label || status),
+                      onRemove: () => {
+                        setStatus(defaultStatus);
+                        setPage(1);
+                      },
+                    },
+                  ]
+                : []),
+            ]}
+          />
           {selected.length > 0 && (
             <div className="selection-bar">
               <span>
@@ -522,11 +607,7 @@ export default function Leads({
           ) : !leads.length ? (
             <Empty
               icon={<ScanLine size={30} />}
-              title={
-                query || status !== 'ALL'
-                  ? 'No leads match this view'
-                  : 'Your next discovery starts here'
-              }
+              title={filtered ? 'No leads match this view' : 'Your next discovery starts here'}
               action={
                 <button className="button secondary" onClick={() => setCreate(true)}>
                   <Plus size={16} />
@@ -534,7 +615,7 @@ export default function Leads({
                 </button>
               }
             >
-              {query || status !== 'ALL'
+              {filtered
                 ? 'Try another filter, or add a lead to this project.'
                 : 'Add a company and its website, or import a CSV to build your research list.'}
             </Empty>
@@ -559,10 +640,7 @@ export default function Leads({
                     <th>Company</th>
                     <th>Contact</th>
                     <th>Industry / location</th>
-                    <th>Fit score</th>
-                    <th>Next step</th>
-                    <th>Assigned to</th>
-                    <th>Qualification</th>
+                    <th title={fitBandsText}>Fit score · qualification</th>
                     <th>
                       <span className="visually-hidden">Open</span>
                     </th>
@@ -620,67 +698,7 @@ export default function Leads({
                         </small>
                       </td>
                       <td>
-                        {lead.score === null ? (
-                          <span className="muted">—</span>
-                        ) : (
-                          <div className={'score-cell ' + (lead.stale ? 'score-stale' : '')}>
-                            <strong>
-                              {lead.score}
-                              <small>/100</small>
-                            </strong>
-                            <span className="score-track">
-                              <i style={{ width: lead.score + '%' }} />
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <NextStepBadge step={lead.next_step} />
-                      </td>
-                      <td>
-                        <button
-                          className="assignee-cell"
-                          disabled={!!busy}
-                          onClick={() => setAssigning([lead.id])}
-                          title="Assign this lead for calling"
-                        >
-                          {lead.assigned_to_name ? (
-                            <>
-                              <span className="assignee-avatar">{lead.assigned_to_name[0]}</span>
-                              <span>
-                                {lead.assigned_to_name}
-                                {(lead.call_count || 0) > 0 && (
-                                  <small>
-                                    {lead.call_count} call{lead.call_count === 1 ? '' : 's'} logged
-                                  </small>
-                                )}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <UserPlus size={14} />
-                              <span className="muted">Assign</span>
-                            </>
-                          )}
-                        </button>
-                      </td>
-                      <td>
-                        <Badge value={lead.stale ? 'stale' : lead.status}>
-                          {lead.stale ? 'Requalification needed' : label(lead.status)}
-                        </Badge>
-                        <small className="table-subtext">
-                          {lead.reviewed && (
-                            <>
-                              <ShieldCheck size={12} /> Human reviewed ·{' '}
-                            </>
-                          )}
-                          {lead.training_version ? 'Training v' + lead.training_version : 'No run'}
-                        </small>
-                        {lead.outreach_status && lead.outreach_status !== 'NOT_CONTACTED' && (
-                          <small className="table-subtext">
-                            Outreach: {label(lead.outreach_status)}
-                          </small>
-                        )}
+                        <FitQualification lead={lead} />
                       </td>
                       <td>
                         <div className="row-actions">
@@ -716,6 +734,11 @@ export default function Leads({
                             <Mail size={14} />
                             Email
                           </button>
+                          <AssignRowButton
+                            lead={lead}
+                            disabled={!!busy}
+                            onClick={() => setAssigning([lead.id])}
+                          />
                           <button
                             className="icon-button"
                             onClick={() => setDetail(lead.id)}
@@ -747,25 +770,7 @@ export default function Leads({
               {total} leads
             </span>
             <span className="fine-print">Select up to 20 leads for a qualification batch.</span>
-            <div>
-              <button
-                className="icon-button"
-                disabled={page <= 1 || loading || !!busy}
-                onClick={() => setPage((n) => n - 1)}
-                aria-label="Previous page"
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <span>{page}</span>
-              <button
-                className="icon-button"
-                disabled={page * 30 >= total || loading || !!busy}
-                onClick={() => setPage((n) => n + 1)}
-                aria-label="Next page"
-              >
-                <ChevronRight size={18} />
-              </button>
-            </div>
+            <Pager page={page} pages={pages} disabled={loading || !!busy} onPage={setPage} />
           </div>
         </section>
         {enrolling && (
@@ -1289,10 +1294,19 @@ function LeadDetail({
     setBusy(true);
     setError('');
     try {
-      await api(base + '/qualify', { method: 'POST', body: json({}) });
+      const { result } = await api<{ result: Run['result'] }>(base + '/qualify', {
+        method: 'POST',
+        body: json({}),
+      });
       setRefresh((n) => n + 1);
       onChange();
-      notify('Qualification complete. Review the evidence and reasoning.');
+      // Qualification researches blank details first; say so when it filled any.
+      const filled = result.research?.ran ? result.research.filled.length : 0;
+      notify(
+        (filled
+          ? 'Researched first and filled ' + filled + (filled === 1 ? ' detail' : ' details') + '. '
+          : '') + 'Qualification complete. Review the evidence and reasoning.',
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1384,118 +1398,58 @@ function LeadDetail({
         <ChevronLeft size={16} />
         Back to leads
       </button>
-      <div className="page-heading company-heading">
-        <div>
-          <span className="eyebrow">COMPANY WORKSPACE</span>
-          <h1>{lead?.name || 'Loading company…'}</h1>
-          <p>Research, conversations and follow-ups in one place.</p>
-        </div>
-        <button
-          type="button"
-          className="button primary"
-          onClick={openEmailComposer}
-          aria-label={'Create email for ' + (lead?.name || 'company')}
-        >
-          <Mail size={16} />
-          Create email
-        </button>
-      </div>
+      {/* The header carries the page's main actions and the fit score. The contact details
+          and notes live in the overview, with where each one came from. */}
+      <LeadHeader
+        project={project}
+        lead={lead}
+        missing={lead ? missingDetails(lead).length : 0}
+        ready={!!ready}
+        busy={busy}
+        researching={researching}
+        onEdit={() => setEditing(true)}
+        onResearch={() => void researchLead()}
+        onQualify={ready ? () => void qualifyLead() : onTraining}
+        onEmail={openEmailComposer}
+      >
+        {lead && (
+          <LeadStatus
+            base={base}
+            lead={lead}
+            onSaved={(crm) => setLead((current) => current && { ...current, ...crm })}
+          />
+        )}
+        {lead && (
+          <AssignForCalling
+            projectId={project.id}
+            projectName={project.name}
+            lead={lead}
+            onSaved={() => {
+              setRefresh((n) => n + 1);
+              onChange();
+            }}
+            notify={notify}
+          />
+        )}
+        {lead && (
+          <LeadArchiveButton
+            base={base}
+            lead={lead}
+            notify={notify}
+            onChange={() => {
+              setRefresh((n) => n + 1);
+              onChange();
+            }}
+          />
+        )}
+      </LeadHeader>
       <div className="lead-detail">
         {error && <Alert>{error}</Alert>}
         {!lead ? (
           <Spinner text="Loading research…" />
         ) : (
           <>
-            <div className="detail-heading">
-              <div>
-                <div className="detail-meta">
-                  <ExternalLink url={lead.website} />
-                  <span>
-                    {[lead.city, lead.country].filter(Boolean).join(', ') || 'Location unknown'}
-                  </span>
-                  <span>{lead.industry || 'Industry unknown'}</span>
-                  {lead.employee_count && <span>{lead.employee_count} employees</span>}
-                </div>
-                {(lead.contact_name || lead.contact_phone || lead.contact_email) && (
-                  <div className="detail-meta detail-contact">
-                    {lead.contact_name && (
-                      <span>
-                        <Users size={13} />
-                        {lead.contact_name}
-                        {lead.contact_role ? ' · ' + lead.contact_role : ''}
-                      </span>
-                    )}
-                    {lead.contact_phone && (
-                      <a href={'tel:' + lead.contact_phone.replace(/[^+\d]/g, '')}>
-                        <Phone size={13} />
-                        {lead.contact_phone}
-                      </a>
-                    )}
-                    {lead.contact_email && (
-                      <a href={'mailto:' + lead.contact_email}>
-                        <Mail size={13} />
-                        {lead.contact_email}
-                      </a>
-                    )}
-                  </div>
-                )}
-                <div className="detail-badges">
-                  <Badge value={lead.stale ? 'stale' : lead.status}>
-                    {lead.stale ? 'Requalification needed' : label(lead.status)}
-                  </Badge>
-                  {lead.reviewed && <Badge value="ready">Human reviewed</Badge>}
-                  {lead.assigned_to_name && (
-                    <Badge value="ready">Calling: {lead.assigned_to_name}</Badge>
-                  )}
-                </div>
-              </div>
-              <button
-                className="button secondary"
-                onClick={() => setEditing(true)}
-                disabled={busy || researching}
-              >
-                <Pencil size={15} />
-                Edit context
-              </button>
-            </div>
-            <div className="detail-qualify">
-              <div>
-                <strong>
-                  {ready
-                    ? 'Qualify with training v' + project.active_version
-                    : 'Project training is not ready'}
-                </strong>
-                <small>
-                  {lead.latest_run_id
-                    ? 'A new analysis keeps all previous results for comparison.'
-                    : 'Analyze this company using approved project knowledge and public website evidence.'}
-                </small>
-              </div>
-              <button
-                className="button primary"
-                disabled={busy || researching}
-                onClick={ready ? qualifyLead : onTraining}
-              >
-                {busy ? (
-                  <Spinner text="Working…" />
-                ) : (
-                  <>
-                    <Sparkles size={16} />
-                    {ready
-                      ? lead.latest_run_id
-                        ? 'Run AI qualification again'
-                        : 'Run AI qualification'
-                      : 'Open training'}
-                  </>
-                )}
-              </button>
-            </div>
-            {lead.notes && (
-              <details className="context-details">
-                <summary>Lead context</summary>
-                <p className="preserve-text">{lead.notes}</p>
-              </details>
-            )}
+            <ArchivedNotice lead={lead} />
             {lead.legacy_json && <PreviousResearch lead={lead} projectName={project.name} />}
             <>
               <div className="result-tabs" role="tablist" aria-label="Lead details">
@@ -1525,6 +1479,7 @@ function LeadDetail({
                       title: 'Calls',
                       icon: PhoneCall,
                     },
+                    { id: 'comments', title: 'Comments', icon: MessageSquare },
                   ] as const
                 ).map((item) => (
                   <button
@@ -1541,8 +1496,11 @@ function LeadDetail({
               </div>
               {tab === 'overview' && (
                 <CompanyOverview
+                  base={base}
                   lead={lead}
                   onTab={setTab}
+                  notify={notify}
+                  onChanged={() => setRefresh((n) => n + 1)}
                   research={{
                     missing: missingDetails(lead),
                     outcome: research,
@@ -1620,7 +1578,7 @@ function LeadDetail({
                       <small>AI DECISION</small>
                       <Badge value={run.result.decision} />
                     </div>
-                    <div>
+                    <div title={fitBandsText}>
                       <small>FIT SCORE</small>
                       <strong>
                         {run.result.score}
@@ -1639,6 +1597,10 @@ function LeadDetail({
                       <strong>v{run.training_version}</strong>
                     </div>
                   </div>
+                  <FitBands
+                    inline
+                    score={run.id === lead.latest_run_id && !lead.stale ? run.result.score : null}
+                  />
                   <section className="reasoning-summary">
                     <span className="eyebrow">WHY THIS DECISION</span>
                     <p>{run.result.summary}</p>
@@ -1691,10 +1653,14 @@ function LeadDetail({
                     </section>
                   )}
                   <h3>Qualification criteria</h3>
-                  <Criteria items={run.result.criteria} />
+                  <p className="rule-legend">
+                    Every approved rule is evaluated as Meets, Does not meet or Unable to verify.
+                    Unable to verify is used only after research could not settle it.
+                  </p>
+                  <Criteria items={run.result.criteria} kind="criterion" />
                   <h3>Exclusion checks</h3>
                   {run.result.exclusions.length ? (
-                    <Criteria items={run.result.exclusions} />
+                    <Criteria items={run.result.exclusions} kind="exclusion" />
                   ) : (
                     <p className="muted">No exclusion rules defined in this training version.</p>
                   )}
@@ -1826,40 +1792,26 @@ function LeadDetail({
                       onChange();
                     }}
                   />
-                  <h3>Outgoing email history</h3>
-                  {(lead.emails || []).length ? (
-                    (lead.emails || []).map((message) => (
-                      <div className="human-review-history" key={message.id}>
-                        <div>
-                          <Badge value={message.status === 'SENT' ? 'QUALIFIED' : 'NEEDS_REVIEW'}>
-                            {message.status === 'SENT' ? 'Sent' : 'Delivery not confirmed'}
-                          </Badge>
-                          <small>
-                            {message.to_email} · {message.created_by} · {date(message.created_at)}
-                          </small>
-                        </div>
-                        <p>
-                          <strong>{message.subject}</strong>
-                        </p>
-                        <p className="preserve-text">{message.body}</p>
-                        {message.error && <p className="muted">{message.error}</p>}
-                      </div>
-                    ))
-                  ) : (
-                    <p className="muted">No emails sent to this lead yet.</p>
-                  )}
+                  <EmailHistory base={base} emails={lead.emails || []} />
                 </div>
               )}
               {tab === 'calls' && (
-                <CallsTab
-                  base={base}
+                <LeadCalls
+                  projectId={project.id}
                   lead={lead}
                   calls={lead.calls || []}
                   onSaved={() => {
                     setRefresh((n) => n + 1);
                     onChange();
-                    notify('Call logged.');
+                    notify('Call status saved to the call history.');
                   }}
+                />
+              )}
+              {tab === 'comments' && (
+                <LeadComments
+                  base={base}
+                  lead={lead}
+                  onSaved={(crm) => setLead((current) => current && { ...current, ...crm })}
                 />
               )}
               {tab === 'feedback' && (
@@ -1948,7 +1900,13 @@ function LeadDetail({
     </section>
   );
 }
-function Criteria({ items }: { items: CriterionResult[] }) {
+function Criteria({
+  items,
+  kind,
+}: {
+  items: CriterionResult[];
+  kind: 'criterion' | 'exclusion';
+}) {
   return (
     <div className="criteria-list">
       {items.map((item, index) => (
@@ -1956,7 +1914,7 @@ function Criteria({ items }: { items: CriterionResult[] }) {
           <div>
             <span className="criterion-number">{String(index + 1).padStart(2, '0')}</span>
             <strong>{item.criterion}</strong>
-            <Badge value={item.outcome} />
+            <Badge value={item.outcome}>{ruleOutcomeLabel(item.outcome, kind)}</Badge>
           </div>
           <p>{item.evidence}</p>
           <div className="evidence-tags">
@@ -2169,132 +2127,4 @@ function statusFilterGroups(queue: boolean): FilterGroup[] {
 
 function statusFilters(queue: boolean): FilterOption[] {
   return statusFilterGroups(queue).flatMap((g) => g.options);
-}
-
-const callOutcomes: Array<{ value: CallOutcome; label: string }> = [
-  { value: 'CONNECTED', label: 'Connected' },
-  { value: 'NO_ANSWER', label: 'No answer' },
-  { value: 'CALLBACK', label: 'Call back later' },
-  { value: 'MEETING_BOOKED', label: 'Meeting booked' },
-  { value: 'NOT_INTERESTED', label: 'Not interested' },
-  { value: 'WRONG_CONTACT', label: 'Wrong contact' },
-];
-/**
- * Call log for an assigned lead. Logging a call records what happened; it never
- * changes the qualification, the fit score or the decision.
- */
-function CallsTab({
-  base,
-  lead,
-  calls,
-  onSaved,
-}: {
-  base: string;
-  lead: Lead;
-  calls: CallLog[];
-  onSaved: () => void;
-}) {
-  const [outcome, setOutcome] = useState<CallOutcome>('CONNECTED');
-  const [notes, setNotes] = useState('');
-  const [error, setError] = useState(''),
-    [busy, setBusy] = useState(false);
-  return (
-    <div className="feedback-tab">
-      <div className="call-contact">
-        <div>
-          <span className="eyebrow">WHO TO CALL</span>
-          <strong>{lead.contact_name || 'No contact person recorded'}</strong>
-          {lead.contact_role && <small>{lead.contact_role}</small>}
-        </div>
-        <div className="call-contact-channels">
-          {lead.contact_phone ? (
-            <a href={'tel:' + lead.contact_phone.replace(/[^+d]/g, '')}>
-              <Phone size={14} />
-              {lead.contact_phone}
-            </a>
-          ) : (
-            <span className="muted">No phone number</span>
-          )}
-          {lead.contact_email ? (
-            <a href={'mailto:' + lead.contact_email}>
-              <Mail size={14} />
-              {lead.contact_email}
-            </a>
-          ) : (
-            <span className="muted">No email address</span>
-          )}
-        </div>
-      </div>
-      <p className="muted">
-        {lead.assigned_to_name
-          ? 'Assigned to ' + lead.assigned_to_name + '.'
-          : 'This lead is not assigned to anyone yet.'}{' '}
-        Logging a call records what happened; it never changes the qualification or the decision.
-      </p>
-      {error && <Alert>{error}</Alert>}
-      <form
-        className="form-stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError('');
-          try {
-            await api(base + '/calls', { method: 'POST', body: json({ outcome, notes }) });
-            setNotes('');
-            onSaved();
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label>
-          How did the call go?
-          <select value={outcome} onChange={(e) => setOutcome(e.target.value as CallOutcome)}>
-            {callOutcomes.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Call notes
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={4}
-            minLength={5}
-            maxLength={4000}
-            required
-            placeholder="Who you spoke to, what they said, and what happens next."
-          />
-        </label>
-        <div className="form-actions">
-          <button className="button primary" disabled={busy}>
-            {busy ? <Spinner text="Saving…" /> : 'Log this call'}
-          </button>
-        </div>
-      </form>
-      <h3>Call history</h3>
-      {calls.length ? (
-        calls.map((call) => (
-          <div className="human-review-history" key={call.id}>
-            <div>
-              <span className={'next-step call-' + call.outcome.toLowerCase()}>
-                {callOutcomes.find((o) => o.value === call.outcome)?.label || call.outcome}
-              </span>
-              <small>
-                {call.created_by} · {date(call.created_at)}
-              </small>
-            </div>
-            <p>{call.notes}</p>
-          </div>
-        ))
-      ) : (
-        <p className="muted">No calls logged yet.</p>
-      )}
-    </div>
-  );
 }

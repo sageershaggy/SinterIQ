@@ -2,8 +2,16 @@ import type { Express } from 'express';
 import { z } from 'zod';
 import { audit, now, type DB } from './database';
 import { blocksSchema } from './email-blocks';
-import { emailTemplates, templateCategories } from './email-templates';
+import { starterTemplates, templateCategories } from './email-templates';
 import { mergeFields } from './email-blocks';
+import {
+  blocksToHtml,
+  fileIds,
+  hasContent,
+  maxEmailHtml,
+  parseEmailHtml,
+  sanitizeEmailHtml,
+} from '../shared/email-html';
 import { HttpError, positiveId, requiredText, text } from './validation';
 import type { Project, User } from '../shared/types';
 
@@ -51,7 +59,12 @@ const draftSchema = z
     to: z.string().max(200),
     subject: z.string().max(200),
     preview_text: z.string().max(200),
-    blocks: draftBlocks,
+    // Drafts from the block editor keep their blocks; the rich-text editor saves HTML.
+    blocks: draftBlocks.optional(),
+    html: z.string().max(maxEmailHtml).optional(),
+    funnel_id: z.number().int().positive().nullable().optional(),
+    attachment_ids: z.array(z.number().int().positive()).max(10).optional(),
+    followups: z.array(z.string().max(40)).max(2).optional(),
   })
   .strict();
 
@@ -113,6 +126,9 @@ export function installWorkspace(
   app.put('/api/projects/:projectId/leads/:leadId/email/draft', (req, res) => {
     const { project, id } = scope(req.params.projectId, req.params.leadId, req.user);
     const { revision, ...document } = draftSchema.parse(req.body);
+    // A draft is stored in the same allowlisted form it will be sent in.
+    if (document.html !== undefined)
+      document.html = sanitizeEmailHtml(document.html, { projectId: project.id });
     db.transaction(() => {
       const current = savedDraft(db, project.id, id, req.user.id);
       if (revision !== current.revision)
@@ -136,13 +152,18 @@ export function installWorkspace(
       .all(project.id) as Array<Record<string, unknown>>;
     res.json({
       templates: [
-        ...custom.map(({ blocks_json, ...row }) => ({
-          ...row,
-          id: 'project-' + row.id,
-          blocks: JSON.parse(String(blocks_json)),
-          custom: true,
-        })),
-        ...emailTemplates,
+        ...custom.map(({ blocks_json, html, ...row }) => {
+          const blocks = JSON.parse(String(blocks_json));
+          return {
+            ...row,
+            id: 'project-' + row.id,
+            blocks,
+            // Every template opens in the rich-text editor, however it was saved.
+            html: String(html || '') || blocksToHtml(blocks),
+            custom: true,
+          };
+        }),
+        ...starterTemplates,
       ],
       categories: templateCategories,
       merge_fields: mergeFields,
@@ -157,18 +178,39 @@ export function installWorkspace(
         description: text(300).default(''),
         subject: requiredText(200),
         preview_text: text(200).default(''),
-        blocks: blocksSchema,
+        blocks: blocksSchema.optional(),
+        html: z.string().max(maxEmailHtml).optional(),
       })
       .strict()
+      .refine(
+        (template) => Boolean(template.blocks?.length) || Boolean(template.html && hasContent(template.html)),
+        'Write the template before saving it.',
+      )
       .parse(req.body);
+    // Images in a template are this project's uploads, so the template carries them along.
+    const html =
+      input.html !== undefined ? sanitizeEmailHtml(input.html, { projectId: project.id }) : '';
+    const images = fileIds(parseEmailHtml(html, { projectId: project.id }), project.id);
+    if (
+      images.length &&
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) n FROM email_files WHERE project_id=? AND id IN (${images.map(() => '?').join(',')})`,
+          )
+          .get(project.id, ...images) as { n: number }
+      ).n !== images.length
+    )
+      throw new HttpError(400, 'An image in this template is no longer available. Add it again.');
     const count = db
       .prepare('SELECT COUNT(*) total FROM project_email_templates WHERE project_id=?')
       .get(project.id) as { total: number };
     if (count.total >= 100)
       throw new HttpError(409, 'This project already has 100 saved templates.');
+    const blocks = input.blocks || [];
     const result = db
       .prepare(
-        'INSERT INTO project_email_templates (project_id,name,category,description,subject,preview_text,blocks_json,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO project_email_templates (project_id,name,category,description,subject,preview_text,blocks_json,html,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
       )
       .run(
         project.id,
@@ -177,43 +219,19 @@ export function installWorkspace(
         input.description,
         input.subject,
         input.preview_text,
-        JSON.stringify(input.blocks),
+        JSON.stringify(blocks),
+        html,
         req.user.name,
         now(),
       );
     audit(db, project.id, req.user.name, 'email.template_created', input.name);
-    res.status(201).json({ ...input, id: 'project-' + result.lastInsertRowid, custom: true });
+    res.status(201).json({
+      ...input,
+      blocks,
+      html: html || blocksToHtml(blocks),
+      id: 'project-' + result.lastInsertRowid,
+      custom: true,
+    });
   });
-  const access = `n.account_id=? AND EXISTS (SELECT 1 FROM leads l WHERE l.id=n.lead_id AND l.project_id=n.project_id)
-    AND (?='admin' OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id=n.project_id AND m.account_id=?))`;
-  app.get('/api/notifications', (req, res) => {
-    const params = [req.user.id, req.user.role, req.user.id];
-    const items = db
-      .prepare(
-        `SELECT n.*,p.name project_name FROM notifications n JOIN projects p ON p.id=n.project_id WHERE ${access} ORDER BY n.id DESC LIMIT 50`,
-      )
-      .all(...params);
-    const { unread } = db
-      .prepare(`SELECT COUNT(*) unread FROM notifications n WHERE ${access} AND read_at IS NULL`)
-      .get(...params) as { unread: number };
-    res.json({ items, unread });
-  });
-  app.post('/api/notifications/read', (req, res) => {
-    const { through_id } = z
-      .object({ through_id: z.number().int().positive() })
-      .strict()
-      .parse(req.body);
-    db.prepare(
-      `UPDATE notifications AS n SET read_at=? WHERE ${access} AND id<=? AND read_at IS NULL`,
-    ).run(now(), req.user.id, req.user.role, req.user.id, through_id);
-    res.json({ ok: true });
-  });
-  app.post('/api/notifications/:id/read', (req, res) => {
-    const id = positiveId(req.params.id);
-    const result = db
-      .prepare(`UPDATE notifications AS n SET read_at=COALESCE(read_at,?) WHERE ${access} AND id=?`)
-      .run(now(), req.user.id, req.user.role, req.user.id, id);
-    if (!result.changes) throw new HttpError(404, 'Notification not found.');
-    res.json({ ok: true });
-  });
+  // The notification feed (lead and project updates, grouped) lives in server/notifications.ts.
 }
