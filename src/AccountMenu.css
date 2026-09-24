@@ -1,0 +1,142 @@
+/* The account, top right: profile, workspace settings and sign out. */
+.account-menu {
+  position: relative;
+}
+.account-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 3px 9px 3px 13px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #6d7765;
+  font-size: 11px;
+}
+.account-trigger:hover,
+.account-trigger[aria-expanded='true'],
+.account-trigger.is-active {
+  background: #f2f5ec;
+  border-color: var(--line);
+  color: #3f5039;
+}
+.account-trigger-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.account-trigger > svg {
+  color: #86907f;
+  transition: transform 0.15s ease;
+}
+.account-trigger > svg.is-open {
+  transform: rotate(180deg);
+}
+.account-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #e6ebdb;
+  border: 3px solid #f9faf6;
+  outline: 1px solid #dfe5d6;
+  color: #4f6444;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.3px;
+}
+.account-avatar.large {
+  width: 40px;
+  height: 40px;
+  font-size: 12px;
+  border-color: #fff;
+}
+.account-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 120;
+  width: min(280px, calc(100vw - 32px));
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px #1a302326;
+}
+.account-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 12px;
+}
+.account-profile > div {
+  min-width: 0;
+}
+.account-profile strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.account-profile small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.account-workspace {
+  margin: 0 2px 6px;
+  padding: 0 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+.account-dropdown [role='menuitem'] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ink);
+}
+.account-dropdown [role='menuitem'] > svg {
+  color: #6b7a62;
+}
+.account-dropdown [role='menuitem']:hover,
+.account-dropdown [role='menuitem']:focus-visible,
+.account-dropdown [role='menuitem'].is-current {
+  background: #f2f6ec;
+}
+.account-dropdown [role='menuitem']:focus-visible {
+  outline-offset: -2px;
+}
+.account-dropdown .account-signout {
+  color: #8c3a31;
+}
+.account-dropdown .account-signout > svg {
+  color: #a24d42;
+}
+/* The same profile at the top of "Your account" in Workspace settings. */
+.settings-profile {
+  padding: 0 0 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+@media (max-width: 760px) {
+  .account-trigger {
+    padding: 3px 6px;
+    gap: 6px;
+  }
+  .account-trigger-label {
+    display: none;
+  }
+}

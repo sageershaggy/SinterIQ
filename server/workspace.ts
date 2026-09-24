@@ -184,36 +184,5 @@ export function installWorkspace(
     audit(db, project.id, req.user.name, 'email.template_created', input.name);
     res.status(201).json({ ...input, id: 'project-' + result.lastInsertRowid, custom: true });
   });
-  const access = `n.account_id=? AND EXISTS (SELECT 1 FROM leads l WHERE l.id=n.lead_id AND l.project_id=n.project_id)
-    AND (?='admin' OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id=n.project_id AND m.account_id=?))`;
-  app.get('/api/notifications', (req, res) => {
-    const params = [req.user.id, req.user.role, req.user.id];
-    const items = db
-      .prepare(
-        `SELECT n.*,p.name project_name FROM notifications n JOIN projects p ON p.id=n.project_id WHERE ${access} ORDER BY n.id DESC LIMIT 50`,
-      )
-      .all(...params);
-    const { unread } = db
-      .prepare(`SELECT COUNT(*) unread FROM notifications n WHERE ${access} AND read_at IS NULL`)
-      .get(...params) as { unread: number };
-    res.json({ items, unread });
-  });
-  app.post('/api/notifications/read', (req, res) => {
-    const { through_id } = z
-      .object({ through_id: z.number().int().positive() })
-      .strict()
-      .parse(req.body);
-    db.prepare(
-      `UPDATE notifications AS n SET read_at=? WHERE ${access} AND id<=? AND read_at IS NULL`,
-    ).run(now(), req.user.id, req.user.role, req.user.id, through_id);
-    res.json({ ok: true });
-  });
-  app.post('/api/notifications/:id/read', (req, res) => {
-    const id = positiveId(req.params.id);
-    const result = db
-      .prepare(`UPDATE notifications AS n SET read_at=COALESCE(read_at,?) WHERE ${access} AND id=?`)
-      .run(now(), req.user.id, req.user.role, req.user.id, id);
-    if (!result.changes) throw new HttpError(404, 'Notification not found.');
-    res.json({ ok: true });
-  });
+  // The notification feed (lead and project updates, grouped) lives in server/notifications.ts.
 }

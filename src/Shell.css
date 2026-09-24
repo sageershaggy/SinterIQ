@@ -1,0 +1,114 @@
+/* App shell: the sidebar holds navigation only; the account and the quote live in the header.
+   This file loads before index.css, so rules that adjust an existing selector are written one
+   step more specific (.app-shell) rather than relying on order. */
+
+/* The workspace is named in a plain sentence, not a box that looks like a menu. */
+.app-shell .sidebar > .brand {
+  margin-bottom: 12px;
+}
+.workspace-line {
+  margin: 0 14px 30px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8fa087;
+}
+.workspace-line strong {
+  font-weight: 550;
+  color: #cfdcc0;
+}
+.workspace-line span {
+  display: block;
+  font-size: 10px;
+}
+
+/* "All projects" opens a drop-down of every project, each with its own sections. */
+.all-projects-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  margin-bottom: 3px;
+}
+.all-projects-row > .nav-item {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.all-projects-row.is-active {
+  background: #d5e8b2;
+}
+.all-projects-row.is-active > .nav-item.active {
+  background: transparent;
+}
+.all-projects-row.is-active > .project-nav-toggle {
+  color: #2b4530;
+  opacity: 0.7;
+}
+.all-projects-row.is-active > .project-nav-toggle:hover {
+  opacity: 1;
+  background: #203e2512;
+}
+.sidebar-projects {
+  margin: 2px 0 12px 12px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+.sidebar-projects-empty {
+  padding: 8px 11px;
+  font-size: 11px;
+  color: #8fa087;
+}
+/* The sidebar ends with the project list: nothing is pinned to its foot any more. */
+.app-shell .sidebar {
+  padding-bottom: 24px;
+}
+
+/* The quote, as one line of the header. */
+.header-quote {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #7a8672;
+  white-space: nowrap;
+}
+.header-quote > svg {
+  color: #86a563;
+}
+.header-quote > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-quote strong {
+  font-weight: 550;
+  color: #445640;
+}
+@media (max-width: 1440px) {
+  .header-quote-more {
+    display: none;
+  }
+}
+/* Too narrow for three things on one line: the quote takes its own line under the crumbs. */
+@media (max-width: 900px) {
+  .topbar:has(.header-quote) {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 58px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+    row-gap: 4px;
+  }
+  .header-quote {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: flex-start;
+    margin: 0;
+    font-size: 11px;
+  }
+}

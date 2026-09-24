@@ -1,0 +1,91 @@
+/* Which mailbox a project sends from and receives at, above its mailbox. */
+.mailbox-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0 0 22px;
+}
+.mailbox-status-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 16px 18px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.mailbox-status-card.needs-setup {
+  background: #fffcf4;
+  border-color: #ecdfbd;
+}
+.mailbox-status-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #eef4e6;
+  color: #55744a;
+}
+.needs-setup .mailbox-status-icon {
+  background: #f6eed8;
+  color: #8a6b25;
+}
+.mailbox-status-text {
+  flex: 1;
+  min-width: 0;
+}
+.mailbox-status-label {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #74826b;
+}
+.mailbox-status-text strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.mailbox-status-text strong span {
+  font-weight: 450;
+  color: #56654f;
+}
+.mailbox-status-text p {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #56654f;
+  overflow-wrap: anywhere;
+}
+.needs-setup .mailbox-status-text p {
+  color: #7a5c17;
+  font-weight: 550;
+}
+.mailbox-status-text small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.mailbox-status-fix {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+@media (max-width: 900px) {
+  .mailbox-status {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .mailbox-status-card {
+    flex-wrap: wrap;
+  }
+}

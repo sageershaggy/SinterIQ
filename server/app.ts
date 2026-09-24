@@ -11,6 +11,8 @@ import { createFunnels } from './funnels';
 import { createMailbox } from './mailbox';
 import { messageIds, type ReadInbox } from './imap';
 import { installWorkspace, notifyLead, savedDraft } from './workspace';
+import { installNotifications, notifyProject } from './notifications';
+import { installResearchLog, recordResearchPass } from './research-log';
 import { fetchWebsite, checkedUrl } from './network';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
@@ -421,6 +423,8 @@ export function createApp(options: {
     getProject,
     scope: (project, user) => leadFilter(project, leadQuerySchema.parse({}), user.id),
   });
+  installNotifications(app, db);
+  installResearchLog(app, db, getProject);
   funnels.install(app);
   mailbox.install(app);
   installCalls(app, db, getProject);
@@ -734,6 +738,7 @@ export function createApp(options: {
       'training.analyzed',
       'Proposed rules generated; approval required before use.',
     );
+    notifyProject(db, project.id, 'training_draft', 'New training draft ready for review');
     res.json({ rubric: result, revision: project.revision });
   });
   app.get('/api/projects/:projectId/training/analyses', (req, res) => {
@@ -790,6 +795,7 @@ export function createApp(options: {
         'training.published',
         'Version ' + version + ' approved for qualification.',
       );
+      notifyProject(db, project.id, 'training_published', 'Training v' + version + ' published');
     })();
     res.json(getProject(db, project.id));
   });
@@ -964,6 +970,13 @@ export function createApp(options: {
             problems.length +
             ' rows could not be read.',
         );
+        if (created || updated)
+          notifyProject(
+            db,
+            project.id,
+            'leads_imported',
+            `Leads imported: ${created} new, ${updated} updated`,
+          );
         return {
           updated,
           total: rows.length,
@@ -1320,6 +1333,7 @@ export function createApp(options: {
           );
         }
       })();
+    recordResearchPass(db, project.id, lead, req.user.name, outcome, applied);
     res.json({ ...outcome, applied });
   });
   app.post('/api/projects/:projectId/leads/:leadId/qualify', expensiveLimit, async (req, res) => {

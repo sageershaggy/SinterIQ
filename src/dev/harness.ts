@@ -12,6 +12,7 @@
 import { harnessAssignees, leadFacets, leadsPage } from './lead-fixtures';
 import { callStage } from '../../shared/calls';
 import type { CallOutcome } from '../../shared/types';
+import { shellRoutes } from './shell-fixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -312,6 +313,7 @@ const callQueue = {
 };
 
 const routes: Array<[RegExp, (route: string) => unknown]> = [
+  ...shellRoutes,
   [
     /^\/auth\/me$/,
     () => ({

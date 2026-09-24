@@ -1,0 +1,22 @@
+/* Updates panel additions: what kind of update it is, and how many identical ones it stands for. */
+.notification-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #eef3e7;
+  color: #58764a;
+}
+.notification-repeat {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e3ecd6;
+  color: #45613a;
+  font-size: 10px;
+  font-weight: 650;
+  vertical-align: 1px;
+}
