@@ -14,7 +14,7 @@ import { harnessAssignees, leadFacets, leadsPage } from './lead-fixtures';
 import { callStage } from '../../shared/calls';
 import type { CallOutcome } from '../../shared/types';
 import { shellRoutes } from './shell-fixtures';
-import { emailRoutes, emailWrites } from './emailFixtures';
+import { contactEnrollments, emailRoutes, emailWrites } from './emailFixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -345,6 +345,8 @@ const researched = {
   qualified_revision: 3,
   next_step: 'SEND_EMAIL',
   outreach_status: 'NOT_CONTACTED',
+  // A researched person already in a campaign (People at this company, emailFixtures.ts).
+  campaigns: contactEnrollments,
   runs: [
     {
       id: 31,
@@ -432,6 +434,7 @@ const researchProfile = {
     ['Rashid Al Mansoori', 'Procurement Manager', 'purchasing', 'procurement@amusement-whitewater.example.com', '+971 4 555 0142', true],
     ['Leila Haddad', 'Marketing Assistant', 'marketing', '', '', true],
     ['Omar Nasser', 'Site operations', 'other', '', '', false],
+    ['Sara Khan', 'Marketing Manager', 'marketing', 'sara.k@amusement-whitewater.example.com', '', true],
   ].map(([name, role, role_category, email, phone, relevant], index) => ({
     id: index + 1,
     project_id: 2,

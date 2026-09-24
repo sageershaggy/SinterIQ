@@ -6,6 +6,7 @@ import type { AiConfig, Generate, ResearchContext } from './ai';
 import type { WebsitePage } from './network';
 import { HttpError, leadSchema, positiveId } from './validation';
 import { recordResearchPass } from './research-log';
+import { stopContactSequences } from './funnels';
 import type {
   Evidence,
   Lead,
@@ -484,28 +485,41 @@ export function createLeadResearch(deps: {
       res.json(contactsOf(project, lead.id));
     });
     // Erasure. The row holds the quote that names the person, so deleting it deletes the
-    // citation too; nothing about them is left behind in the research log.
+    // citation too; nothing about them is left behind in the research log. Whatever campaign
+    // mail was still due to reach them stops in the same transaction.
     app.delete('/api/projects/:projectId/leads/:leadId/contacts/:contactId', (req, res) => {
       const { project, lead } = scope(req);
-      const result = db
-        .prepare('DELETE FROM lead_contacts WHERE id=? AND project_id=? AND lead_id=?')
-        .run(positiveId(req.params.contactId), project.id, lead.id);
-      if (!result.changes) throw new HttpError(404, 'Contact not found on this lead.');
-      audit(db, project.id, req.user.name, 'lead.contact_removed', lead.name);
+      const contactId = positiveId(req.params.contactId);
+      db.transaction(() => {
+        const result = db
+          .prepare('DELETE FROM lead_contacts WHERE id=? AND project_id=? AND lead_id=?')
+          .run(contactId, project.id, lead.id);
+        if (!result.changes) throw new HttpError(404, 'Contact not found on this lead.');
+        stopContactSequences(db, project.id, lead.id, [contactId]);
+        audit(db, project.id, req.user.name, 'lead.contact_removed', lead.name);
+      })();
       res.json(contactsOf(project, lead.id));
     });
     app.delete('/api/projects/:projectId/leads/:leadId/contacts', (req, res) => {
       const { project, lead } = scope(req);
-      const result = db
-        .prepare('DELETE FROM lead_contacts WHERE project_id=? AND lead_id=?')
-        .run(project.id, lead.id);
-      audit(
-        db,
-        project.id,
-        req.user.name,
-        'lead.contact_removed',
-        lead.name + ': ' + result.changes + ' researched contact(s) erased.',
-      );
+      db.transaction(() => {
+        const ids = (
+          db
+            .prepare('SELECT id FROM lead_contacts WHERE project_id=? AND lead_id=?')
+            .all(project.id, lead.id) as Array<{ id: number }>
+        ).map((row) => row.id);
+        const result = db
+          .prepare('DELETE FROM lead_contacts WHERE project_id=? AND lead_id=?')
+          .run(project.id, lead.id);
+        stopContactSequences(db, project.id, lead.id, ids);
+        audit(
+          db,
+          project.id,
+          req.user.name,
+          'lead.contact_removed',
+          lead.name + ': ' + result.changes + ' researched contact(s) erased.',
+        );
+      })();
       res.json([]);
     });
   }

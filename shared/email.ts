@@ -30,6 +30,22 @@ export interface CampaignOption {
   /** Empty when the lead can join; otherwise the reason it cannot, in plain words. */
   blocked: string;
 }
+/** "Add to campaign" for one person found on the company's website. */
+export interface ContactCampaigns {
+  contact: { id: number; name: string; email: string };
+  /** Every campaign in the project; `blocked` says why this person cannot join one now. */
+  campaigns: CampaignOption[];
+}
+/** A contact just added to a campaign: when each of its messages is due. */
+export interface ContactEnrolled {
+  enrolled: number;
+  skipped: number;
+  funnel_id: number;
+  funnel_name: string;
+  funnel_status: 'DRAFT' | 'ACTIVE' | 'PAUSED';
+  /** One ISO time per message, message 1 first. */
+  schedule: string[];
+}
 export interface CampaignSuggestion {
   funnel_id: number | null;
   reason: string;

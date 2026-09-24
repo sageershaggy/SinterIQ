@@ -611,6 +611,11 @@ export function CompanyOverview({
           void erase('/contacts/' + contact.id, contact.name + ' was erased from this lead.')
         }
         onEraseAll={() => void erase('/contacts', 'Researched contacts erased from this lead.')}
+        base={base}
+        onEnrolled={(message) => {
+          notify?.(message);
+          onChanged?.();
+        }}
       />
       <section className="company-card">
         <div className="section-title">

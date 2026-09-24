@@ -172,6 +172,12 @@ export function createMailbox(options: {
       `UPDATE funnel_enrollments SET status='STOPPED',reason='Recipient response received.',stop_cause='REPLIED',updated_at=?
       WHERE recipient=? AND status IN ('QUEUED','SENDING') AND created_at<=? ${stops}`,
     ).run(now(), mail.from_email, mail.received_at);
+    // "If the lead responds, no further follow-ups": a reply from anyone at the company stops
+    // the sequences to the other people there as well, under the same stop-on-reply option.
+    db.prepare(
+      `UPDATE funnel_enrollments SET status='STOPPED',reason='Someone at this company replied, so the follow-ups stopped.',stop_cause='REPLIED',updated_at=?
+      WHERE project_id=? AND lead_id=? AND status IN ('QUEUED','SENDING') AND created_at<=? ${stops}`,
+    ).run(now(), projectId, leadId, mail.received_at);
     notifyLead(db, projectId, leadId, 'email', 'New email reply received');
   }
   async function runSync(projectId: number) {

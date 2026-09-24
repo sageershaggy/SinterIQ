@@ -4,7 +4,7 @@ import { audit, hash, now, type DB } from './database';
 import { assertAddress, RecipientRejected, type Send, type SmtpConfig } from './email';
 import { HttpError } from './validation';
 import { notifyLead } from './workspace';
-import { recordBounce } from './bounces';
+import { primaryMailTo, recordBounce } from './bounces';
 
 /** A stored file going out with a message; a cid makes it an inline image. */
 export interface OutgoingFile {
@@ -49,12 +49,19 @@ export function suppressRecipient(db: DB, recipient: string, reason: string) {
       `UPDATE funnel_enrollments SET status='UNSUBSCRIBED',reason=?,updated_at=?
       WHERE status IN ('QUEUED','SENDING','BLOCKED') AND (
         recipient=?
-        OR lead_id IN (
-          SELECT lead_id FROM email_deliveries
-          WHERE recipient=? AND status IN ('SENDING','SENT','UNKNOWN')
-        )
+        OR (contact_id IS NULL AND lead_id IN (${primaryMailTo("'SENDING','SENT','UNKNOWN'")}))
       )`,
     ).run(reason, now(), recipient, recipient);
+    // An opt-out is an answer from the company: the sequences to the other people there stop
+    // too. They did not opt out themselves, so their own addresses stay unsuppressed.
+    db.prepare(
+      `UPDATE funnel_enrollments SET status='STOPPED',stop_cause='OPTED_OUT',
+        reason='Someone at this company opted out, so the follow-ups stopped.',updated_at=?
+      WHERE status IN ('QUEUED','SENDING','BLOCKED') AND lead_id IN (
+        SELECT lead_id FROM email_deliveries
+        WHERE recipient=? AND status IN ('SENDING','SENT','UNKNOWN')
+      )`,
+    ).run(now(), recipient);
     db.prepare(
       "UPDATE leads SET outreach_status='UNSUBSCRIBED' WHERE lower(trim(contact_email))=?",
     ).run(recipient);
