@@ -34,3 +34,6 @@ playwright-report/
 .claude-flow/policy/
 .swarm/hnsw.index
 .swarm/hnsw.metadata.json
+# Temporary git worktrees Claude Code creates for parallel agents; their work reaches main
+# through their branches, never through these folders.
+.claude/worktrees/
