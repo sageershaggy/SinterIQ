@@ -99,6 +99,8 @@ export interface Qualification {
   gaps: string[];
   next_steps: string[];
   outreach: Outreach;
+  /** The research pass that ran (or was reused) before this evaluation. */
+  research?: import('./research').QualificationResearch;
 }
 export interface Evidence {
   id: string;
@@ -286,6 +288,13 @@ export interface ResearchOutcome {
   refused: Array<{ field: ResearchableField; value: string; reason: string }>;
   notes: string[];
   applied?: ResearchableField[];
+  /** People the company's own pages name, each kept only with a sentence that names them. */
+  contacts?: import('./research').ContactFinding[];
+  contacts_added?: number;
+  /** Sentences from the site that bear on the qualification rules. */
+  facts?: import('./research').ResearchFact[];
+  /** The company pages that were read. */
+  pages?: string[];
 }
 /** One project's mailbox. The password is never returned to the browser. */
 export interface EmailSettings {

@@ -41,7 +41,7 @@ export function recordResearchPass(
   applied: string[],
 ) {
   db.prepare(
-    `INSERT INTO lead_research_runs
+    `INSERT INTO research_log_passes
       (project_id,lead_id,website,discovered,tried_json,applied_json,notes_json,refused_count,created_at,created_by)
     SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM leads WHERE id=? AND project_id=?)`,
   ).run(
@@ -147,7 +147,7 @@ export function installResearchLog(
       const passes = scope('r');
       const runs = db
         .prepare(
-          `SELECT r.*,l.name lead_name FROM lead_research_runs r
+          `SELECT r.*,l.name lead_name FROM research_log_passes r
           JOIN leads l ON l.id=r.lead_id AND l.project_id=r.project_id
           WHERE ${passes.where} ORDER BY r.id DESC LIMIT ?`,
         )
@@ -294,7 +294,8 @@ export function installResearchLog(
           gaps: parseList(row.gaps)
             .slice(0, 5)
             .map((gap) => gap.slice(0, 300)),
-          pages: parseList(row.pages).slice(0, 6),
+          // Research facts and the page itself can cite the same address; list each page once.
+          pages: [...new Set(parseList(row.pages))].slice(0, 6),
         } satisfies QualificationEntry);
     }
 

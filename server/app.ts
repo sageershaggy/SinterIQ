@@ -32,7 +32,6 @@ import {
   isOpenRouterBase,
   DEFAULT_JEV_MODEL,
 } from './decisions';
-import { researchMissing, researchableFields } from './enrich';
 import { installCalls, recordCall } from './calls';
 import { installCrm, leadCrm } from './crm';
 import {
@@ -42,6 +41,8 @@ import {
   leadOrder,
   leadSummary,
 } from './lead-filters';
+import { createLeadResearch } from './lead-research';
+import { createTrainingLibrary } from './training-library';
 import {
   HttpError,
   positiveId,
@@ -83,7 +84,6 @@ import { nextStepFor, nextStepBands, leadStatusFilters } from '../shared/types';
 import type {
   Lead,
   Project,
-  ResearchableField,
   Source,
   TrainingSnapshot,
   Evidence,
@@ -429,6 +429,15 @@ export function createApp(options: {
   mailbox.install(app);
   installCalls(app, db, getProject);
   installCrm(app, db, getProject);
+  const leadResearch = createLeadResearch({
+    db,
+    getProject,
+    generate: callAi,
+    fetchPage: readWebsite,
+  });
+  leadResearch.install(app);
+  const trainingLibrary = createTrainingLibrary({ db, getProject });
+  trainingLibrary.install(app);
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -633,10 +642,19 @@ export function createApp(options: {
       const project = getProject(db, positiveId(req.params.projectId), req.user);
       assertRevision(project.revision, req.body.revision);
       if (!req.file) throw new HttpError(400, 'Select a training document.');
-      const content = await single('document:' + req.user.id, () => readDocument(req.file!));
       const filename = req.file.originalname.replace(/[^\p{L}\p{N} ._-]/gu, '_').slice(0, 180);
-      res.status(201).json(
-        addSource(
+      // Every attempt is logged, read or refused, so the library can show what happened to it.
+      const attempt = {
+        projectId: project.id,
+        filename,
+        size: req.file.size,
+        actor: req.user.name,
+      };
+      let content: string;
+      let source: { id: number };
+      try {
+        content = await single('document:' + req.user.id, () => readDocument(req.file!));
+        source = addSource(
           project,
           {
             kind: 'document',
@@ -647,8 +665,13 @@ export function createApp(options: {
             mime: 'application/octet-stream',
           },
           req.user.name,
-        ),
-      );
+        ) as { id: number };
+      } catch (error) {
+        trainingLibrary.recordUpload({ ...attempt, error });
+        throw error;
+      }
+      trainingLibrary.recordUpload({ ...attempt, sourceId: source.id, content });
+      res.status(201).json(source);
     },
   );
   app.post('/api/projects/:projectId/sources/website', expensiveLimit, async (req, res) => {
@@ -1227,128 +1250,34 @@ export function createApp(options: {
       const config = getAiConfig(db, secrets);
       if (!config.api_key && !options.generate)
         throw new HttpError(409, 'Configure an AI provider in Settings first.');
-      return researchMissing({
-        lead,
-        config,
-        generate: options.generate || generate,
-        fetchPage: options.fetchWebsite,
-      });
+      // The pass, the gap-only write-back and the research log live in server/lead-research.ts.
+      return leadResearch.run({ project, lead, actor: req.user.name, origin: 'manual', config });
     });
-    const applied: ResearchableField[] = [];
-    const fieldSchemas = leadSchema.shape as Record<string, z.ZodTypeAny>;
-    if (outcome.proposals.length)
-      db.transaction(() => {
-        // Re-read inside the transaction. The pass spends real time on the network, and
-        // someone may have typed the very value we are about to write: research fills gaps,
-        // it never overwrites what a person entered.
-        const current = db
-          .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
-          .get(lead.id, project.id) as Record<string, string> | undefined;
-        if (!current) throw new HttpError(404, 'Lead not found in this project.');
-        const site = outcome.proposals.find((proposal) => proposal.field === 'website');
-        const clash = site
-          ? (db
-              .prepare(
-                "SELECT name FROM leads WHERE project_id=? AND id<>? AND website_key=? AND website_key<>''",
-              )
-              .get(project.id, lead.id, websiteKey(site.value)) as { name: string } | undefined)
-          : undefined;
-        if (clash) {
-          // The site belongs to another lead here, so this record is most likely a duplicate
-          // of that one. Nothing read from that page is written, not merely the address.
-          for (const proposal of outcome.proposals)
-            outcome.refused.push({
-              field: proposal.field,
-              value: proposal.value,
-              reason:
-                'That website already belongs to ' +
-                clash.name +
-                ' in this project, so this lead may be a duplicate of it. Nothing was saved.',
-            });
-          return;
-        }
-        for (const proposal of outcome.proposals) {
-          // The column name comes from this closed list, never from the response.
-          if (!researchableFields.includes(proposal.field)) continue;
-          if (String(current[proposal.field] ?? '').trim()) {
-            outcome.refused.push({
-              field: proposal.field,
-              value: proposal.value,
-              reason: 'This was filled in while the research was running, so it was left alone.',
-            });
-            continue;
-          }
-          // The same validator the edit form uses, so research can never write a value a
-          // person could not have typed, and the lead stays saveable afterwards.
-          const parsed = fieldSchemas[proposal.field]?.safeParse(proposal.value);
-          if (!parsed?.success) {
-            outcome.refused.push({
-              field: proposal.field,
-              value: proposal.value,
-              reason: 'The lead form would not accept that value, so it was not saved.',
-            });
-            continue;
-          }
-          const value = parsed.data as string;
-          if (proposal.field === 'website')
-            db.prepare('UPDATE leads SET website=?,website_key=? WHERE id=? AND project_id=?').run(
-              value,
-              websiteKey(value),
-              lead.id,
-              project.id,
-            );
-          else
-            db.prepare('UPDATE leads SET ' + proposal.field + '=? WHERE id=? AND project_id=?').run(
-              value,
-              lead.id,
-              project.id,
-            );
-          // Keep the provenance with the value, not only in this response.
-          db.prepare(
-            `INSERT INTO lead_research_citations
-              (project_id,lead_id,field,value,evidence,source_url,created_at,created_by)
-            VALUES (?,?,?,?,?,?,?,?)`,
-          ).run(
-            project.id,
-            lead.id,
-            proposal.field,
-            value,
-            proposal.evidence,
-            proposal.source_url,
-            now(),
-            req.user.name,
-          );
-          applied.push(proposal.field);
-        }
-        if (applied.length) {
-          db.prepare(
-            'UPDATE leads SET revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
-          ).run(now(), lead.id, project.id);
-          audit(
-            db,
-            project.id,
-            req.user.name,
-            'lead.researched',
-            'Filled ' + applied.join(', ') + ' for ' + lead.name + ' from ' + outcome.website + '.',
-          );
-        }
-      })();
-    recordResearchPass(db, project.id, lead, req.user.name, outcome, applied);
-    res.json({ ...outcome, applied });
+    res.json(outcome);
   });
   app.post('/api/projects/:projectId/leads/:leadId/qualify', expensiveLimit, async (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
+    const before = getLead(db, project, positiveId(req.params.leadId));
     if (!project.active_version || project.revision !== project.trained_revision)
       throw new HttpError(409, 'Publish the current project training before qualifying leads.');
     const version = db
       .prepare('SELECT snapshot_json FROM training_versions WHERE project_id=? AND version=?')
       .get(project.id, project.active_version) as { snapshot_json: string };
     const snapshot = JSON.parse(version.snapshot_json) as TrainingSnapshot;
-    const result = await single('lead:' + lead.id, async () => {
+    const result = await single('lead:' + before.id, async () => {
       const config = getAiConfig(db, secrets);
       if (!config.api_key && !options.generate)
         throw new HttpError(409, 'Configure an AI provider in Settings first.');
+      // Research before judging: a blank field is a reason to look, never evidence that the
+      // fact does not exist. The pass writes only what it proves, so the record is re-read.
+      const { research, facts } = await leadResearch.beforeQualification({
+        project,
+        lead: before,
+        actor: req.user.name,
+        config,
+      });
+      const lead = getLead(db, project, before.id);
+      const found = leadResearch.qualificationContext(project, lead, research, facts, 'E0');
       const evidence: Evidence[] = [
         {
           id: 'E1',
@@ -1356,12 +1285,9 @@ export function createApp(options: {
           title: 'User-provided lead record (unverified)',
           url: '',
           captured_at: now(),
-          content: JSON.stringify({
-            name: lead.name,
-            country: lead.country,
-            industry: lead.industry,
-            notes: lead.notes,
-          }),
+          // Only what was entered in the record. Details research found arrive separately,
+          // with the sentence and page each came from.
+          content: JSON.stringify({ name: lead.name, ...found.recordOnly, notes: lead.notes }),
         },
       ];
       const fetchFailures: string[] = [];
@@ -1400,9 +1326,24 @@ export function createApp(options: {
           captured_at: now(),
           content: previous,
         });
-      const qualified = await qualify(config, snapshot, lead, evidence, callAi);
+      if (found.evidence) evidence.push({ ...found.evidence, id: 'E' + (evidence.length + 1) });
+      const qualified = await qualify(config, snapshot, lead, evidence, callAi, {
+        research: found.context,
+        origin: found.origin,
+      });
       if (fetchFailures.length)
         qualified.next_steps.push('Some pages were unavailable: ' + fetchFailures.join(', '));
+      if (research) {
+        qualified.research = research;
+        // "Impossible to assess" is not an answer when nobody looked. When the website could
+        // not be verified, the result says what was checked, whatever the model wrote.
+        if (!research.website_found) {
+          const checked = research.checked.slice(0, 4).join(' ');
+          qualified.summary +=
+            ' Research before this evaluation could not verify a company website. ' + checked;
+          qualified.gaps.push('Research checked: ' + checked);
+        }
+      }
       return db.transaction(() => {
         const current = getProject(db, project.id),
           currentLead = getLead(db, current, lead.id);

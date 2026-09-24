@@ -55,6 +55,8 @@ async function fixture(
       }),
     generate: async (_config, _system, input) => {
       const snapshot = (input as { approved_training: TrainingSnapshot }).approved_training;
+      // The research pass that runs before qualification: nothing to find here.
+      if (!snapshot) return {};
       return {
         decision: 'QUALIFIED',
         score: 100,

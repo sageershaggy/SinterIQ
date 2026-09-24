@@ -65,6 +65,15 @@ const project = {
   updated_at: ago(30),
 };
 
+// Real sentences, repeated to the lengths the team's library has, so the graph view's links
+// between sources and rules are the ones a real library would draw.
+const fill = (text: string, length: number) => text.repeat(Math.ceil(length / text.length)).slice(0, length);
+const siteText =
+  'Innovista Digital Solutions builds websites, e-commerce stores and UI/UX for startups and growing SMB service businesses. We run SEO and digital marketing, and design AI workflow automation and custom AI development that replace manual processes. ';
+const notesText =
+  'A lead is qualified when it is a genuine business with a working website, roughly 2 to 200 employees, and a visible digital gap such as an outdated website or weak search visibility. Exclude companies that are permanently closed or dormant, duplicates of an existing record, and existing clients already approached in the same campaign. ';
+const templatesText =
+  'Subject: A faster website for your business. Hello, we noticed your website could load faster on mobile and rank better in search. Innovista helps growing businesses with redesigned websites, e-commerce and AI automation. ';
 const sources = [
   {
     id: 1,
@@ -72,7 +81,7 @@ const sources = [
     title: 'innovistadigi.com',
     kind: 'website',
     url: 'https://innovistadigi.com',
-    content: 'x'.repeat(8503),
+    content: fill(siteText, 8503),
     filename: '',
     sha256: 'a',
     created_at: '2026-09-12T08:05:00.000Z',
@@ -83,7 +92,7 @@ const sources = [
     title: 'A lead is qualified when they meet most of these:',
     kind: 'note',
     url: '',
-    content: 'x'.repeat(551),
+    content: fill(notesText, 551),
     filename: '',
     sha256: 'b',
     created_at: '2026-09-12T08:10:00.000Z',
@@ -94,7 +103,7 @@ const sources = [
     title: 'Email_Templates.csv',
     kind: 'document',
     url: '',
-    content: 'x'.repeat(9151),
+    content: fill(templatesText, 9151),
     filename: 'Email_Templates.csv',
     sha256: 'c',
     created_at: '2026-09-17T08:00:00.000Z',
@@ -312,6 +321,223 @@ const callQueue = {
   ],
 };
 
+// A lead that research and qualification have both been through: the lead page's full state.
+const site = 'https://amusement-whitewater.example.com';
+const researched = {
+  ...lead,
+  id: 8,
+  name: 'Amusement Whitewater (L.L.C)',
+  website: site,
+  country: 'United Arab Emirates',
+  city: 'Dubai',
+  industry: 'Water ride design and installation',
+  contact_role: '',
+  contact_email: 'dmaww@emirates.net.ae',
+  notes: 'Imported from the GCC events list. Met at the leisure expo.',
+  revision: 3,
+  status: 'QUALIFIED',
+  score: 75,
+  confidence: 82,
+  latest_run_id: 31,
+  training_version: 10,
+  qualified_revision: 3,
+  next_step: 'SEND_EMAIL',
+  outreach_status: 'NOT_CONTACTED',
+  runs: [
+    {
+      id: 31,
+      lead_id: 8,
+      project_id: 2,
+      training_version: 10,
+      lead_revision: 3,
+      provider: 'openai_compatible',
+      model: 'gpt-4.1-mini',
+      created_at: ago(40),
+      created_by: 'Workspace Administrator',
+      evidence: [],
+      result: {
+        decision: 'QUALIFIED',
+        score: 75,
+        confidence: 82,
+        summary:
+          'A Dubai company that designs and installs water rides, with an outdated website and manual enquiry handling that an Innovista website and automation project could address.',
+        criteria: rubric.criteria.map((criterion, index) => ({
+          criterion,
+          outcome: index === 1 ? 'UNKNOWN' : 'MATCH',
+          evidence:
+            index === 1
+              ? 'The website does not state a headcount, and research could not confirm one.'
+              : 'The company website describes this directly.',
+          source_ids: index === 1 ? [] : ['E2'],
+        })),
+        exclusions: rubric.exclusions.map((criterion) => ({
+          criterion,
+          outcome: 'NO_MATCH',
+          evidence: 'The website shows an operating company with current projects.',
+          source_ids: ['E2'],
+        })),
+        gaps: ['Company size is not published on the website.'],
+        next_steps: ['Confirm the team size on the first call.'],
+        outreach: {
+          contact_name: '',
+          contact_role: '',
+          contact_source_ids: [],
+          why_qualified: 'Operating SMB with a clear website and automation need.',
+          call_script: 'Ask how enquiries from the website reach the sales team today.',
+        },
+        research: {
+          ran: true,
+          origin: 'qualification',
+          website: site,
+          website_found: true,
+          filled: ['website', 'industry', 'city'],
+          contacts_added: 3,
+          checked: ['Candidate websites checked: amusement-whitewater.example.com.'],
+        },
+      },
+    },
+  ],
+};
+const researchProfile = {
+  citations: [
+    {
+      field: 'website',
+      value: site,
+      evidence: '',
+      source_url: site,
+      created_at: ago(41),
+      created_by: 'Workspace Administrator',
+    },
+    {
+      field: 'industry',
+      value: researched.industry,
+      evidence:
+        'Amusement Whitewater designs and installs water rides and splash parks for resorts across the Gulf.',
+      source_url: site,
+      created_at: ago(41),
+      created_by: 'Workspace Administrator',
+    },
+    {
+      field: 'city',
+      value: 'Dubai',
+      evidence: 'Our design studio and workshop are in Al Quoz, Dubai.',
+      source_url: site + '/contact',
+      created_at: ago(41),
+      created_by: 'Workspace Administrator',
+    },
+  ],
+  contacts: [
+    ['Rashid Al Mansoori', 'Procurement Manager', 'purchasing', 'procurement@amusement-whitewater.example.com', '+971 4 555 0142', true],
+    ['Leila Haddad', 'Marketing Assistant', 'marketing', '', '', true],
+    ['Omar Nasser', 'Site operations', 'other', '', '', false],
+  ].map(([name, role, role_category, email, phone, relevant], index) => ({
+    id: index + 1,
+    project_id: 2,
+    lead_id: 8,
+    name,
+    role,
+    role_category,
+    email,
+    phone,
+    relevant,
+    source_url: site + '/contact',
+    evidence:
+      'For supplier enquiries contact ' + name + ', ' + role + (email ? ', at ' + email : '') + '.',
+    created_at: ago(41),
+    created_by: 'Workspace Administrator',
+  })),
+  runs: [
+    {
+      id: 5,
+      origin: 'qualification',
+      lead_revision: 2,
+      result_revision: 3,
+      created_at: ago(41),
+      created_by: 'Workspace Administrator',
+      website: site,
+      discovered: true,
+      tried: ['amusement-whitewater.example.com'],
+      pages: [site, site + '/contact', site + '/about'],
+      applied: ['website', 'industry', 'city'],
+      refused: [],
+      notes: [
+        'The contact email uses emirates.net.ae, a shared email provider, so it says nothing about the company’s own website.',
+      ],
+      contacts_added: 3,
+      facts: [],
+    },
+  ],
+  roles_sought: { categories: ['purchasing', 'marketing'], phrases: ['marketing assistant'] },
+};
+const emptyProfile = {
+  citations: [],
+  contacts: [],
+  runs: [],
+  roles_sought: { categories: [], phrases: [] },
+};
+const uploads = [
+  {
+    id: 2,
+    project_id: 2,
+    source_id: null,
+    filename: 'Funded companies - scanned.pdf',
+    size: 2_400_000,
+    status: 'FAILED',
+    characters: 0,
+    words: 0,
+    reason:
+      'At least 40 characters of readable text are required. Scanned PDFs need OCR before upload.',
+    created_at: ago(90),
+    created_by: 'Workspace Administrator',
+  },
+  {
+    id: 1,
+    project_id: 2,
+    source_id: 3,
+    filename: 'Email_Templates.csv',
+    size: 11_400,
+    status: 'READ',
+    characters: 9151,
+    words: 1402,
+    reason: '',
+    created_at: '2026-09-17T08:00:00.000Z',
+    created_by: 'Workspace Administrator',
+  },
+];
+const graph = {
+  version: 10,
+  leads_evaluated: 23,
+  decisions: { QUALIFIED: 6, NEEDS_REVIEW: 14, NOT_A_TARGET: 3 },
+  rules: [
+    ...rubric.criteria.map((text, index) => ({
+      kind: 'criterion',
+      text,
+      meets: [18, 7, 11, 5][index],
+      does_not_meet: [2, 3, 4, 6][index],
+      unable: [3, 13, 8, 12][index],
+    })),
+    ...rubric.exclusions.map((text, index) => ({
+      kind: 'exclusion',
+      text,
+      meets: [2, 1, 0, 0][index],
+      does_not_meet: [17, 20, 21, 22][index],
+      unable: [4, 2, 2, 1][index],
+    })),
+  ],
+};
+// Train AI in the harness proposes a small, visible change against published v10.
+const proposal = {
+  rubric: {
+    ...rubric,
+    criteria: [
+      ...rubric.criteria.slice(0, 3),
+      'Has received significant investment or funding in the last two years, or is actively hiring AI engineers for app development.',
+    ],
+    questions: [],
+  },
+  revision: 10,
+};
+
 const routes: Array<[RegExp, (route: string) => unknown]> = [
   ...shellRoutes,
   [
@@ -326,6 +552,21 @@ const routes: Array<[RegExp, (route: string) => unknown]> = [
   [/^\/projects\/2$/, () => ({ ...project, sources, versions })],
   [/^\/projects\/2\/activity$/, () => activity],
   [/^\/projects\/2\/leads\/7$/, () => lead],
+  [/^\/projects\/2\/leads\/8$/, () => researched],
+  [/^\/projects\/2\/leads\/7\/research-profile$/, () => emptyProfile],
+  [/^\/projects\/2\/leads\/8\/research-profile$/, () => researchProfile],
+  [/^\/projects\/2\/leads\/8\/contacts$/, () => researchProfile.contacts],
+  [/^\/projects\/2\/training\/uploads$/, () => uploads],
+  [/^\/projects\/2\/training\/graph$/, () => graph],
+  [
+    /^\/projects\/2\/training\/versions\/10$/,
+    () => ({
+      version: 10,
+      created_at: ago(60),
+      created_by: 'Workspace Administrator',
+      snapshot: { project, rubric, sources },
+    }),
+  ],
   [/^\/projects\/2\/leads(\?.*)?$/, (route) => leadsPage(route, lead)],
   [/^\/projects\/2\/lead-facets$/, () => leadFacets],
   [/^\/notifications/, () => ({ items: [], unread: 0 })],
@@ -345,6 +586,8 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const method = (init?.method || 'GET').toUpperCase();
   const match = routes.find(([pattern]) => pattern.test(route));
   const headers = { 'Content-Type': 'application/json' };
+  if (method === 'POST' && /^\/projects\/2\/training\/analyze$/.test(route))
+    return new Response(JSON.stringify(proposal), { status: 200, headers });
   if (method !== 'GET') return new Response('{}', { status: 200, headers });
   // A missing fixture answers like a missing route, so the screen shows its own error instead
   // of receiving the wrong shape and taking the whole app down.

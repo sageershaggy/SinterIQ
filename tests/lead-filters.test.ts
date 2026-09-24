@@ -25,6 +25,9 @@ const rubric = {
 };
 const generated: Generate = async (_config, system, input) => {
   if (system.includes('proposed qualification rubric')) return rubric;
+  // Qualification researches a record with blank fields first; this model finds nothing.
+  if (system.includes('candidate official website domains')) return { domains: [] };
+  if (system.includes('extract company facts')) return { fields: [], notes: [] };
   const snapshot = (input as { approved_training: TrainingSnapshot }).approved_training;
   return {
     decision: 'QUALIFIED',
