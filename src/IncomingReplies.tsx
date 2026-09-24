@@ -3,6 +3,7 @@ import { Reply, RefreshCw, Send } from 'lucide-react';
 import type { IncomingMessage } from '../shared/mailbox';
 import { api, json } from './api';
 import { Alert, Spinner } from './ui';
+import './EmailTab.css';
 
 export function ReplyForm({
   base,

@@ -1,6 +1,7 @@
 import { ImapFlow, type FetchMessageObject } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { resolveMailHost } from './email';
+import { detectBounce, type BounceReport } from './bounces';
 
 export interface InboxConfig {
   host: string;
@@ -24,6 +25,8 @@ export interface ReceivedMail {
   received_at: string;
   attachment_count: number;
   notice: string;
+  /** Present when the message is a delivery-status report (a bounce or a delay). */
+  bounce?: BounceReport;
 }
 export type ReadInbox = (
   config: InboxConfig,
@@ -81,6 +84,10 @@ export async function parseReceived(message: FetchMessageObject): Promise<Receiv
     if ((parsed.text?.length || 0) > 20_000)
       output.notice += 'Long message: showing the first 20,000 characters.';
     if (output.attachment_count) output.notice += ' Attachments remain in your original mailbox.';
+    // Read from the raw report: its machine-readable part names the address that failed and
+    // quotes the Message-ID of the original, which is what ties it to our own mail.
+    const bounce = detectBounce(message.source.toString('latin1'), output);
+    if (bounce) output.bounce = bounce;
   } catch {
     output.notice += 'This message could not be previewed. Open it in your original mailbox.';
   }

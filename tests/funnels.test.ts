@@ -1345,10 +1345,11 @@ test('funnel step To is checked at enrollment and used as the delivery recipient
 });
 
 test('follow-up email templates ship with the library and scheduleNextSend honors send_time', () => {
+  // Named for where they sit in a sequence: the 2nd, the 3rd and the last email.
   const names = emailTemplates.map((t) => t.name);
-  assert.ok(names.includes('Follow-up Email 1'));
-  assert.ok(names.includes('Follow-up Email 2'));
-  assert.ok(names.includes('Follow-up Email 3'));
+  assert.ok(names.includes('2nd email · first follow-up'));
+  assert.ok(names.includes('3rd email · second follow-up'));
+  assert.ok(names.includes('Last email · final follow-up'));
 
   const noon = new Date(2026, 0, 15, 12, 0, 0, 0).getTime();
   assert.equal(scheduleNextSend(noon, 0, ''), noon);

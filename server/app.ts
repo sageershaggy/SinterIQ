@@ -9,8 +9,11 @@ import { installAuth, adminOnly } from './auth';
 import { createOutreach, installUnsubscribe } from './outreach';
 import { createFunnels } from './funnels';
 import { createMailbox } from './mailbox';
-import { messageIds, type ReadInbox } from './imap';
-import { installWorkspace, notifyLead, savedDraft } from './workspace';
+import type { ReadInbox } from './imap';
+import { installWorkspace, notifyLead } from './workspace';
+import { installCompose } from './compose';
+import { installEmailFiles } from './email-files';
+import { installArchive } from './archive';
 import { fetchWebsite, checkedUrl } from './network';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
@@ -41,29 +44,16 @@ import {
   feedbackSchema,
   callSchema,
   emailSettingsSchema,
-  emailSendSchema,
   requiredText,
   text,
   webUrl,
 } from './validation';
 import { readImportRows, mapImportRows } from './import';
 import {
-  applyMerge,
-  blocksSchema,
-  validateBlocks,
-  checkBlocks,
-  mergeFields,
-  renderBlocks,
-  mergeContext,
-} from './email-blocks';
-import { emailTemplates, templateCategories } from './email-templates';
-import {
   assertAddress,
   assertMailHost,
-  draftFor,
   getEmailConfig,
   publicEmailSettings,
-  renderEmail,
   saveEmailConfig,
   sendMail,
   type Send,
@@ -169,6 +159,8 @@ export const leadQuerySchema = z.object({
   search: text(200).default(''),
   status: z.enum(leadStatusFilters).default('ALL'),
   assigned_to: z.enum(['any', 'me']).default('any'),
+  // Archived leads are hidden from every default list; 'only' lists them for restoring.
+  archived: z.enum(['exclude', 'only']).default('exclude'),
 });
 /**
  * One filter definition, shared by the lead list and the CSV export so both agree.
@@ -177,6 +169,7 @@ export const leadQuerySchema = z.object({
 function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, viewerId: number) {
   let where = 'l.project_id=?';
   const params: (string | number)[] = [project.id];
+  where += input.archived === 'only' ? ' AND l.archived_at IS NOT NULL' : ' AND l.archived_at IS NULL';
   if (input.search) {
     where +=
       " AND (l.name LIKE ? ESCAPE '\\' OR l.industry LIKE ? ESCAPE '\\' OR l.country LIKE ? ESCAPE '\\' OR l.city LIKE ? ESCAPE '\\' OR l.contact_name LIKE ? ESCAPE '\\')";
@@ -405,6 +398,9 @@ export function createApp(options: {
   installWorkspace(app, db, getProject);
   funnels.install(app);
   mailbox.install(app);
+  installEmailFiles(app, { db, getProject });
+  installCompose(app, { db, secrets, getProject, getLead, outreach, funnels, generate: callAi });
+  installArchive(app, { db, getProject });
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -1962,179 +1958,6 @@ export function createApp(options: {
       res.json({ ok: true, sent_to: config.from_email });
     },
   );
-  /** The draft a researcher edits before sending, built from the approved qualification. */
-  app.get('/api/projects/:projectId/leads/:leadId/email/draft', (req, res) => {
-    const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
-    const run = lead.latest_run_id
-      ? (db
-          .prepare('SELECT result_json FROM qualification_runs WHERE id=? AND project_id=?')
-          .get(lead.latest_run_id, project.id) as { result_json: string } | undefined)
-      : undefined;
-    const result = run ? JSON.parse(run.result_json) : undefined;
-    res.json({
-      ...draftFor(lead, result?.outreach?.why_qualified || '', result?.outreach?.call_script || ''),
-      to: lead.contact_email,
-      saved: savedDraft(db, project.id, lead.id, req.user.id),
-      mailbox: (() => {
-        const config = getEmailConfig(db, secrets, project.id);
-        return {
-          configured: config.configured,
-          from_email: config.from_email,
-          from_name: config.from_name,
-        };
-      })(),
-    });
-  });
-  app.post('/api/projects/:projectId/leads/:leadId/email', mailLimit, async (req, res) => {
-    const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
-    const input = emailSendSchema.parse(req.body);
-    const config = getEmailConfig(db, secrets, project.id);
-    if (!config.configured)
-      throw new HttpError(
-        409,
-        'This project has no mailbox yet. An administrator sets one up in the project Mailbox settings.',
-      );
-    // One header-safe recipient per request. Bulk sending is a separate, throttled path.
-    const to = assertAddress(input.to, 'The recipient address');
-    let inReplyTo: string | undefined;
-    if (input.reply_to_message_id) {
-      const incoming = db
-        .prepare(
-          'SELECT internet_message_id,from_email FROM incoming_messages WHERE project_id=? AND lead_id=? AND id=?',
-        )
-        .get(project.id, lead.id, input.reply_to_message_id) as
-        { internet_message_id: string; from_email: string } | undefined;
-      if (!incoming) throw new HttpError(404, 'Reply message not found for this lead.');
-      if (incoming.from_email.toLowerCase() !== to.toLowerCase())
-        throw new HttpError(400, 'Send this reply to the original sender.');
-      inReplyTo = messageIds(incoming.internet_message_id)[0];
-    }
-    // The subject carries merge fields too. A template subject is the most visible place
-    // an unresolved {{company}} would surface, so it is merged like the body.
-    const mergedSubject = applyMerge(
-      input.subject.replace(/[\r\n]+/g, ' ').trim(),
-      mergeContext(lead, config.from_name || req.user.name),
-    );
-    if (mergedSubject.missing.length)
-      throw new HttpError(400, 'Fill missing subject fields: ' + mergedSubject.missing.join(', '));
-    const subject = mergedSubject.merged;
-    // The editor sends a block document; a quick note sends plain text.
-    const built = input.blocks
-      ? (() => {
-          const { blocks, problems } = validateBlocks(input.blocks);
-          if (problems.length) throw new HttpError(400, problems[0].message);
-          if (!blocks.length) throw new HttpError(400, 'Add at least one block before sending.');
-          const rendered = renderBlocks(blocks, {
-            context: mergeContext(lead, config.from_name || req.user.name),
-            fromName: config.from_name,
-            fromEmail: config.from_email,
-            signature: config.signature,
-            previewText: input.preview_text,
-            includeFooter: false,
-          });
-          if (rendered.missingMergeFields.length)
-            throw new HttpError(
-              400,
-              'Fill missing message fields: ' + rendered.missingMergeFields.join(', '),
-            );
-          return { html: rendered.html, text: rendered.text };
-        })()
-      : (() => {
-          if (input.body.trim().length < 20)
-            throw new HttpError(400, 'Write a message of at least 20 characters.');
-          const body = applyMerge(
-            input.body,
-            mergeContext(lead, config.from_name || req.user.name),
-          );
-          if (body.missing.length)
-            throw new HttpError(400, 'Fill missing message fields: ' + body.missing.join(', '));
-          return {
-            html: renderEmail({
-              body: body.merged,
-              fromName: config.from_name,
-              fromEmail: config.from_email,
-              signature: config.signature,
-              leadName: lead.name,
-              includeFooter: false,
-            }),
-            text: body.merged,
-          };
-        })();
-    const id = await outreach.send({
-      projectId: project.id,
-      leadId: lead.id,
-      actor: req.user.name,
-      config,
-      to,
-      subject,
-      text: built.text,
-      html: built.html,
-      inReplyTo,
-      beforeSend: () => {
-        const account = db
-          .prepare('SELECT id,username,name,role FROM accounts WHERE id=? AND active=1')
-          .get(req.user.id) as User | undefined;
-        if (!account) throw new HttpError(409, 'Your account is no longer active.');
-        getProject(db, project.id, account);
-        const current = getLead(db, project, lead.id);
-        if (current.revision !== lead.revision)
-          throw new HttpError(409, 'Lead details changed. Review the message again.');
-      },
-    });
-    res.status(201).json({ id });
-  });
-  /** Starter templates for the editor, grouped the way the picker shows them. */
-  app.get('/api/email/templates', (_req, res) =>
-    res.json({
-      templates: emailTemplates,
-      categories: templateCategories,
-      merge_fields: mergeFields,
-    }),
-  );
-  /** Renders a block document for the desktop/mobile preview, and returns the pre-send checks. */
-  app.post('/api/projects/:projectId/leads/:leadId/email/preview', (req, res) => {
-    const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const lead = getLead(db, project, positiveId(req.params.leadId));
-    const input = z
-      .object({
-        subject: text(200).default(''),
-        preview_text: text(200).default(''),
-        blocks: z.array(z.unknown()).max(60),
-      })
-      .strict()
-      .parse(req.body);
-    // Problems are reported, not thrown: the editor shows them beside the block.
-    const { blocks, problems } = validateBlocks(input.blocks);
-    if (!blocks.length)
-      return void res.json({ html: '', text: '', warnings: [], block_problems: problems });
-    const config = getEmailConfig(db, secrets, project.id);
-    const rendered = renderBlocks(blocks, {
-      context: mergeContext(lead, config.from_name || req.user.name),
-      fromName: config.from_name,
-      fromEmail: config.from_email || 'not-configured@example.invalid',
-      signature: config.signature,
-      previewText: input.preview_text,
-    });
-    res.json({
-      html: rendered.html,
-      text: rendered.text,
-      missing_merge_fields: [
-        ...new Set([
-          ...rendered.missingMergeFields,
-          ...applyMerge(input.subject, mergeContext(lead, config.from_name || req.user.name))
-            .missing,
-        ]),
-      ],
-      warnings: checkBlocks(
-        blocks,
-        rendered,
-        applyMerge(input.subject, mergeContext(lead, config.from_name || req.user.name)).merged,
-      ),
-      block_problems: problems,
-    });
-  });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
     if (res.headersSent) return;
