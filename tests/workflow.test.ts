@@ -130,6 +130,10 @@ test('preserved company research is project-scoped and supports AI context witho
 const generated: Generate = async (_config, system, input) => {
   if (system.includes('health check assistant')) return { ok: true };
   if (system.includes('proposed qualification rubric')) return rubric;
+  // Qualification researches a record with blank fields first. This model knows no domains and
+  // reads nothing from a page, so research changes nothing unless a test says otherwise.
+  if (system.includes('candidate official website domains')) return { domains: [] };
+  if (system.includes('extract company facts')) return { fields: [], notes: [] };
   const snapshot = (input as { approved_training: TrainingSnapshot }).approved_training;
   return {
     decision: 'QUALIFIED',
@@ -484,6 +488,7 @@ test('malformed, invented-source and incomplete-rule AI results cannot change le
   const f = fixture(async (...args) => {
     if (mode === 'invalid') return { decision: 'QUALIFIED', score: 100 };
     const result = (await generated(...args)) as Qualification;
+    if (!result.criteria) return result; // a research prompt, answered by the stub
     if (mode === 'source') result.criteria[0].source_ids = ['invented'];
     else result.criteria.pop();
     return result;
@@ -513,6 +518,7 @@ test('malformed, invented-source and incomplete-rule AI results cannot change le
 test('low confidence and missing public website evidence route to review', async () => {
   const f = fixture(async (...args) => {
     const result = (await generated(...args)) as Qualification;
+    if (!result.criteria) return result; // a research prompt, answered by the stub
     result.confidence = 50;
     result.criteria.forEach((c) => (c.source_ids = ['E1']));
     result.exclusions.forEach((c) => (c.source_ids = ['E1']));
@@ -1161,9 +1167,16 @@ interface ResearchReply {
  * through to the ordinary stub, so a research test can set its lead up the way the product
  * does — qualified and reviewed, and therefore able to go stale.
  */
+/**
+ * Closed while a helper sets a lead up by qualifying it. Qualification researches a record with
+ * blank fields first, and a helper that wants the blanks to survive must not find anything.
+ */
+const researchGate = { open: true };
 function researchModel(reply: (company: string) => ResearchReply): Generate {
   return async (config, system, input) => {
-    const answer = reply(String((input as { company?: string }).company ?? ''));
+    const answer = researchGate.open
+      ? reply(String((input as { company?: string }).company ?? ''))
+      : {};
     if (system.includes('candidate official website domains'))
       return { domains: answer.domains || [] };
     if (system.includes('extract company facts'))
@@ -1184,7 +1197,13 @@ async function reviewedPumpLead(f: ReturnType<typeof fixture>) {
   });
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const base = '/projects/' + project.id + '/leads/' + created.body.id;
-  const run = await f.post(base + '/qualify', {});
+  researchGate.open = false;
+  let run;
+  try {
+    run = await f.post(base + '/qualify', {});
+  } finally {
+    researchGate.open = true;
+  }
   assert.equal(run.status, 200, JSON.stringify(run.body));
   const reviewed = await f.post(base + '/review', {
     run_id: run.body.run_id,

@@ -52,6 +52,7 @@ import { EmailComposer } from './EmailComposer';
 import { IncomingReplies } from './IncomingReplies';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
+import { FitBands, LeadHeader, fitBandsText, ruleOutcomeLabel } from './LeadInsight';
 import { leadLink, type LeadTab } from './navigation';
 
 export default function Leads({
@@ -559,7 +560,7 @@ export default function Leads({
                     <th>Company</th>
                     <th>Contact</th>
                     <th>Industry / location</th>
-                    <th>Fit score</th>
+                    <th title={fitBandsText}>Fit score</th>
                     <th>Next step</th>
                     <th>Assigned to</th>
                     <th>Qualification</th>
@@ -1289,10 +1290,19 @@ function LeadDetail({
     setBusy(true);
     setError('');
     try {
-      await api(base + '/qualify', { method: 'POST', body: json({}) });
+      const { result } = await api<{ result: Run['result'] }>(base + '/qualify', {
+        method: 'POST',
+        body: json({}),
+      });
       setRefresh((n) => n + 1);
       onChange();
-      notify('Qualification complete. Review the evidence and reasoning.');
+      // Qualification researches blank details first; say so when it filled any.
+      const filled = result.research?.ran ? result.research.filled.length : 0;
+      notify(
+        (filled
+          ? 'Researched first and filled ' + filled + (filled === 1 ? ' detail' : ' details') + '. '
+          : '') + 'Qualification complete. Review the evidence and reasoning.',
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1384,118 +1394,26 @@ function LeadDetail({
         <ChevronLeft size={16} />
         Back to leads
       </button>
-      <div className="page-heading company-heading">
-        <div>
-          <span className="eyebrow">COMPANY WORKSPACE</span>
-          <h1>{lead?.name || 'Loading company…'}</h1>
-          <p>Research, conversations and follow-ups in one place.</p>
-        </div>
-        <button
-          type="button"
-          className="button primary"
-          onClick={openEmailComposer}
-          aria-label={'Create email for ' + (lead?.name || 'company')}
-        >
-          <Mail size={16} />
-          Create email
-        </button>
-      </div>
+      {/* The header carries the page's main actions and the fit score. The contact details
+          and notes live in the overview, with where each one came from. */}
+      <LeadHeader
+        project={project}
+        lead={lead}
+        missing={lead ? missingDetails(lead).length : 0}
+        ready={!!ready}
+        busy={busy}
+        researching={researching}
+        onEdit={() => setEditing(true)}
+        onResearch={() => void researchLead()}
+        onQualify={ready ? () => void qualifyLead() : onTraining}
+        onEmail={openEmailComposer}
+      />
       <div className="lead-detail">
         {error && <Alert>{error}</Alert>}
         {!lead ? (
           <Spinner text="Loading research…" />
         ) : (
           <>
-            <div className="detail-heading">
-              <div>
-                <div className="detail-meta">
-                  <ExternalLink url={lead.website} />
-                  <span>
-                    {[lead.city, lead.country].filter(Boolean).join(', ') || 'Location unknown'}
-                  </span>
-                  <span>{lead.industry || 'Industry unknown'}</span>
-                  {lead.employee_count && <span>{lead.employee_count} employees</span>}
-                </div>
-                {(lead.contact_name || lead.contact_phone || lead.contact_email) && (
-                  <div className="detail-meta detail-contact">
-                    {lead.contact_name && (
-                      <span>
-                        <Users size={13} />
-                        {lead.contact_name}
-                        {lead.contact_role ? ' · ' + lead.contact_role : ''}
-                      </span>
-                    )}
-                    {lead.contact_phone && (
-                      <a href={'tel:' + lead.contact_phone.replace(/[^+\d]/g, '')}>
-                        <Phone size={13} />
-                        {lead.contact_phone}
-                      </a>
-                    )}
-                    {lead.contact_email && (
-                      <a href={'mailto:' + lead.contact_email}>
-                        <Mail size={13} />
-                        {lead.contact_email}
-                      </a>
-                    )}
-                  </div>
-                )}
-                <div className="detail-badges">
-                  <Badge value={lead.stale ? 'stale' : lead.status}>
-                    {lead.stale ? 'Requalification needed' : label(lead.status)}
-                  </Badge>
-                  {lead.reviewed && <Badge value="ready">Human reviewed</Badge>}
-                  {lead.assigned_to_name && (
-                    <Badge value="ready">Calling: {lead.assigned_to_name}</Badge>
-                  )}
-                </div>
-              </div>
-              <button
-                className="button secondary"
-                onClick={() => setEditing(true)}
-                disabled={busy || researching}
-              >
-                <Pencil size={15} />
-                Edit context
-              </button>
-            </div>
-            <div className="detail-qualify">
-              <div>
-                <strong>
-                  {ready
-                    ? 'Qualify with training v' + project.active_version
-                    : 'Project training is not ready'}
-                </strong>
-                <small>
-                  {lead.latest_run_id
-                    ? 'A new analysis keeps all previous results for comparison.'
-                    : 'Analyze this company using approved project knowledge and public website evidence.'}
-                </small>
-              </div>
-              <button
-                className="button primary"
-                disabled={busy || researching}
-                onClick={ready ? qualifyLead : onTraining}
-              >
-                {busy ? (
-                  <Spinner text="Working…" />
-                ) : (
-                  <>
-                    <Sparkles size={16} />
-                    {ready
-                      ? lead.latest_run_id
-                        ? 'Run AI qualification again'
-                        : 'Run AI qualification'
-                      : 'Open training'}
-                  </>
-                )}
-              </button>
-            </div>
-            {lead.notes && (
-              <details className="context-details">
-                <summary>Lead context</summary>
-                <p className="preserve-text">{lead.notes}</p>
-              </details>
-            )}
             {lead.legacy_json && <PreviousResearch lead={lead} projectName={project.name} />}
             <>
               <div className="result-tabs" role="tablist" aria-label="Lead details">
@@ -1541,8 +1459,10 @@ function LeadDetail({
               </div>
               {tab === 'overview' && (
                 <CompanyOverview
+                  base={base}
                   lead={lead}
                   onTab={setTab}
+                  notify={notify}
                   research={{
                     missing: missingDetails(lead),
                     outcome: research,
@@ -1620,7 +1540,7 @@ function LeadDetail({
                       <small>AI DECISION</small>
                       <Badge value={run.result.decision} />
                     </div>
-                    <div>
+                    <div title={fitBandsText}>
                       <small>FIT SCORE</small>
                       <strong>
                         {run.result.score}
@@ -1639,6 +1559,10 @@ function LeadDetail({
                       <strong>v{run.training_version}</strong>
                     </div>
                   </div>
+                  <FitBands
+                    inline
+                    score={run.id === lead.latest_run_id && !lead.stale ? run.result.score : null}
+                  />
                   <section className="reasoning-summary">
                     <span className="eyebrow">WHY THIS DECISION</span>
                     <p>{run.result.summary}</p>
@@ -1691,10 +1615,14 @@ function LeadDetail({
                     </section>
                   )}
                   <h3>Qualification criteria</h3>
-                  <Criteria items={run.result.criteria} />
+                  <p className="rule-legend">
+                    Every approved rule is evaluated as Meets, Does not meet or Unable to verify.
+                    Unable to verify is used only after research could not settle it.
+                  </p>
+                  <Criteria items={run.result.criteria} kind="criterion" />
                   <h3>Exclusion checks</h3>
                   {run.result.exclusions.length ? (
-                    <Criteria items={run.result.exclusions} />
+                    <Criteria items={run.result.exclusions} kind="exclusion" />
                   ) : (
                     <p className="muted">No exclusion rules defined in this training version.</p>
                   )}
@@ -1948,7 +1876,13 @@ function LeadDetail({
     </section>
   );
 }
-function Criteria({ items }: { items: CriterionResult[] }) {
+function Criteria({
+  items,
+  kind,
+}: {
+  items: CriterionResult[];
+  kind: 'criterion' | 'exclusion';
+}) {
   return (
     <div className="criteria-list">
       {items.map((item, index) => (
@@ -1956,7 +1890,7 @@ function Criteria({ items }: { items: CriterionResult[] }) {
           <div>
             <span className="criterion-number">{String(index + 1).padStart(2, '0')}</span>
             <strong>{item.criterion}</strong>
-            <Badge value={item.outcome} />
+            <Badge value={item.outcome}>{ruleOutcomeLabel(item.outcome, kind)}</Badge>
           </div>
           <p>{item.evidence}</p>
           <div className="evidence-tags">

@@ -16,8 +16,16 @@ import {
   CircleHelp,
 } from 'lucide-react';
 import type { Project, Source, Rubric, TrainingSnapshot } from '../shared/types';
+import type { SourceUpload, TrainingGraph } from '../shared/research';
 import { api, date, json } from './api';
 import { Alert, Badge, Empty, ExternalLink, GrowingTextarea, Modal, Spinner } from './ui';
+import {
+  SourceStatus,
+  TrainedNotice,
+  TrainingDiff,
+  TrainingGraphView,
+  UploadProblems,
+} from './TrainingInsight';
 
 interface Version {
   version: number;
@@ -79,6 +87,38 @@ export default function Training({
     Array<{ id: number; rubric: Rubric; revision: number; created_at: string }>
   >([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  // What happened to each upload, how the published rules played out, and the published
+  // version itself, for showing what a draft changes. None of these blocks the page.
+  const [uploads, setUploads] = useState<SourceUpload[]>([]),
+    [uploadsKey, setUploadsKey] = useState(0),
+    [graph, setGraph] = useState<TrainingGraph | null>(null),
+    [published, setPublished] = useState<TrainingSnapshot | null>(null),
+    [trained, setTrained] = useState(false);
+  const graphRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api<SourceUpload[]>(base + '/training/uploads')
+      .then((data) => !cancelled && setUploads(data))
+      .catch((e) => !cancelled && setError(e.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, project.revision, uploadsKey]);
+  useEffect(() => {
+    let cancelled = false;
+    api<TrainingGraph>(base + '/training/graph')
+      .then((data) => !cancelled && setGraph(data))
+      .catch((e) => !cancelled && setError(e.message));
+    if (project.active_version)
+      api<{ snapshot: TrainingSnapshot }>(base + '/training/versions/' + project.active_version)
+        .then((data) => !cancelled && setPublished(data.snapshot))
+        .catch((e) => !cancelled && setError(e.message));
+    else setPublished(null);
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, project.active_version]);
+  const publishedHashes = published ? new Set(published.sources.map((s) => s.sha256)) : null;
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -135,6 +175,7 @@ export default function Training({
       });
       onChange();
       setDirty(false);
+      setTrained(false);
       notify(message);
     });
   }
@@ -152,6 +193,11 @@ export default function Training({
     setEditor(next);
     await saveRubric(next, 'Open questions cleared. You can publish this training version now.');
   }
+  /**
+   * Train AI: reads every source (and outstanding lead feedback) and drafts updated rules. The
+   * draft lands in the editor with its changes against the published version and the graph;
+   * nothing is used for qualification until someone saves and publishes it.
+   */
   async function analyze() {
     await perform('analyze', async () => {
       const result = await api<{ rubric: Rubric; revision: number }>(base + '/training/analyze', {
@@ -160,7 +206,13 @@ export default function Training({
       });
       setEditor(edit(result.rubric));
       setDirty(true);
-      notify('Training analysis is ready. Review the proposed rules below.');
+      setTrained(true);
+      // The graph is how the draft is reviewed: which sources ground which rules.
+      setTimeout(
+        () => graphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        80,
+      );
+      notify('Train AI drafted updated rules. Review the changes, then save and publish.');
     });
   }
   async function publish() {
@@ -302,17 +354,34 @@ export default function Training({
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   e.target.value = '';
+                  if (file && file.size > 5_000_000) {
+                    setError(
+                      file.name +
+                        ' was not uploaded: it is larger than 5 MB. Split it or export the text, then upload it again.',
+                    );
+                    return;
+                  }
                   if (file)
                     void perform('upload', async () => {
                       const data = new FormData();
                       data.set('file', file);
                       data.set('revision', String(project.revision));
-                      await api(base + '/sources/upload', {
-                        method: 'POST',
-                        body: data,
-                      });
-                      onChange();
-                      notify('Document attached and text extracted.');
+                      try {
+                        const source = await api<Source>(base + '/sources/upload', {
+                          method: 'POST',
+                          body: data,
+                        });
+                        onChange();
+                        notify(
+                          source.title +
+                            ' uploaded and read: ' +
+                            source.content.length.toLocaleString() +
+                            ' characters.',
+                        );
+                      } finally {
+                        // A refused upload is logged too, so the library can say why.
+                        setUploadsKey((n) => n + 1);
+                      }
                     });
                 }}
               />
@@ -340,9 +409,16 @@ export default function Training({
                           ? 'Website snapshot'
                           : source.kind === 'document'
                             ? 'Training document'
-                            : 'Research notes'}{' '}
-                        · {source.content.length.toLocaleString()} characters
+                            : 'Research notes'}
                       </small>
+                      <SourceStatus
+                        source={source}
+                        upload={uploads.find(
+                          (item) => item.source_id === source.id && item.status === 'READ',
+                        )}
+                        publishedHashes={publishedHashes}
+                        activeVersion={project.active_version}
+                      />
                       <span className="source-date">Added {date(source.created_at)}</span>
                     </div>
                     <button
@@ -363,6 +439,7 @@ export default function Training({
                 research brief.
               </Empty>
             )}
+            <UploadProblems uploads={uploads} sources={sources} />
             <div className="source-library-footer">
               <Globe size={15} />
               <ExternalLink url={project.website} />
@@ -469,8 +546,8 @@ export default function Training({
             <Sparkles size={21} />
           </div>
           <p className="muted">
-            Analyze your sources to draft rules, or write them yourself. Review every rule before
-            publishing.
+            Train AI reads every source and drafts updated rules, or write them yourself. Nothing
+            is used for qualification until you approve and publish it.
           </p>
           {project.pending_feedback_count > 0 && (
             <div className="inline-notice">
@@ -480,25 +557,45 @@ export default function Training({
                   {project.pending_feedback_count} lead correction
                   {project.pending_feedback_count === 1 ? '' : 's'} waiting.
                 </strong>{' '}
-                Analyzing now rewrites the criteria and exclusions around this feedback. Publishing
+                Train AI rewrites the criteria and exclusions around this feedback. Publishing
                 applies it to future research.
               </span>
             </div>
           )}
           <button
-            className="button analyze-button"
+            className="button analyze-button train-ai-button"
             disabled={!!busy || !sources.length}
             onClick={analyze}
+            title="Reads every source and drafts updated rules. Publishing stays your decision."
           >
             {busy === 'analyze' ? (
-              <Spinner text="Analyzing your training…" />
+              <Spinner text="Training on your sources…" />
             ) : (
               <>
                 <Sparkles size={17} />
-                Analyze training sources
+                Train AI
                 <ArrowRight size={16} />
               </>
             )}
+          </button>
+          {trained && dirty && <TrainedNotice version={project.active_version} />}
+          {published && project.active_version && (
+            <TrainingDiff
+              published={published.rubric}
+              version={project.active_version}
+              draft={{
+                summary: editor.summary,
+                criteria: lines(editor.criteria),
+                exclusions: lines(editor.exclusions),
+              }}
+            />
+          )}
+          <button
+            type="button"
+            className="text-button graph-link"
+            onClick={() => graphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            See the graph view
           </button>
           <form onSubmit={save} className="form-stack">
             <label>
@@ -620,6 +717,28 @@ export default function Training({
           )}
         </section>
       </div>
+      <section className="panel training-graph-panel" ref={graphRef} aria-labelledby="graph-title">
+        <div className="section-title">
+          <div>
+            <span className="eyebrow">GRAPH VIEW</span>
+            <h2 id="graph-title">How the training connects</h2>
+          </div>
+        </div>
+        <p className="muted">
+          {dirty
+            ? 'Your sources, the draft rules in the editor, and how the leads qualified on the published version came out on each rule.'
+            : 'Your sources, the rules, and how the leads qualified on the published version came out on each rule.'}
+        </p>
+        <TrainingGraphView
+          sources={sources}
+          graph={graph}
+          draft={{
+            summary: editor.summary,
+            criteria: lines(editor.criteria),
+            exclusions: lines(editor.exclusions),
+          }}
+        />
+      </section>
       {mode && (
         <SourceForm
           mode={mode}

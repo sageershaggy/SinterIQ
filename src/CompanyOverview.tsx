@@ -1,8 +1,24 @@
-import { ArrowUpRight, Mail, Phone, Search, Sparkles, Users } from 'lucide-react';
-import type { Lead, ResearchOutcome, ResearchableField } from '../shared/types';
+import { useEffect, useState, type ReactNode } from 'react';
+import {
+  Mail,
+  MessageSquare,
+  Phone,
+  ScanLine,
+  Search,
+  Sparkles,
+  Users,
+} from 'lucide-react';
+import type {
+  CriterionResult,
+  Lead,
+  ResearchOutcome,
+  ResearchableField,
+} from '../shared/types';
+import type { FieldCitation, LeadContact, ResearchProfile } from '../shared/research';
 import type { LeadTab } from './navigation';
-import { date, label } from './api';
-import { Badge, ExternalLink, Spinner } from './ui';
+import { api, date, label } from './api';
+import { Alert, Badge, ExternalLink, Spinner } from './ui';
+import { ActivityLog, ContactsCard, type LogEvent } from './LeadInsight';
 
 /** What this record calls each field a research pass can fill. */
 const researchableLabels: Record<ResearchableField, string> = {
@@ -25,6 +41,13 @@ export function missingDetails(lead: Lead): ResearchableField[] {
     (field) => !String(lead[field] ?? '').trim(),
   );
 }
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return 'the website';
+  }
+};
 /** A missing fact, shown quietly so the facts that do exist are what the eye lands on. */
 const blank = (text: string) => <span className="fact-missing">{text}</span>;
 export interface ResearchControls {
@@ -39,6 +62,59 @@ export interface ResearchControls {
   onRun: () => void;
   onQualify: () => void;
 }
+
+/**
+ * Where a detail came from: typed or imported into the record, or found by research on the
+ * company's own website — in which case the sentence and the page are one click away.
+ */
+function Origin({ citations }: { citations: FieldCitation[] }) {
+  if (!citations.length) return <span className="fact-origin">In the lead record</span>;
+  return (
+    <details className="fact-origin-details">
+      <summary className="fact-origin is-research" title="Show the sentence this came from">
+        Found by research
+      </summary>
+      <div>
+        {citations.map((item) => (
+          <div key={item.field}>
+            {item.evidence ? (
+              <blockquote>“{item.evidence}”</blockquote>
+            ) : (
+              <p>
+                Verified as the company’s own site: it answered on this domain and names the
+                company.
+              </p>
+            )}
+            <ExternalLink url={item.source_url} />
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+function Fact({
+  lead,
+  fields,
+  citations,
+  children,
+  empty,
+}: {
+  lead: Lead;
+  fields: ResearchableField[];
+  citations: FieldCitation[];
+  children: ReactNode;
+  empty: string;
+}) {
+  const present = fields.some((field) => String(lead[field] ?? '').trim());
+  if (!present) return <dd>{blank(empty)}</dd>;
+  return (
+    <dd>
+      {children}
+      <Origin citations={citations.filter((item) => fields.includes(item.field))} />
+    </dd>
+  );
+}
+
 /**
  * The gap-filling pass, reported in full. The refusals are half the point: they are how
  * someone sees that a value reached the record only because the page itself said so, and why a
@@ -67,55 +143,65 @@ function ResearchSection({ lead, research }: { lead: Lead; research: ResearchCon
       })),
   ];
   const notes = outcome?.notes || [];
+  const found = outcome?.contacts_added || 0;
   return (
     <>
-      <section className="company-card">
-        <div className="section-title">
-          <div>
-            <h3>Missing details</h3>
-            <p className="muted">
-              {missing.length
-                ? 'Read this company’s own website and fill in what it can prove.'
-                : 'Every detail this can research is already on the record.'}
-            </p>
+      {!!missing.length && (
+        <section className="company-card">
+          <div className="section-title">
+            <div>
+              <h3>Missing details</h3>
+              <p className="muted">
+                Qualification researches these on the company’s own website before it judges the
+                lead. Research now to see what the website proves first.
+              </p>
+            </div>
+            <button
+              className="button secondary"
+              disabled={running || busy}
+              onClick={research.onRun}
+            >
+              {running ? (
+                <Spinner text="Reading pages…" />
+              ) : (
+                <>
+                  <Search size={16} />
+                  Research now
+                </>
+              )}
+            </button>
           </div>
-          <button
-            className="button primary"
-            disabled={running || busy || !missing.length}
-            onClick={research.onRun}
-          >
-            {running ? (
-              <Spinner text="Reading pages…" />
-            ) : (
-              <>
-                <Search size={16} />
-                Research missing details
-              </>
-            )}
-          </button>
-        </div>
-        {!!missing.length && (
+          <ul className="missing-chips" aria-label="Blank fields">
+            {missing.map((field) => (
+              <li key={field}>{researchableLabels[field]}</li>
+            ))}
+          </ul>
           <p className="fine-print">
-            Blank now: {missing.map((field) => researchableLabels[field]).join(', ')}. A value is
-            saved only if the page it came from really contains the sentence quoted for it;
-            everything else is reported back instead of recorded.
+            A value is saved only if the page it came from really contains the sentence quoted
+            for it; everything else is reported back instead of recorded.
             {!lead.website &&
-              ' This lead has no website, so up to three candidate domains are fetched and one is kept only if its page names the company. There is no web search behind this.'}
+              (lead.contact_email
+                ? ' With no website on record, the domain of the contact email is checked first (never a free-mail or provider domain), then up to three candidate domains; one is kept only if its page names the company.'
+                : ' With no website on record, up to three candidate domains are fetched and one is kept only if its page names the company.')}
             {running && ' Pages are fetched one at a time, so this can take a minute.'}
           </p>
-        )}
-      </section>
+        </section>
+      )}
       {outcome && !running && (
         <section className="company-card">
           <div className="section-title">
             <div>
-              <h3>What the last run did</h3>
+              <h3>What the last research did</h3>
               <p className="muted">
                 {filled.length === 0
-                  ? 'Nothing was saved, so this record is unchanged.'
+                  ? 'No detail was saved, so the record is unchanged.'
                   : filled.length === 1
                     ? 'One detail was saved, with the sentence it came from.'
                     : filled.length + ' details were saved, each with the sentence it came from.'}
+                {found > 0 &&
+                  ' ' +
+                    (found === 1 ? 'One person' : found + ' people') +
+                    ' added from the company website.'}
               </p>
             </div>
             {!!outcome.website && (
@@ -142,6 +228,18 @@ function ResearchSection({ lead, research }: { lead: Lead; research: ResearchCon
               )}
             </div>
           ))}
+          {!!outcome.facts?.length && (
+            <div className="company-gaps">
+              <strong>Sentences that bear on your qualification rules</strong>
+              <ul>
+                {outcome.facts.map((fact, index) => (
+                  <li key={index}>
+                    <em>{fact.rule}</em> — “{fact.quote}”
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {!!applied.length && lead.stale && (
             <div className="inline-notice">
               <Sparkles size={17} />
@@ -173,7 +271,7 @@ function ResearchSection({ lead, research }: { lead: Lead; research: ResearchCon
           )}
           {(!!notes.length || !!outcome.tried.length) && (
             <div className="company-gaps">
-              <strong>What the pass could and could not read</strong>
+              <strong>What was checked</strong>
               {!!notes.length && (
                 <ul>
                   {notes.map((note, index) => (
@@ -198,62 +296,162 @@ function ResearchSection({ lead, research }: { lead: Lead; research: ResearchCon
 }
 
 export function CompanyOverview({
+  base,
   lead,
   onTab,
   research,
+  onChanged,
+  notify,
 }: {
+  /** The lead's API path, for the research profile and contact erasure. */
+  base: string;
   lead: Lead;
   onTab: (tab: LeadTab) => void;
   research: ResearchControls;
+  onChanged?: () => void;
+  notify?: (text: string) => void;
 }) {
+  const [profile, setProfile] = useState<ResearchProfile | null>(null),
+    [error, setError] = useState(''),
+    [erasing, setErasing] = useState(false);
+  // Reloaded whenever the record or a research result changes, so provenance never lags.
+  useEffect(() => {
+    let cancelled = false;
+    api<ResearchProfile>(base + '/research-profile')
+      .then((data) => {
+        if (!cancelled) {
+          setProfile(data);
+          setError('');
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, lead.revision, lead.updated_at, research.outcome]);
+  async function erase(path: string, message: string) {
+    setErasing(true);
+    setError('');
+    try {
+      const contacts = await api<LeadContact[]>(base + path, { method: 'DELETE' });
+      setProfile((current) => (current ? { ...current, contacts } : current));
+      notify?.(message);
+      onChanged?.();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setErasing(false);
+    }
+  }
+  const citations = profile?.citations || [];
   const latest = lead.runs?.[0];
-  const events = [
+  const current = latest && !lead.stale ? latest : null;
+  const tally = (items: CriterionResult[]) => ({
+    meets: items.filter((item) => item.outcome === 'MATCH').length,
+    not: items.filter((item) => item.outcome === 'NO_MATCH').length,
+    unable: items.filter((item) => item.outcome === 'UNKNOWN').length,
+  });
+  const criteria = current ? tally(current.result.criteria) : null;
+  const exclusions = current ? tally(current.result.exclusions) : null;
+  const researchedFirst = latest?.result.research;
+  const events: LogEvent[] = [
     ...(lead.runs || []).map((item) => ({
       key: 'run-' + item.id,
       when: item.created_at,
-      title: 'AI qualification · ' + label(item.result.decision),
+      title:
+        'AI qualification · ' + label(item.result.decision) + ' · ' + item.result.score + '/100',
       detail: item.result.summary,
-      tab: 'reasoning' as const,
+      who: item.created_by,
+      icon: <ScanLine size={15} />,
+      onOpen: () => onTab('reasoning'),
+    })),
+    ...(profile?.runs || []).map((item) => ({
+      key: 'research-' + item.id,
+      when: item.created_at,
+      title:
+        (item.origin === 'qualification' ? 'Research before qualification · ' : 'Research · ') +
+        (item.applied.length
+          ? 'filled ' + item.applied.map((field) => researchableLabels[field].toLowerCase()).join(', ')
+          : 'nothing new confirmed') +
+        (item.contacts_added
+          ? ' · ' + item.contacts_added + (item.contacts_added === 1 ? ' person' : ' people') + ' found'
+          : ''),
+      detail: item.pages.length
+        ? 'Read ' +
+          item.pages.length +
+          (item.pages.length === 1 ? ' page' : ' pages') +
+          ' of ' +
+          hostOf(item.website) +
+          '.'
+        : item.notes[0] || '',
+      who: item.created_by,
+      icon: <Search size={15} />,
     })),
     ...(lead.calls || []).map((item) => ({
       key: 'call-' + item.id,
       when: item.created_at,
       title: 'Call · ' + label(item.outcome),
       detail: item.notes,
-      tab: 'calls' as const,
+      who: item.created_by,
+      icon: <Phone size={15} />,
+      onOpen: () => onTab('calls'),
     })),
     ...(lead.emails || []).map((item) => ({
       key: 'email-' + item.id,
       when: item.created_at,
       title: 'Email · ' + label(item.status),
       detail: item.subject,
-      tab: 'email' as const,
+      who: item.created_by,
+      icon: <Mail size={15} />,
+      onOpen: () => onTab('email'),
     })),
     ...(lead.outreach_events || []).map((item) => ({
       key: 'response-' + item.id,
       when: item.created_at,
       title: label(item.outcome),
       detail: item.notes,
-      tab: 'email' as const,
+      who: item.created_by,
+      icon: <MessageSquare size={15} />,
+      onOpen: () => onTab('email'),
     })),
   ]
     .sort((a, b) => b.when.localeCompare(a.when))
     .slice(0, 12);
   return (
     <div className="company-overview">
+      {error && <Alert>{error}</Alert>}
       <div className="company-stats">
         <div>
-          <small>CURRENT FIT</small>
-          <strong>
-            {lead.stale
-              ? 'Review needed'
-              : lead.score === null
-                ? 'Not researched'
-                : lead.score + '/100'}
-          </strong>
-          <span>
-            {lead.stale ? 'The training or company details changed.' : label(lead.status)}
-          </span>
+          <small>RULES</small>
+          {criteria && exclusions ? (
+            <>
+              <strong>
+                {criteria.meets} of {current!.result.criteria.length} criteria met
+              </strong>
+              <span>
+                {[
+                  criteria.not && criteria.not + ' not met',
+                  criteria.unable && criteria.unable + ' unable to verify',
+                  exclusions.meets
+                    ? exclusions.meets + (exclusions.meets === 1 ? ' exclusion' : ' exclusions') + ' met'
+                    : 'no exclusion met',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </>
+          ) : (
+            <>
+              <strong>{lead.stale ? 'Out of date' : 'Not evaluated'}</strong>
+              <span>
+                {lead.stale
+                  ? 'The training or company details changed.'
+                  : 'Every approved rule is checked when this lead is qualified.'}
+              </span>
+            </>
+          )}
         </div>
         <div>
           <small>OUTREACH</small>
@@ -271,7 +469,7 @@ export function CompanyOverview({
             in progress
           </strong>
           <button className="text-button" onClick={() => onTab('campaigns')}>
-            View follow-ups <ArrowUpRight size={14} />
+            View follow-ups
           </button>
         </div>
       </div>
@@ -281,75 +479,56 @@ export function CompanyOverview({
       <div className="company-overview-grid">
         <section className="company-card">
           <div className="section-title">
-            <h3>Company & contact</h3>
+            <h3>Company</h3>
             <Users size={18} />
           </div>
           <dl className="company-facts">
+            <dt>Website</dt>
+            <Fact lead={lead} fields={['website']} citations={citations} empty="Not found yet">
+              <ExternalLink url={lead.website} />
+            </Fact>
             <dt>Industry</dt>
-            <dd>{lead.industry || blank('Unknown')}</dd>
+            <Fact lead={lead} fields={['industry']} citations={citations} empty="Not found yet">
+              {lead.industry}
+            </Fact>
             <dt>Location</dt>
-            <dd>{[lead.city, lead.country].filter(Boolean).join(', ') || blank('Unknown')}</dd>
+            <Fact
+              lead={lead}
+              fields={['city', 'country']}
+              citations={citations}
+              empty="Not found yet"
+            >
+              {[lead.city, lead.country].filter(Boolean).join(', ')}
+            </Fact>
             <dt>Company size</dt>
-            <dd>{lead.employee_count || blank('Unknown')}</dd>
-            <dt>Contact</dt>
-            <dd>
-              {/* "No named contact" above a role read as if that were the person. A role
-                  without a name is still a lead worth calling, so it leads. */}
-              {lead.contact_name ? (
-                <>
-                  {lead.contact_name}
-                  {lead.contact_role && <small>{lead.contact_role}</small>}
-                </>
-              ) : lead.contact_role ? (
-                <>
-                  {lead.contact_role}
-                  <small>Name not found yet</small>
-                </>
-              ) : (
-                blank(
-                  lead.contact_email || lead.contact_phone
-                    ? 'Name not found yet'
-                    : 'No contact yet',
-                )
-              )}
-            </dd>
-            <dt>Email</dt>
-            <dd>{lead.contact_email || blank('Not found yet')}</dd>
-            <dt>Phone</dt>
-            <dd>
-              {lead.contact_phone ? (
-                <a href={'tel:' + lead.contact_phone.replace(/[^\d+]/g, '')}>
-                  {lead.contact_phone}
-                </a>
-              ) : (
-                blank('Not found yet')
-              )}
-            </dd>
+            <Fact
+              lead={lead}
+              fields={['employee_count']}
+              citations={citations}
+              empty="Not found yet"
+            >
+              {lead.employee_count}
+            </Fact>
             <dt>Assigned to</dt>
             <dd>{lead.assigned_to_name || blank('Unassigned')}</dd>
           </dl>
-          <div className="company-actions">
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => onTab('email')}
-              aria-label="Create email"
-            >
-              <Mail size={15} />
-              Create email
-            </button>
-            <button className="button secondary" onClick={() => onTab('calls')}>
-              <Phone size={15} />
-              Call history
-            </button>
-          </div>
+          {lead.notes && (
+            <details className="company-notes">
+              <summary>Notes from the lead record</summary>
+              <p>{lead.notes}</p>
+            </details>
+          )}
+          <p className="fine-print">
+            “In the lead record” was typed or imported; “Found by research” was read from the
+            company’s own website and shows the sentence it came from.
+          </p>
         </section>
         <section className="company-card">
           <div className="section-title">
             <h3>Research summary</h3>
             {latest && (
               <button className="text-button" onClick={() => onTab('reasoning')}>
-                View evidence <ArrowUpRight size={14} />
+                Rule by rule
               </button>
             )}
           </div>
@@ -360,6 +539,28 @@ export function CompanyOverview({
                 {lead.stale ? 'Previous result · ' : ''}Training v{latest.training_version} ·{' '}
                 {date(latest.created_at)}
               </small>
+              {researchedFirst && (
+                <p className="research-before">
+                  <Search size={14} />
+                  <span>
+                    {researchedFirst.ran
+                      ? 'Researched before judging: ' +
+                        (researchedFirst.filled.length
+                          ? 'filled ' +
+                            researchedFirst.filled
+                              .map((field) => researchableLabels[field].toLowerCase())
+                              .join(', ')
+                          : 'no new detail could be confirmed') +
+                        (researchedFirst.contacts_added
+                          ? ', ' + researchedFirst.contacts_added + ' people found'
+                          : '') +
+                        '.'
+                      : 'This version of the record had already been researched, so that research was used.'}
+                    {!researchedFirst.website_found &&
+                      ' No company website could be verified; what was checked is listed below.'}
+                  </span>
+                </p>
+              )}
             </>
           ) : (
             // An empty card is where the next step belongs, not a sentence about it.
@@ -369,22 +570,16 @@ export function CompanyOverview({
               </span>
               <strong>Not analyzed yet</strong>
               <p>
-                AI qualification checks this company against the published criteria and returns a
-                fit score, the evidence behind it and a next step.
+                AI qualification researches the blank details first, then checks every approved
+                rule as meets, does not meet or unable to verify, and returns a fit score.
               </p>
-              {!lead.website && (
-                <p className="fine-print">
-                  There is no website on record, so the analysis would have little to read.
-                  Researching the missing details first usually gives a better result.
-                </p>
-              )}
               <button
                 className="button primary"
                 disabled={research.running || research.busy}
                 onClick={research.onQualify}
               >
                 <Sparkles size={15} />
-                {research.ready ? 'Analyze with AI' : 'Open training'}
+                {research.ready ? 'Run AI qualification' : 'Open training'}
               </button>
             </div>
           )}
@@ -400,29 +595,27 @@ export function CompanyOverview({
           )}
         </section>
       </div>
+      <ContactsCard
+        lead={lead}
+        profile={profile}
+        busy={erasing}
+        onErase={(contact) =>
+          void erase('/contacts/' + contact.id, contact.name + ' was erased from this lead.')
+        }
+        onEraseAll={() => void erase('/contacts', 'Researched contacts erased from this lead.')}
+      />
       <section className="company-card">
         <div className="section-title">
           <h3>Recent activity</h3>
-          <span className="muted">Research and conversations</span>
+          <span className="muted">Research, analysis and conversations</span>
         </div>
-        {!events.length && (
+        {events.length ? (
+          <ActivityLog events={events} />
+        ) : (
           <p className="muted">
             New company added. Research, emails and responses will appear here as you work.
           </p>
         )}
-        <div className="company-timeline">
-          {events.map((event) => (
-            <button key={event.key} onClick={() => onTab(event.tab)}>
-              <span className="timeline-dot" />
-              <div>
-                <strong>{event.title}</strong>
-                <p>{event.detail}</p>
-                <small>{date(event.when)}</small>
-              </div>
-              <ArrowUpRight size={16} />
-            </button>
-          ))}
-        </div>
       </section>
     </div>
   );

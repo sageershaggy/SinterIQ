@@ -9,6 +9,7 @@ import { installOutreachSchema } from './outreach-schema';
 import { installWorkspaceSchema } from './workspace-schema';
 import { adoptWorkspaceMailbox, installMailboxSchema } from './mailbox-schema';
 import { installResearchSchema } from './research-schema';
+import { installIntelSchema } from './intel-schema';
 
 export const now = () => new Date().toISOString();
 export const hash = (value: string | Buffer) =>
@@ -149,6 +150,7 @@ export function openDatabase(dataDir: string, legacyPath?: string) {
   installWorkspaceSchema(db);
   installMailboxSchema(db);
   installResearchSchema(db);
+  installIntelSchema(db);
   if (!db.prepare("SELECT 1 FROM meta WHERE key='initialized'").get())
     initialize(db, secrets, legacyPath);
   preserveLegacyResearch(db, legacyPath);
