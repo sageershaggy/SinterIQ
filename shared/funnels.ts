@@ -137,4 +137,6 @@ export interface Enrollment {
   created_by: string;
   updated_at: string;
   stop_cause?: string;
+  /** The researched contact (lead_contacts) this sequence mails; null for the primary contact. */
+  contact_id?: number | null;
 }

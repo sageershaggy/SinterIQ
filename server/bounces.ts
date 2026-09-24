@@ -17,6 +17,17 @@ export interface BounceReport {
   status: string;
 }
 const daemon = /^(mailer-daemon|mailerdaemon|mail-daemon|postmaster)@/i;
+
+/**
+ * The leads whose mail reached an address (the one `?` parameter) other than through a
+ * researched contact's own sequence. A primary-contact sequence may mail other addresses through
+ * a step's own To, so it answers for them; a contact's sequence only ever mails that contact, so
+ * what it sent says nothing about the lead's other sequences.
+ */
+export const primaryMailTo = (statuses: string) =>
+  `SELECT d.lead_id FROM email_deliveries d WHERE d.recipient=? AND d.status IN (${statuses})
+    AND NOT EXISTS (SELECT 1 FROM funnel_enrollments c WHERE c.contact_id IS NOT NULL
+      AND d.delivery_key LIKE 'funnel:' || c.id || ':%')`;
 const addressPattern = /[a-z0-9._%+'-]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}/gi;
 
 export function detectBounce(
@@ -124,14 +135,14 @@ export function recordBounce(
       when,
     );
     // The same rule an opt-out follows: sequences keyed to the address, and any sequence that
-    // already mailed it through a step with its own To.
+    // already mailed it through a step with its own To. A bounce is about one address, so the
+    // sequences to the other people researched at the company keep running.
     db.prepare(
       `UPDATE funnel_enrollments SET status='STOPPED',stop_cause='BOUNCED',
         reason='The email to this address bounced, so the remaining messages will not be sent.',updated_at=?
       WHERE status IN ('QUEUED','SENDING','BLOCKED') AND (
         recipient=?
-        OR lead_id IN (SELECT lead_id FROM email_deliveries
-          WHERE recipient=? AND status IN ('SENDING','SENT','UNKNOWN','BLOCKED'))
+        OR (contact_id IS NULL AND lead_id IN (${primaryMailTo("'SENDING','SENT','UNKNOWN','BLOCKED'")}))
       )`,
     ).run(when, recipient, recipient);
     db.prepare(

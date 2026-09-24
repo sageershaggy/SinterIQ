@@ -240,8 +240,56 @@ const funnels = campaigns.map((campaign, index) => ({
   ][index],
 }));
 
+/**
+ * Lead 8's researched people and their campaigns (the "People at this company" card): Sara is
+ * already in the high-quality campaign; Rashid can be added to it; Leila and Omar have no
+ * published address.
+ */
+const leadEightPeople: Record<number, { name: string; email: string }> = {
+  1: { name: 'Rashid Al Mansoori', email: 'procurement@amusement-whitewater.example.com' },
+  4: { name: 'Sara Khan', email: 'sara.k@amusement-whitewater.example.com' },
+};
+export const contactEnrollments = [
+  {
+    id: 71,
+    funnel_id: 1,
+    lead_id: 8,
+    contact_id: 4,
+    lead_name: 'Amusement Whitewater (L.L.C)',
+    recipient: 'sara.k@amusement-whitewater.example.com',
+    status: 'QUEUED',
+    next_step: 1,
+    next_send_at: Date.now() + 2 * 86_400_000,
+    reason: '',
+    created_by: 'Workspace Administrator',
+    created_at: ago(60 * 24),
+    updated_at: ago(60 * 24),
+    stop_cause: '',
+    funnel_name: 'High-quality campaign',
+    funnel_status: 'ACTIVE',
+    step_count: 3,
+  },
+];
+const contactOffer = (route: string) => {
+  const id = Number(/\/contacts\/(\d+)\//.exec(route)?.[1]);
+  const person = leadEightPeople[id] || { name: 'This person', email: '' };
+  return {
+    contact: { id, ...person },
+    campaigns: campaigns.map((campaign) => ({
+      ...campaign,
+      blocked:
+        campaign.status !== 'ACTIVE'
+          ? 'This campaign is not running. An administrator starts it under Email funnels.'
+          : id === 4
+            ? 'Sara Khan has already been in this campaign.'
+            : '',
+    })),
+  };
+};
+
 export function emailRoutes(lead: { name: string; score: number | null; contact_email: string }) {
   return [
+    [/^\/projects\/2\/leads\/8\/contacts\/\d+\/campaigns$/, contactOffer],
     [/^\/projects\/2\/leads\/9$/, () => qualifiedLead],
     [
       /^\/projects\/2\/email\/templates$/,
@@ -296,12 +344,33 @@ export function emailRoutes(lead: { name: string; score: number | null; contact_
         ],
       }),
     ],
-  ] as Array<[RegExp, () => unknown]>;
+  ] as Array<[RegExp, (route: string) => unknown]>;
 }
 
 /** Writes the email screens make, answered the way the server would. */
 let revision = 0;
 export const emailWrites: Array<[string, RegExp, (body: unknown) => unknown]> = [
+  [
+    'POST',
+    /^\/projects\/2\/funnels\/1\/enrollments$/,
+    (body) => {
+      // Only a researched contact's enrollment answers with its schedule.
+      if (!(body as { contact_id?: number })?.contact_id) return {};
+      const at = (days: number, hour: number, minute = 0) => {
+        const d = new Date(Date.now() + days * 86_400_000);
+        d.setHours(hour, minute, 0, 0);
+        return d.toISOString();
+      };
+      return {
+        enrolled: 1,
+        skipped: 0,
+        funnel_id: 1,
+        funnel_name: 'High-quality campaign',
+        funnel_status: 'ACTIVE',
+        schedule: [at(1, 9), at(4, 9), at(11, 10, 30)],
+      };
+    },
+  ],
   [
     'PUT',
     /\/email\/draft$/,

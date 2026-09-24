@@ -18,7 +18,7 @@ export function installOutreachSchema(db: DB) {
         CHECK(status IN ('QUEUED','SENDING','COMPLETED','STOPPED','REPLIED','INTERESTED','CONVERTED','UNSUBSCRIBED','BLOCKED')),
       next_step INTEGER NOT NULL DEFAULT 0, next_send_at INTEGER NOT NULL,
       reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      UNIQUE(funnel_id,lead_id)
+      UNIQUE(funnel_id,lead_id,recipient)
     );
     CREATE INDEX IF NOT EXISTS enrollments_due ON funnel_enrollments(status,next_send_at);
     CREATE INDEX IF NOT EXISTS enrollments_project ON funnel_enrollments(project_id,funnel_id);

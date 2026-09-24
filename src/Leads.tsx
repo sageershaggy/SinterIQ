@@ -1500,6 +1500,7 @@ function LeadDetail({
                   lead={lead}
                   onTab={setTab}
                   notify={notify}
+                  onChanged={() => setRefresh((n) => n + 1)}
                   research={{
                     missing: missingDetails(lead),
                     outcome: research,

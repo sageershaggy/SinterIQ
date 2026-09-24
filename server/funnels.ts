@@ -33,10 +33,86 @@ import {
 import { suggestCampaign } from '../shared/funnels';
 import type { Funnel, FunnelProgress, FunnelStep } from '../shared/funnels';
 import type { CampaignOption } from '../shared/email';
+import type { LeadContact } from '../shared/research';
 import type { Lead, Project, User } from '../shared/types';
 
 const day = 86_400_000;
 const hour = 3_600_000;
+
+/** A person research found on the company's website, as a campaign addresses them. */
+type ContactRecipient = Pick<LeadContact, 'id' | 'name' | 'role' | 'email' | 'phone'>;
+function readContact(db: DB, projectId: number, leadId: number, contactId: number) {
+  return db
+    .prepare(
+      'SELECT id,name,role,email,phone FROM lead_contacts WHERE id=? AND project_id=? AND lead_id=?',
+    )
+    .get(contactId, projectId, leadId) as ContactRecipient | undefined;
+}
+/**
+ * The lead as one of its contacts receives it: that person's name, role and address fill every
+ * merge field, so a message to them never carries the primary contact's details.
+ */
+function addressedTo(lead: Lead, contact: ContactRecipient): Lead {
+  return {
+    ...lead,
+    contact_name: contact.name,
+    contact_role: contact.role,
+    contact_email: contact.email,
+    contact_phone: contact.phone,
+  };
+}
+/** A contact's address as stored on an enrollment, or '' when it is not a usable address. */
+function contactKey(email: string) {
+  try {
+    return recipientKey(email);
+  } catch {
+    return '';
+  }
+}
+/** Ends a sequence for good (STOPPED with a cause) instead of leaving it BLOCKED for review. */
+class SequenceStop extends HttpError {
+  constructor(
+    public stopCause: string,
+    message: string,
+  ) {
+    super(409, message);
+  }
+}
+/**
+ * Erasing a person stops whatever was still due to reach them, inside the caller's transaction.
+ * Their enrollments stay as outreach history, but the address on one is removed unless the
+ * email log already holds it for this lead (a message went, or was attempted, to it): erasure
+ * never leaves more of them behind than that log keeps.
+ */
+export function stopContactSequences(
+  db: DB,
+  projectId: number,
+  leadId: number,
+  contactIds: number[],
+) {
+  const stop = db.prepare(
+    `UPDATE funnel_enrollments SET status='STOPPED',stop_cause='CONTACT_ERASED',reason=?,updated_at=?
+    WHERE project_id=? AND lead_id=? AND contact_id=? AND status IN ('QUEUED','BLOCKED')`,
+  );
+  // A sequence mid-send keeps its address: its delivery is being logged under it right now,
+  // and the check just before the message leaves finds the person gone and stops it.
+  const redact = db.prepare(
+    `UPDATE funnel_enrollments SET recipient='erased contact ' || id
+    WHERE project_id=? AND lead_id=? AND contact_id=? AND status<>'SENDING'
+      AND NOT EXISTS (SELECT 1 FROM email_messages m WHERE m.project_id=funnel_enrollments.project_id
+        AND m.lead_id=funnel_enrollments.lead_id AND lower(trim(m.to_email))=funnel_enrollments.recipient)`,
+  );
+  for (const contactId of contactIds) {
+    stop.run(
+      'The person was erased from this lead, so the rest of this sequence will not be sent.',
+      now(),
+      projectId,
+      leadId,
+      contactId,
+    );
+    redact.run(projectId, leadId, contactId);
+  }
+}
 
 /** HH:mm on a 24-hour clock, or empty to send as soon as the delay elapses. */
 const sendTimeSchema = text(5)
@@ -128,6 +204,8 @@ interface Job {
   project_id: number;
   funnel_id: number;
   lead_id: number;
+  /** A researched contact of the lead, or null for the lead's primary contact. */
+  contact_id: number | null;
   recipient: string;
   lead_revision: number;
   training_version: number;
@@ -219,7 +297,12 @@ export function createFunnels(options: {
   function eligible(
     project: Project,
     leadId: number,
-    rules: { allowReplied?: boolean } = {},
+    /**
+     * allowBounced is for a researched contact: the lead's BOUNCED says its primary address
+     * failed, which says nothing about another person's. Their own address is still checked
+     * against suppression, bounces included.
+     */
+    rules: { allowReplied?: boolean; allowBounced?: boolean } = {},
   ): Lead {
     const lead = db
       .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
@@ -240,7 +323,7 @@ export function createFunnels(options: {
         409,
         lead.name + ' needs a current, qualified result before enrollment or sending.',
       );
-    if (lead.outreach_status === 'BOUNCED')
+    if (lead.outreach_status === 'BOUNCED' && !rules.allowBounced)
       throw new HttpError(409, 'Email to ' + lead.name + ' bounced. Update the contact first.');
     if (
       ['INTERESTED', 'CONVERTED', 'UNSUBSCRIBED', 'STOPPED'].includes(lead.outreach_status) ||
@@ -425,25 +508,81 @@ export function createFunnels(options: {
       );
     })();
   }
-  /** The reason this lead cannot start this campaign, or '' when it can. */
-  function blockedReason(project: Project, leadId: number, funnel: Funnel) {
+  /**
+   * One of the lead's researched contacts as a campaign recipient. The lead is held to every
+   * rule the primary contact is (current qualification, not archived, no response or stop
+   * recorded); the address that is checked and mailed is the contact's own.
+   */
+  function contactTarget(project: Project, leadId: number, contactId: number) {
+    const contact = readContact(db, project.id, leadId, contactId);
+    if (!contact) throw new HttpError(404, 'Contact not found on this lead.');
+    const lead = eligible(project, leadId, { allowBounced: true });
+    if (!contact.email)
+      throw new HttpError(
+        409,
+        contact.name + ' has no published email address, so they cannot be emailed.',
+      );
+    return {
+      lead,
+      contact,
+      person: addressedTo(lead, contact),
+      recipient: recipientKey(contact.email),
+    };
+  }
+  /** Throws the reason this contact cannot join this campaign now. */
+  function contactCanJoin(project: Project, leadId: number, funnel: Funnel, contactId: number) {
+    const target = contactTarget(project, leadId, contactId);
+    const { lead, contact, recipient } = target;
+    if (funnel.status !== 'ACTIVE')
+      throw new HttpError(
+        409,
+        'This campaign is not running. An administrator starts it under Email funnels.',
+      );
+    assertCanContact(db, recipient);
+    if (
+      db
+        .prepare(
+          'SELECT 1 FROM funnel_enrollments WHERE project_id=? AND funnel_id=? AND lead_id=? AND (contact_id=? OR recipient=?)',
+        )
+        .get(project.id, funnel.id, lead.id, contact.id, recipient)
+    )
+      throw new HttpError(409, contact.name + ' has already been in this campaign.');
+    if (
+      db
+        .prepare(
+          "SELECT 1 FROM funnel_enrollments WHERE recipient=? AND status IN ('QUEUED','SENDING')",
+        )
+        .get(recipient)
+    )
+      throw new HttpError(409, contact.name + ' already has an active sequence.');
+    return target;
+  }
+  /** The reason this lead (or one of its contacts) cannot start this campaign, or '' when it can. */
+  function blockedReason(project: Project, leadId: number, funnel: Funnel, contactId?: number) {
     try {
+      if (contactId !== undefined) {
+        contactCanJoin(project, leadId, funnel, contactId);
+        return '';
+      }
       const lead = eligible(project, leadId);
       if (!lead.contact_email) return 'Add a contact email to this lead first.';
       const recipient = recipientKey(lead.contact_email);
       assertCanContact(db, recipient);
+      // The primary contact joins a campaign once per lead; a contact already enrolled with the
+      // same address counts too.
       if (
         db
           .prepare(
-            'SELECT 1 FROM funnel_enrollments WHERE project_id=? AND funnel_id=? AND lead_id=?',
+            'SELECT 1 FROM funnel_enrollments WHERE project_id=? AND funnel_id=? AND lead_id=? AND (contact_id IS NULL OR recipient=?)',
           )
-          .get(project.id, funnel.id, lead.id)
+          .get(project.id, funnel.id, lead.id, recipient)
       )
         return lead.name + ' has already been in this campaign.';
+      // Other people at the company may be in sequences of their own at the same time.
       if (
         db
           .prepare(
-            "SELECT 1 FROM funnel_enrollments WHERE (lead_id=? OR recipient=?) AND status IN ('QUEUED','SENDING')",
+            "SELECT 1 FROM funnel_enrollments WHERE ((lead_id=? AND contact_id IS NULL) OR recipient=?) AND status IN ('QUEUED','SENDING')",
           )
           .get(lead.id, recipient)
       )
@@ -578,6 +717,102 @@ export function createFunnels(options: {
       funnel_status: plan.funnel.status,
       followups: plan.schedule.slice(1).map((time) => (time ? new Date(time).toISOString() : '')),
     };
+  }
+  /** The project's campaigns as a researched contact's "Add to campaign" offers them. */
+  function contactCampaignOptions(project: Project, leadId: number, contactId: number) {
+    const contact = readContact(db, project.id, leadId, contactId);
+    if (!contact) throw new HttpError(404, 'Contact not found on this lead.');
+    const campaigns: CampaignOption[] = (
+      db
+        .prepare(selectFunnel + ' WHERE f.project_id=? ORDER BY f.id DESC')
+        .all(project.id) as StoredFunnel[]
+    )
+      .map(serialize)
+      .map((funnel) => ({
+        id: funnel.id,
+        name: funnel.name,
+        audience: funnel.audience,
+        status: funnel.status,
+        fit_band: funnel.fit_band,
+        stop_on_reply: funnel.stop_on_reply,
+        steps: funnel.steps.map((step) => ({
+          subject: step.subject,
+          html: stepHtml(step),
+          delay_days: step.delay_days,
+          send_time: step.send_time || '',
+          attachment_ids: step.attachment_ids || [],
+        })),
+        blocked: blockedReason(project, leadId, funnel, contact.id),
+      }));
+    return { contact: { id: contact.id, name: contact.name, email: contact.email }, campaigns };
+  }
+  /**
+   * Puts one researched contact into a running campaign. Every message must resolve for this
+   * person (their own name and role in the merge fields) and go to their own address, so the
+   * sequence can never reach the primary contact or anyone else in their place.
+   */
+  function enrollContact(
+    project: Project,
+    funnel: Funnel,
+    leadId: number,
+    contactId: number,
+    config: SmtpConfig,
+    user: User,
+  ) {
+    return db.transaction(() => {
+      const { lead, person, recipient } = contactCanJoin(project, leadId, funnel, contactId);
+      funnel.steps.forEach((step, index) => {
+        const built = compose(step, person, config, config.from_name || user.name, 'check');
+        if (stepRecipient(built, recipient) !== recipient)
+          throw new HttpError(
+            409,
+            'Message ' +
+              (index + 1) +
+              ' of this campaign is addressed to someone else, so it cannot be used for one person at a company.',
+          );
+      });
+      // When each message is due, the way delivery will schedule it if nothing is held up.
+      const schedule: number[] = [];
+      let previous = Date.now();
+      for (const step of funnel.steps) {
+        previous = scheduleNextSend(previous, step.delay_days, step.send_time);
+        schedule.push(previous);
+      }
+      db.prepare(
+        `INSERT INTO funnel_enrollments
+        (project_id,funnel_id,lead_id,contact_id,recipient,lead_revision,training_version,account_id,created_by,next_send_at,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        project.id,
+        funnel.id,
+        lead.id,
+        contactId,
+        recipient,
+        lead.revision,
+        project.active_version,
+        user.id,
+        user.name,
+        schedule[0],
+        now(),
+        now(),
+      );
+      // Counted, not named: a person's name stays out of the audit trail.
+      audit(
+        db,
+        project.id,
+        user.name,
+        'funnel.enrolled',
+        'A contact at ' + lead.name + ' added to ' + funnel.name + '.',
+      );
+      return {
+        enrolled: 1,
+        skipped: 0,
+        funnel_id: funnel.id,
+        funnel_name: funnel.name,
+        funnel_status: funnel.status,
+        schedule: schedule.map((time) => new Date(time).toISOString()),
+      };
+    })();
   }
 
   function install(app: Express) {
@@ -725,21 +960,35 @@ export function createFunnels(options: {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
       const f = getFunnel(p.id, positiveId(req.params.funnelId));
       const input = z
-        .object({ lead_ids: z.array(z.number().int().positive()).min(1).max(100) })
+        .object({
+          lead_ids: z.array(z.number().int().positive()).min(1).max(100),
+          /** One of the lead's researched contacts, mailed instead of its primary contact. */
+          contact_id: z.number().int().positive().optional(),
+        })
         .strict()
+        .refine(
+          (value) => value.contact_id === undefined || value.lead_ids.length === 1,
+          'Add one person at a time.',
+        )
         .parse(req.body);
       const config = getEmailConfig(db, secrets, p.id);
+      if (input.contact_id !== undefined)
+        return void res
+          .status(201)
+          .json(enrollContact(p, f, input.lead_ids[0], input.contact_id, config, req.user));
       let skipped = 0;
       const enrolled = db.transaction(() => {
         let count = 0;
         for (const leadId of new Set(input.lead_ids)) {
           const lead = eligible(p, leadId);
+          // The primary contact joins a campaign once per lead; a researched contact already
+          // enrolled at the same address counts as that too.
           if (
             db
               .prepare(
-                'SELECT 1 FROM funnel_enrollments WHERE project_id=? AND funnel_id=? AND lead_id=?',
+                'SELECT 1 FROM funnel_enrollments WHERE project_id=? AND funnel_id=? AND lead_id=? AND (contact_id IS NULL OR recipient=lower(trim(?)))',
               )
-              .get(p.id, f.id, lead.id)
+              .get(p.id, f.id, lead.id, lead.contact_email)
           ) {
             skipped++;
             continue;
@@ -751,7 +1000,7 @@ export function createFunnels(options: {
           if (
             db
               .prepare(
-                "SELECT 1 FROM funnel_enrollments WHERE lead_id=? AND status IN ('QUEUED','SENDING')",
+                "SELECT 1 FROM funnel_enrollments WHERE lead_id=? AND contact_id IS NULL AND status IN ('QUEUED','SENDING')",
               )
               .get(lead.id)
           )
@@ -842,6 +1091,13 @@ export function createFunnels(options: {
       recordOutcome(p, positiveId(req.params.leadId), input.outcome, input.notes, req.user.name);
       res.status(201).json({ ok: true });
     });
+    /** Which campaigns a researched contact can join now, and why not where they cannot. */
+    app.get('/api/projects/:projectId/leads/:leadId/contacts/:contactId/campaigns', (req, res) => {
+      const p = getProject(db, positiveId(req.params.projectId), req.user);
+      res.json(
+        contactCampaignOptions(p, positiveId(req.params.leadId), positiveId(req.params.contactId)),
+      );
+    });
   }
 
   let running = false;
@@ -914,16 +1170,34 @@ export function createFunnels(options: {
             throw new HttpError(409, 'The sequence was paused or stopped.');
           // With stop-on-reply turned off, a reply keeps the sequence going. Every other
           // recorded response, an opt-out or a bounce still stops it.
-          const lead = eligible(p, job.lead_id, { allowReplied: !f.stop_on_reply });
-          if (
-            lead.revision !== job.lead_revision ||
-            p.active_version !== job.training_version ||
-            recipientKey(lead.contact_email) !== job.recipient
-          )
-            throw new HttpError(
+          const lead = eligible(p, job.lead_id, {
+            allowReplied: !f.stop_on_reply,
+            allowBounced: job.contact_id !== null,
+          });
+          const changed = () =>
+            new HttpError(
               409,
               'Lead, recipient or training changed after enrollment. Review this lead before contacting again.',
             );
+          if (lead.revision !== job.lead_revision || p.active_version !== job.training_version)
+            throw changed();
+          if (job.contact_id !== null) {
+            // A contact's sequence is checked against that person's own row, and only that
+            // row: whatever happened to them, it stops rather than mailing the primary contact.
+            const contact = readContact(db, p.id, lead.id, job.contact_id);
+            if (!contact)
+              throw new SequenceStop(
+                'CONTACT_ERASED',
+                'The person this sequence was for was erased from the lead, so it stopped. It is never sent to anyone else instead.',
+              );
+            if (contactKey(contact.email) !== job.recipient)
+              throw new SequenceStop(
+                'CONTACT_CHANGED',
+                'This person’s email address changed after they joined, so the sequence stopped. Add them again to use the new address.',
+              );
+            return { f, lead: addressedTo(lead, contact) };
+          }
+          if (recipientKey(lead.contact_email) !== job.recipient) throw changed();
           return { f, lead };
         };
         const { f, lead } = verify();
@@ -934,6 +1208,12 @@ export function createFunnels(options: {
         if (!step) throw new HttpError(409, 'The sequence is complete.');
         const built = compose(step, lead, config, config.from_name);
         const sendTo = stepRecipient(built, job.recipient);
+        // A contact's sequence mails that person and nobody else (checked at enrollment too).
+        if (job.contact_id !== null && sendTo !== job.recipient)
+          throw new SequenceStop(
+            'CONTACT_CHANGED',
+            'A message in this sequence is addressed to someone other than the person who joined, so it stopped.',
+          );
         // verify() only proves the lead contact still matches enrollment; the step may mail
         // a different merged address, so re-check suppression and the three-email limit on
         // the address that will actually leave the mailbox (before outreach reserves a slot).
@@ -990,6 +1270,13 @@ export function createFunnels(options: {
           job.project_id,
         );
       } catch (error) {
+        if (error instanceof SequenceStop) {
+          db.prepare(
+            `UPDATE funnel_enrollments SET status='STOPPED',stop_cause=?,reason=?,updated_at=?
+            WHERE id=? AND project_id=? AND status='SENDING'`,
+          ).run(error.stopCause, error.message, now(), job.id, job.project_id);
+          return;
+        }
         const blocked = db.prepare(
           `UPDATE funnel_enrollments SET status='BLOCKED',reason=?,updated_at=?
           WHERE id=? AND project_id=? AND status='SENDING'`,

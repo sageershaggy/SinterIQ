@@ -13,6 +13,7 @@ import { installCrmSchema } from './crm-schema';
 import { installActivitySchema } from './activity-schema';
 import { installIntelSchema } from './intel-schema';
 import { installEmailSchema } from './email-schema';
+import { installContactOutreachSchema } from './contact-outreach-schema';
 
 export const now = () => new Date().toISOString();
 export const hash = (value: string | Buffer) =>
@@ -157,6 +158,7 @@ export function openDatabase(dataDir: string, legacyPath?: string) {
   installActivitySchema(db);
   installIntelSchema(db);
   installEmailSchema(db);
+  installContactOutreachSchema(db);
   if (!db.prepare("SELECT 1 FROM meta WHERE key='initialized'").get())
     initialize(db, secrets, legacyPath);
   preserveLegacyResearch(db, legacyPath);

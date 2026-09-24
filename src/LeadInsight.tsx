@@ -21,6 +21,7 @@ import {
 } from '../shared/research';
 import { label } from './api';
 import { Badge, ExternalLink, Spinner } from './ui';
+import { ContactCampaigns } from './ContactCampaigns';
 import './LeadInsight.css';
 
 /** One sentence for a title attribute wherever a fit score appears without room for more. */
@@ -246,12 +247,17 @@ export function ContactsCard({
   busy,
   onErase,
   onEraseAll,
+  base,
+  onEnrolled,
 }: {
   lead: Lead;
   profile: ResearchProfile | null;
   busy: boolean;
   onErase: (contact: LeadContact) => void;
   onEraseAll: () => void;
+  /** The lead's API path; with it, each person can be added to a campaign. */
+  base?: string;
+  onEnrolled?: (message: string) => void;
 }) {
   const contacts = profile?.contacts || [];
   const sought = profile?.roles_sought;
@@ -346,6 +352,15 @@ export function ContactsCard({
               >
                 <Trash2 size={15} />
               </button>
+              {base && (
+                <ContactCampaigns
+                  base={base}
+                  lead={lead}
+                  contact={contact}
+                  disabled={busy}
+                  onEnrolled={onEnrolled}
+                />
+              )}
             </li>
           ))}
         </ul>
