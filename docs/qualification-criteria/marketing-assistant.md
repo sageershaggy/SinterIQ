@@ -47,8 +47,10 @@ A lead matching any of these is Not a target, whatever else it scores.
 
 ## Evidence the system can check
 
-All criteria can be verified from the company's own website except size, which often needs the
-employee count in the imported lead data.
+Criteria 2, 4 and 6 can be verified from the company's own website (home, about and team pages).
+Criteria 1 and 3 can be verified when the home or about page shows the activity or the news;
+research does not read blog, news or careers pages on its own. Size often needs the employee count
+in the imported lead data.
 
 ## What the fit score means here
 

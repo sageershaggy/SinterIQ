@@ -41,12 +41,15 @@ The fit score (0 to 100) says how strongly the evidence matches the criteria.
 
 ## What the system can and cannot check today
 
-Research reads the company's own website (home page plus the contact, team, about, careers and news
-pages it can find) and the data in the lead record. It does not search the wider web, LinkedIn,
-funding databases or event sites. So:
+Research reads the company's own website and the data in the lead record: the home page, up to two
+about, company, product or engineering pages, and up to three contact, team, imprint or about pages
+linked from it. It does not read careers or news pages on its own, and it does not search the wider
+web, LinkedIn, funding databases or event sites. So:
 
-- Evidence that lives on the company's own site (products, careers, press releases, team pages) can
-  be verified and cited.
+- Evidence on those pages of the company's own site (products, applications, team, contacts, what
+  the about page says about size or history) can be verified and cited.
+- Evidence that usually sits on a careers or news page (open roles, a funding announcement) is only
+  found when the home or about page mentions it. Otherwise put it in the lead list.
 - Evidence that lives elsewhere (an event's exhibitor list, a funding database) should come in with
   the lead list: import the exhibitor list or the funding export as the leads, with the event or the
   round in a column, and the criteria can use it as provided data.

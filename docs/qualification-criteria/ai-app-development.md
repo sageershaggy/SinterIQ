@@ -55,7 +55,9 @@ A lead matching any of these is Not a target, whatever else it scores.
 
 ## Evidence the system can check
 
-Criteria 1 to 4 and 6 can be verified from the company's own website. Criterion 5 often needs the
+Criteria 1, 2, 3 and 6 can be verified from the company's own website (home, about, product and
+team pages). Criterion 4 needs the open roles to be mentioned on those pages, or a hiring column in
+the imported lead list, because research does not read careers pages. Criterion 5 often needs the
 employee count in the imported lead data; without it the lead is Unable to verify on size.
 
 ## What the fit score means here

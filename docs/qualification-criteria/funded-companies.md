@@ -47,10 +47,11 @@ A lead matching any of these is Not a target, whatever else it scores.
 
 ## Evidence the system can check
 
-Criteria 1 to 3 are verifiable when the company announced the round on its own website. Many rounds
-are only announced on news or funding databases; for those, import the funding export as the leads,
-with columns for the round date, amount and series, and the criteria use it as provided data.
-Criteria 4 to 6 can be verified from the company's own website.
+Criteria 1 to 3 are verifiable from the website only when the home or about page mentions the round;
+research does not read news or press pages on its own. In practice, import the funding export as
+the leads, with columns for the round date, amount, series and stated use of funds, and the
+criteria use it as provided data. Criteria 4 and 6 can be verified from the company's own website;
+criterion 5 when the home or about page mentions the growth.
 
 ## What the fit score means here
 
