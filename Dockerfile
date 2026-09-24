@@ -75,6 +75,9 @@ COPY scripts ./scripts
 
 # First-run DB seeding reads ../docs/sintertechnik-training.md (unguarded).
 COPY docs/sintertechnik-training.md ./docs/sintertechnik-training.md
+# The Training library offers these criteria documents (server/criteria-templates.ts reads
+# them on request and offers none if the folder is missing).
+COPY docs/qualification-criteria ./docs/qualification-criteria
 
 # openDatabase() mkdirs the data dir with mode 0700. Creating it here owned by
 # `node` means the named volume inherits that ownership on first mount, so the

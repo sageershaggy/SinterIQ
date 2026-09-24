@@ -27,6 +27,12 @@ export interface Rubric {
   exclusions: string[];
   questions: string[];
 }
+/** A qualification criteria document a project can add to its library (server/criteria-templates.ts). */
+export interface CriteriaTemplate {
+  id: string;
+  title: string;
+  summary: string;
+}
 export interface Project {
   id: number;
   name: string;

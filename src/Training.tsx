@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BookOpen,
   CheckCircle2,
+  ClipboardList,
   Download,
   FileText,
   Globe,
@@ -26,6 +27,7 @@ import {
   TrainingGraphView,
   UploadProblems,
 } from './TrainingInsight';
+import { CriteriaTemplatePicker } from './CriteriaTemplates';
 
 interface Version {
   version: number;
@@ -76,7 +78,7 @@ export default function Training({
     [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(''),
     [error, setError] = useState(''),
-    [mode, setMode] = useState<'note' | 'website' | null>(null);
+    [mode, setMode] = useState<'note' | 'website' | 'template' | null>(null);
   const [preview, setPreview] = useState<Source | null>(null),
     [remove, setRemove] = useState<Source | null>(null);
   const [oldVersion, setOldVersion] = useState<{
@@ -344,6 +346,14 @@ export default function Training({
               >
                 <Plus size={16} />
                 Write notes
+              </button>
+              <button
+                className="button secondary"
+                disabled={!!busy}
+                onClick={() => setMode('template')}
+              >
+                <ClipboardList size={16} />
+                Add criteria document
               </button>
               <input
                 ref={fileRef}
@@ -739,7 +749,32 @@ export default function Training({
           }}
         />
       </section>
-      {mode && (
+      {mode === 'template' && (
+        <CriteriaTemplatePicker
+          busy={!!busy}
+          error={error}
+          onClose={() => setMode(null)}
+          onAdd={(template) =>
+            void perform('template', async () => {
+              try {
+                const source = await api<Source>(base + '/sources/template', {
+                  method: 'POST',
+                  body: json({ template, revision: project.revision }),
+                });
+                setMode(null);
+                onChange();
+                notify(
+                  source.title +
+                    ' added to the source library. Run Train AI to turn it into draft rules.',
+                );
+              } finally {
+                setUploadsKey((n) => n + 1);
+              }
+            })
+          }
+        />
+      )}
+      {(mode === 'note' || mode === 'website') && (
         <SourceForm
           mode={mode}
           website={project.website}

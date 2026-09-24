@@ -572,6 +572,41 @@ const routes: Array<[RegExp, (route: string) => unknown]> = [
   [/^\/projects\/2\/leads(\?.*)?$/, (route) => leadsPage(route, lead)],
   [/^\/projects\/2\/lead-facets$/, () => leadFacets],
   [/^\/notifications/, () => ({ items: [], unread: 0 })],
+  // The Training library's "Add criteria document" choices (server/criteria-templates.ts).
+  [
+    /^\/criteria-templates$/,
+    () => [
+      {
+        id: 'ai-app-development',
+        title: 'AI engineers for app development',
+        summary:
+          'We are looking for companies that build software applications with AI in them, or are about to, and therefore employ or need AI engineers.',
+      },
+      {
+        id: 'marketing-assistant',
+        title: 'Marketing assistant',
+        summary:
+          'We are looking for small and mid-sized companies with an active marketing function that is thinly staffed.',
+      },
+      {
+        id: 'event-participants',
+        title: 'Event participants',
+        summary:
+          'We are looking for companies taking part in a named event whose business matches what the client offers.',
+      },
+      {
+        id: 'funded-companies',
+        title: 'Companies that have received significant investment',
+        summary:
+          'We are looking for companies that have recently raised significant investment, because new funding comes with plans to hire, build and buy.',
+      },
+      {
+        id: 'criteria-template',
+        title: 'Blank template',
+        summary: 'Every section with prompts, for a category that has no document yet.',
+      },
+    ],
+  ],
   // Lists the covered screens load alongside their main data. A missing one fails the
   // whole screen load, which is exactly what the 404 default is there to make visible.
   [/^\/projects\/2\/training\/analyses$/, () => []],

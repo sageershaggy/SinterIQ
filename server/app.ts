@@ -61,6 +61,7 @@ import {
   webUrl,
 } from './validation';
 import { readImportRows, mapImportRows } from './import';
+import { criteriaTemplate, listCriteriaTemplates } from './criteria-templates';
 import {
   assertAddress,
   assertMailHost,
@@ -629,6 +630,46 @@ export function createApp(options: {
           req.user.name,
         ),
       );
+  });
+  /** The qualification criteria documents a project can start from (docs/qualification-criteria). */
+  app.get('/api/criteria-templates', (_req, res) => {
+    res.json(listCriteriaTemplates());
+  });
+  /**
+   * Adds a criteria template to the library as an ordinary training document, logged like an
+   * upload. It proposes nothing by itself: Train AI turns it into draft rules to publish.
+   */
+  app.post('/api/projects/:projectId/sources/template', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const input = z
+      .object({ template: z.string().trim().max(80), revision: z.number().int().positive() })
+      .strict()
+      .parse(req.body);
+    assertRevision(project.revision, input.revision);
+    const template = criteriaTemplate(input.template);
+    if (!template) throw new HttpError(404, 'That criteria template does not exist.');
+    const filename = template.id + '.md';
+    const source = addSource(
+      project,
+      {
+        kind: 'document',
+        title: 'Qualification criteria · ' + template.title,
+        filename,
+        original: Buffer.from(template.content, 'utf8'),
+        content: template.content,
+        mime: 'text/markdown',
+      },
+      req.user.name,
+    ) as { id: number };
+    trainingLibrary.recordUpload({
+      projectId: project.id,
+      filename,
+      size: Buffer.byteLength(template.content),
+      actor: req.user.name,
+      sourceId: source.id,
+      content: template.content,
+    });
+    res.status(201).json(source);
   });
   app.post(
     '/api/projects/:projectId/sources/upload',

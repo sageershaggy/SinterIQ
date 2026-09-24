@@ -49,6 +49,9 @@ playwright-report
 # so that one file MUST stay in the image or a fresh DB crash-loops on boot.
 docs/**
 !docs/sintertechnik-training.md
+# The criteria documents the Training library offers (server/criteria-templates.ts).
+!docs/qualification-criteria
+!docs/qualification-criteria/**
 
 # Docker / deploy files themselves
 Dockerfile
