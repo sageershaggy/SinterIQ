@@ -150,7 +150,7 @@ function ResearchSection({ lead, research }: { lead: Lead; research: ResearchCon
   return (
     <>
       {!!missing.length && (
-        <section className="company-card">
+        <section className="company-card missing-card">
           <div className="section-title">
             <div>
               <h3>Missing details</h3>

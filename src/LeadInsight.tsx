@@ -1,6 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import {
   ArrowUpRight,
+  Factory,
+  Globe,
   Mail,
   MapPin,
   Pencil,
@@ -60,46 +62,48 @@ export function FitBands({ score, inline }: { score: number | null; inline?: boo
 /**
  * The fit score, large, with its band and the decision next to it. A result from older training
  * or an older version of the record is shown as out of date rather than as a live score.
+ *
+ * Its classes are `lead-fit-*`, not `fit-score`: the lead list's score cell owns `.fit-score`
+ * (a 58px column), and sharing the name squeezed this panel to that width.
  */
 export function FitScore({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
+  const legendId = useId();
   const band = lead.stale ? null : fitBandFor(lead.score);
   const scored = lead.score !== null;
   return (
-    <section className={'fit-score' + (lead.stale ? ' is-stale' : '')} aria-label="Fit score">
-      <small>FIT SCORE</small>
-      <div className="fit-score-value">
+    <section className={'lead-fit' + (lead.stale ? ' is-stale' : '')} aria-label="Fit score">
+      <small className="lead-fit-label">FIT SCORE</small>
+      <div className="lead-fit-value">
         {scored ? (
           <>
             <strong>{lead.score}</strong>
             <span>/100</span>
           </>
         ) : (
-          <strong className="fit-score-empty">—</strong>
+          <strong className="lead-fit-empty">—</strong>
         )}
       </div>
-      <p className="fit-score-band">
-        {!scored
-          ? 'Not scored yet'
-          : lead.stale
-            ? 'Out of date · qualify again'
-            : band?.label}
+      <p className="lead-fit-band">
+        {!scored ? 'Not scored yet' : lead.stale ? 'Out of date' : band?.label}
       </p>
-      {scored && (
+      <div className="lead-fit-badges">
         <Badge value={lead.stale ? 'stale' : lead.status}>
           {lead.stale ? 'Requalification needed' : label(lead.status)}
         </Badge>
-      )}
+        {lead.reviewed && <Badge value="ready">Human reviewed</Badge>}
+      </div>
       <button
         type="button"
-        className="text-button fit-score-help"
+        className="text-button lead-fit-help"
         aria-expanded={open}
+        aria-controls={legendId}
         onClick={() => setOpen((value) => !value)}
       >
         What does the score mean?
       </button>
       {open && (
-        <div className="fit-score-legend">
+        <div className="lead-fit-legend" id={legendId}>
           <FitBands score={lead.stale ? null : lead.score} />
           <p>
             The score is the share of the project’s positive criteria this company meets. A
@@ -144,95 +148,105 @@ export function LeadHeader({
   const location = lead ? [lead.city, lead.country].filter(Boolean).join(', ') : '';
   const canResearch = !!lead && (missing > 0 || !!lead.website);
   return (
+    // The header is the container its layout answers to, so the score panel sits beside the
+    // company at any width that leaves room for it, whatever the sidebar is doing.
     <header className="lead-header">
-      <div className="lead-header-main">
-        <span className="eyebrow">COMPANY · {project.name.toUpperCase()}</span>
-        <h1>{lead?.name || 'Loading company…'}</h1>
-        {lead && (
-          <div className="lead-header-meta">
-            <ExternalLink url={lead.website} />
-            <span>
-              <MapPin size={13} />
-              {location || 'Location unknown'}
-            </span>
-            <span>{lead.industry || 'Industry unknown'}</span>
-            {lead.employee_count && <span>{lead.employee_count} employees</span>}
+      <div className={'lead-header-inner' + (lead ? '' : ' is-loading')}>
+        <div className="lead-header-main">
+          <span className="eyebrow">COMPANY · {project.name.toUpperCase()}</span>
+          <h1>{lead?.name || 'Loading company…'}</h1>
+          {lead && (
+            <div className="lead-header-meta">
+              <span className="lead-header-fact">
+                <Globe size={13} aria-hidden="true" />
+                <ExternalLink url={lead.website} />
+              </span>
+              <span className="lead-header-fact">
+                <MapPin size={13} aria-hidden="true" />
+                {location || 'Location unknown'}
+              </span>
+              <span className="lead-header-fact">
+                <Factory size={13} aria-hidden="true" />
+                {lead.industry || 'Industry unknown'}
+              </span>
+              {lead.employee_count && (
+                <span className="lead-header-fact">
+                  <Users size={13} aria-hidden="true" />
+                  {lead.employee_count} employees
+                </span>
+              )}
+            </div>
+          )}
+          {lead && children && (
+            // The lead status, the calling assignment (its chip names who calls) and archiving:
+            // one row of controls that share a height, so their text sits on one line.
+            <div className="lead-header-controls">{children}</div>
+          )}
+          <div className="lead-header-actions">
+            <button
+              type="button"
+              className="button primary"
+              onClick={onEmail}
+              disabled={!lead}
+              aria-label={'Create email for ' + (lead?.name || 'company')}
+            >
+              <Mail size={16} />
+              Create email
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              disabled={!lead || busy || researching}
+              onClick={onQualify}
+              title={
+                ready
+                  ? 'Researches any blank details first, then checks every approved rule.'
+                  : 'Publish the project training before qualifying.'
+              }
+            >
+              {busy ? (
+                <Spinner text="Qualifying…" />
+              ) : (
+                <>
+                  <Sparkles size={16} />
+                  {!ready
+                    ? 'Open training'
+                    : lead?.latest_run_id
+                      ? 'Run AI qualification again'
+                      : 'Run AI qualification'}
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              disabled={!canResearch || busy || researching}
+              onClick={onResearch}
+              title="Reads the company’s own website and fills only what a page proves."
+            >
+              {researching ? (
+                <Spinner text="Reading pages…" />
+              ) : (
+                <>
+                  <Search size={16} />
+                  Research missing details
+                  {missing > 0 && <span className="lead-header-count">{missing}</span>}
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              disabled={!lead || busy || researching}
+              onClick={onEdit}
+            >
+              <Pencil size={15} />
+              Edit
+            </button>
           </div>
-        )}
-        {lead && (
-          <div className="lead-header-badges">
-            {lead.score === null && (
-              <Badge value={lead.status}>{label(lead.status)}</Badge>
-            )}
-            {lead.reviewed && <Badge value="ready">Human reviewed</Badge>}
-            {/* The lead status and the calling assignment (its chip names who calls). */}
-            {children}
-          </div>
-        )}
-        <div className="lead-header-actions">
-          <button
-            type="button"
-            className="button primary"
-            onClick={onEmail}
-            disabled={!lead}
-            aria-label={'Create email for ' + (lead?.name || 'company')}
-          >
-            <Mail size={16} />
-            Create email
-          </button>
-          <button
-            type="button"
-            className="button secondary"
-            disabled={!lead || busy || researching}
-            onClick={onQualify}
-            title={
-              ready
-                ? 'Researches any blank details first, then checks every approved rule.'
-                : 'Publish the project training before qualifying.'
-            }
-          >
-            {busy ? (
-              <Spinner text="Qualifying…" />
-            ) : (
-              <>
-                <Sparkles size={16} />
-                {!ready
-                  ? 'Open training'
-                  : lead?.latest_run_id
-                    ? 'Run AI qualification again'
-                    : 'Run AI qualification'}
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            className="button secondary"
-            disabled={!canResearch || busy || researching}
-            onClick={onResearch}
-            title="Reads the company’s own website and fills only what a page proves."
-          >
-            {researching ? (
-              <Spinner text="Reading pages…" />
-            ) : (
-              <>
-                <Search size={16} />
-                Research missing details
-                {missing > 0 && <span className="lead-header-count">{missing}</span>}
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            className="button secondary"
-            disabled={!lead || busy || researching}
-            onClick={onEdit}
-          >
-            <Pencil size={15} />
-            Edit
-          </button>
         </div>
+        {lead && <FitScore lead={lead} />}
       </div>
-      {lead && <FitScore lead={lead} />}
     </header>
   );
 }
