@@ -6,19 +6,23 @@
 .app-shell .sidebar > .brand {
   margin-bottom: 12px;
 }
+/* Light enough to read on the forest green: 10:1 for the name, 7:1 for the line under it. */
 .workspace-line {
   margin: 0 14px 30px;
   font-size: 11px;
   line-height: 1.5;
-  color: #8fa087;
+  color: #b3c2a8;
 }
 .workspace-line strong {
   font-weight: 550;
-  color: #cfdcc0;
+  color: #dce7cf;
 }
 .workspace-line span {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
+}
+.app-shell .nav-caption {
+  color: #a9b99f;
 }
 
 /* "All projects" opens a drop-down of every project, each with its own sections. */
@@ -56,11 +60,12 @@
 .sidebar-projects-empty {
   padding: 8px 11px;
   font-size: 11px;
-  color: #8fa087;
+  color: #b3c2a8;
 }
-/* The sidebar ends with the project list: nothing is pinned to its foot any more. */
+/* The account block (AccountMenu.css) is pinned to the sidebar's foot and brings its own
+   bottom spacing. */
 .app-shell .sidebar {
-  padding-bottom: 24px;
+  padding-bottom: 0;
 }
 
 /* The quote, as one line of the header. */

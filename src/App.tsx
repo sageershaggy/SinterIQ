@@ -1,7 +1,6 @@
 import { useEffect, useState, lazy, Suspense, type FormEvent } from 'react';
 import {
   ArrowRight,
-  ArrowUpRight,
   BookOpen,
   Check,
   ChevronDown,
@@ -18,6 +17,7 @@ import {
   GitBranch,
   Mail,
   PhoneCall,
+  Trash2,
 } from 'lucide-react';
 import type { Project, User } from '../shared/types';
 import { api, date, json } from './api';
@@ -25,6 +25,8 @@ import { Alert, Badge, Brand, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { Notifications } from './Notifications';
 import { AccountMenu } from './AccountMenu';
 import { HeaderQuote } from './Shell';
+import { ProjectLibrary } from './ProjectLibrary';
+import { DeleteProjectDialog } from './DeleteProject';
 import { readRoute, type View } from './navigation';
 const Training = lazy(() => import('./Training'));
 const Leads = lazy(() => import('./Leads'));
@@ -44,7 +46,8 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
     [projectsOpen, setProjectsOpen] = useState(true);
   const [newProject, setNewProject] = useState(false),
     [editProject, setEditProject] = useState(false),
-    [menu, setMenu] = useState(false);
+    [menu, setMenu] = useState(false),
+    [deleting, setDeleting] = useState<Project | null>(null);
   const [refresh, setRefresh] = useState(0),
     [notice, setNotice] = useState('');
   const project = projects.find((p) => p.id === selected);
@@ -236,8 +239,16 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
             );
           })}
         </div>
-        {/* Workspace settings, the profile and sign-out moved to the account menu in the header;
-            the quote moved to the header line. The sidebar is navigation only. */}
+        {/* The account menu from the header, pinned to the foot of the sidebar as well. */}
+        <div className="sidebar-account">
+          <AccountMenu
+            variant="sidebar"
+            user={user}
+            active={view === 'settings'}
+            onSettings={() => navigate('settings')}
+            onLogout={() => onLogout().catch((e) => setError(e.message))}
+          />
+        </div>
       </aside>
       <div className="main-shell">
         <header className="topbar">
@@ -310,40 +321,13 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
                     )}
                   </div>
                   {/* No workspace totals here: each project card carries its own numbers. */}
-                  <div className="section-title">
-                    <h2>
-                      Project library <span>{projects.length}</span>
-                    </h2>
-                    <span className="muted">Your knowledge, organized by business</span>
-                  </div>
-                  {projects.length === 0 ? (
-                    <Empty
-                      icon={<FolderOpen size={26} />}
-                      title={
-                        user.role === 'admin'
-                          ? 'No projects yet'
-                          : 'No projects are assigned to you'
-                      }
-                      action={
-                        user.role === 'admin' ? (
-                          <button className="button primary" onClick={() => setNewProject(true)}>
-                            <Plus size={16} />
-                            New project
-                          </button>
-                        ) : undefined
-                      }
-                    >
-                      {user.role === 'admin'
-                        ? 'Create a project, add its training sources, then assign researchers to it in Workspace settings.'
-                        : 'An administrator assigns projects to your account in Workspace settings.'}
-                    </Empty>
-                  ) : (
-                    <div className="project-grid">
-                      {projects.map((p) => (
-                        <ProjectCard key={p.id} project={p} onOpen={() => open(p)} />
-                      ))}
-                    </div>
-                  )}
+                  <ProjectLibrary
+                    projects={projects}
+                    user={user}
+                    onOpen={open}
+                    onCreate={() => setNewProject(true)}
+                    onDelete={setDeleting}
+                  />
                 </>
               )}
               {project && view === 'overview' && (
@@ -519,9 +503,27 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
           </button>
         </div>
       )}
-      {((newProject && user.role === 'admin') || (editProject && project)) && (
+      {deleting && user.role === 'admin' && (
+        <DeleteProjectDialog
+          project={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={(result) => {
+            const id = deleting.id;
+            setDeleting(null);
+            setEditProject(false);
+            setExpanded((ids) => ids.filter((value) => value !== id));
+            if (selected === id) window.location.hash = 'projects';
+            reload();
+            setNotice(result.name + ' was deleted. A snapshot of the database was saved first.');
+          }}
+        />
+      )}
+      {((newProject && user.role === 'admin') || (editProject && project)) && !deleting && (
         <ProjectForm
           project={editProject ? project : undefined}
+          onDelete={
+            editProject && project && user.role === 'admin' ? () => setDeleting(project) : undefined
+          }
           onClose={() => {
             setNewProject(false);
             setEditProject(false);
@@ -540,54 +542,6 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
         />
       )}
     </div>
-  );
-}
-function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: () => void }) {
-  const ready = p.revision === p.trained_revision;
-  return (
-    <article className="project-card">
-      <div className="project-card-top">
-        <span className={'project-monogram ' + (p.id === 1 ? 'ceramic-monogram' : '')}>
-          {p.name.slice(0, 2).toUpperCase()}
-        </span>
-        <Badge value={ready ? 'ready' : 'draft'}>
-          {ready ? 'Ready for research' : 'Training draft'}
-        </Badge>
-      </div>
-      <h3>
-        <button onClick={onOpen}>{p.name}</button>
-      </h3>
-      <p>{p.description || 'Your next research project starts here.'}</p>
-      {p.preserved_lead_count > 0 && (
-        <p className="project-preserved-label">
-          <History size={15} />
-          Existing research · {p.preserved_contact_count} saved contacts
-        </p>
-      )}
-      <div className="project-card-stats">
-        <div>
-          <strong>{p.lead_count}</strong>
-          <span>Leads</span>
-        </div>
-        <div>
-          <strong>{p.source_count}</strong>
-          <span>Sources</span>
-        </div>
-        <div>
-          <strong>{p.active_version ? 'v' + p.active_version : '—'}</strong>
-          <span>Training</span>
-        </div>
-      </div>
-      <footer>
-        <span>
-          <span className="small-dot" />
-          {ready ? 'Training published' : 'Ready to build your context'}
-        </span>
-        <button onClick={onOpen} aria-label={'Open ' + p.name}>
-          <ArrowUpRight size={21} />
-        </button>
-      </footer>
-    </article>
   );
 }
 function Stat({
@@ -616,10 +570,13 @@ function ProjectForm({
   project,
   onClose,
   onSaved,
+  onDelete,
 }: {
   project?: Project;
   onClose: () => void;
   onSaved: (project: Project) => void;
+  /** Administrators only: opens the deletion dialog (src/DeleteProject.tsx). */
+  onDelete?: () => void;
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
@@ -689,6 +646,18 @@ function ProjectForm({
             {busy ? <Spinner /> : project ? 'Save project' : 'Create project'}
           </button>
         </div>
+        {onDelete && (
+          <div className="project-danger-zone">
+            <div>
+              <strong>Delete this project</strong>
+              <p>Removes its leads, training, history, campaigns and mailbox settings.</p>
+            </div>
+            <button type="button" className="button secondary" onClick={onDelete}>
+              <Trash2 size={15} aria-hidden="true" />
+              Delete project…
+            </button>
+          </div>
+        )}
       </form>
     </Modal>
   );

@@ -564,5 +564,7 @@ export function createMailbox(options: {
       );
     });
   }
-  return { install, sync, syncAll };
+  /** A poll in flight for this project (project deletion waits for it). */
+  const syncing = (projectId: number) => running.has(projectId);
+  return { install, sync, syncAll, syncing };
 }

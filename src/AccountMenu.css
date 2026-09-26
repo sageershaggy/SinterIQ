@@ -140,3 +140,82 @@
     display: none;
   }
 }
+
+/* The same menu at the foot of the sidebar. It is sticky rather than fixed: it takes its own
+   place at the end of the sidebar, so the last project above it can always be scrolled into
+   view, and it stays on screen however long the project list grows. */
+.sidebar-account {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  flex-shrink: 0;
+  margin: auto -18px 0;
+  padding: 12px 18px 16px;
+  background: var(--forest);
+  border-top: 1px solid #ffffff14;
+}
+.account-trigger.account-trigger-sidebar {
+  width: 100%;
+  min-height: 50px;
+  gap: 10px;
+  padding: 7px 10px 7px 7px;
+  border: 1px solid #ffffff1c;
+  border-radius: 10px;
+  background: #ffffff08;
+  color: #e8efdd;
+  font-size: 12px;
+  text-align: left;
+}
+.account-trigger.account-trigger-sidebar:hover,
+.account-trigger.account-trigger-sidebar[aria-expanded='true'],
+.account-trigger.account-trigger-sidebar.is-active {
+  background: #ffffff14;
+  border-color: #ffffff33;
+  color: #fff;
+}
+.account-trigger-sidebar .account-avatar {
+  width: 32px;
+  height: 32px;
+  background: #d5e8b2;
+  border: 0;
+  outline: 0;
+  color: #203e25;
+  font-size: 11px;
+}
+.account-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.account-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f2f6ea;
+}
+.account-identity small {
+  font-size: 11px;
+  color: #b9c8ac;
+}
+.account-trigger.account-trigger-sidebar > svg {
+  color: #b9c8ac;
+}
+.account-dropdown.opens-up {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  width: auto;
+}
+@media (max-width: 1200px) {
+  .sidebar-account {
+    margin-left: -14px;
+    margin-right: -14px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
