@@ -1,12 +1,13 @@
 /**
  * The lead-list facets and sort orders: one vocabulary for the server's query schema, the
- * Filters panel, the active-filter chips and the export link, so the list and the CSV export
+ * filter bar, the active-filter chips and the export link, so the list and the CSV export
  * can never be asked different questions.
  *
- * Every facet is multi-select and ORs within itself; different facets AND together, and all of
- * them AND with the status view chosen in the "All leads" dropdown and with the search box.
+ * Every facet is multi-select on the server and ORs within itself (the filter bar offers one
+ * value per facet); different facets AND together, and all of them AND with the page's view
+ * (the Review queue, or all leads) and with the search box.
  */
-import type { CallOutcome } from './types';
+import { nextStepBands, type CallOutcome } from './types';
 import { callOutcomeStage, type CallStage } from './calls';
 import { pipelineStatusLabels, pipelineStatuses, type PipelineStatus } from './crm';
 
@@ -50,6 +51,34 @@ export const fitScoreValues = fitScoreBands.map((band) => band.value) as [
   FitScoreBand,
   ...FitScoreBand[],
 ];
+
+/**
+ * The outreach step a current result points to: the same rule as nextStepFor in
+ * shared/types.ts, so a row's own next step and this filter always agree. A superseded or
+ * unanalysed lead has no step. Its bands are not the fit-score ranges above (email starts at
+ * 70), which is why this is a facet of its own.
+ */
+export const nextStepFilters = ['CALL_READY', 'SEND_EMAIL', 'REVIEW_WITH_CLIENT'] as const;
+export type NextStepFilter = (typeof nextStepFilters)[number];
+export const nextStepLabels: Record<NextStepFilter, string> = {
+  CALL_READY: 'Call ready (' + nextStepBands.call + '–100)',
+  SEND_EMAIL: 'Send an email (' + nextStepBands.email + '–' + (nextStepBands.call - 1) + ')',
+  REVIEW_WITH_CLIENT:
+    'Review with client (' + nextStepBands.review + '–' + (nextStepBands.email - 1) + ')',
+};
+export const nextStepHints: Record<NextStepFilter, string> = {
+  CALL_READY: 'Qualified on the current training and scoring ' + nextStepBands.call + ' or more',
+  SEND_EMAIL:
+    'Qualified on the current training and scoring ' +
+    nextStepBands.email +
+    '–' +
+    (nextStepBands.call - 1),
+  REVIEW_WITH_CLIENT:
+    'Needs review, or qualified and scoring ' +
+    nextStepBands.review +
+    '–' +
+    (nextStepBands.email - 1),
+};
 
 /**
  * A lead's calling state, derived from its assignment and its most recent logged call only.
@@ -113,18 +142,28 @@ export const emailStatusLabels: Record<EmailStatusValue, string> = {
   UNSUBSCRIBED: 'Unsubscribed',
 };
 
-/** Not a partition: a researched lead can still be missing details. */
-export const researchStatuses = ['RESEARCHED', 'NOT_RESEARCHED', 'MISSING_DETAILS'] as const;
+/**
+ * Not a partition: a researched lead can still be missing details, and a lead with no website
+ * is also missing details.
+ */
+export const researchStatuses = [
+  'RESEARCHED',
+  'NOT_RESEARCHED',
+  'MISSING_DETAILS',
+  'NO_WEBSITE',
+] as const;
 export type ResearchStatus = (typeof researchStatuses)[number];
 export const researchStatusLabels: Record<ResearchStatus, string> = {
   RESEARCHED: 'Researched',
   NOT_RESEARCHED: 'Not researched',
   MISSING_DETAILS: 'Missing details',
+  NO_WEBSITE: 'No website yet',
 };
 export const researchStatusHints: Record<ResearchStatus, string> = {
   RESEARCHED: 'Analysed by AI or filled in from its website',
   NOT_RESEARCHED: 'No AI analysis and no website research yet',
   MISSING_DETAILS: 'Website, industry or location still blank',
+  NO_WEBSITE: 'The website field is still blank',
 };
 
 export const dateAddedPresets = ['TODAY', '7D', '30D', 'CUSTOM'] as const;
@@ -150,19 +189,25 @@ export const leadSorts = [
 export type LeadSort = (typeof leadSorts)[number]['value'];
 export const leadSortValues = leadSorts.map((sort) => sort.value) as [LeadSort, ...LeadSort[]];
 
-/** "Unassigned" in the Assigned-to facet; any other value is an account id. */
+/**
+ * The Assigned-to facet's words: nobody, the signed-in account, or anybody at all. Any other
+ * value is an account id.
+ */
 export const UNASSIGNED = 'none';
+export const ASSIGNED_TO_ME = 'me';
+export const ASSIGNED_TO_ANYONE = 'any';
 
 /** The facet half of a lead query, as the browser holds it. */
 export interface LeadFacets {
   qualification: QualificationState[];
   score: FitScoreBand[];
+  next_step: NextStepFilter[];
   call: CallStatus[];
   /** Exact values, compared case-insensitively. An empty string selects the blank ones. */
   industry: string[];
   country: string[];
   city: string[];
-  /** Account ids as strings, or UNASSIGNED. */
+  /** Account ids as strings, UNASSIGNED, ASSIGNED_TO_ME or ASSIGNED_TO_ANYONE. */
   assignee: string[];
   lead_status: LeadStatusValue[];
   email_status: EmailStatusValue[];
@@ -176,6 +221,7 @@ export interface LeadFacets {
 export const emptyFacets: LeadFacets = {
   qualification: [],
   score: [],
+  next_step: [],
   call: [],
   industry: [],
   country: [],
@@ -192,6 +238,7 @@ export const emptyFacets: LeadFacets = {
 export const listFacets = [
   'qualification',
   'score',
+  'next_step',
   'call',
   'industry',
   'country',
@@ -232,7 +279,7 @@ export function facetParams(
   return pairs;
 }
 
-/** Project-wide counts for the row above the table. Totals of the default "All leads" view. */
+/** Project-wide counts for the row above the table. Totals of the unfiltered lead list. */
 export interface LeadSummary {
   total: number;
   raw: number;

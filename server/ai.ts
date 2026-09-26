@@ -3,13 +3,32 @@ import type { DB, Secrets } from './database';
 import type { Evidence, Lead, Qualification, Settings, TrainingSnapshot } from '../shared/types';
 import { HttpError, parseJson, qualificationSchema, rubricSchema } from './validation';
 import { publicRequest } from './network';
+import {
+  providerPresetIds,
+  providerPresets,
+  type ProviderPreset,
+} from '../shared/ai-providers';
 
 export interface AiConfig {
   provider: Settings['provider'];
+  /** Which provider this is (shared/ai-providers.ts): chosen, recognised from the key, or inferred. */
+  preset: ProviderPreset;
   model: string;
   base_url: string;
   api_key: string;
   source: string;
+}
+/** The listed provider behind an OpenAI-compatible base URL, or 'custom'. */
+export function presetForBase(base_url: string): ProviderPreset {
+  const normal = (value: string) => value.trim().replace(/\/+$/, '').toLowerCase();
+  return (
+    providerPresets.find(
+      (preset) =>
+        preset.provider === 'openai_compatible' &&
+        preset.base_url &&
+        normal(preset.base_url) === normal(base_url),
+    )?.id || 'custom'
+  );
 }
 export function getAiConfig(db: DB, secrets: Secrets): AiConfig {
   const saved = Object.fromEntries(
@@ -34,21 +53,35 @@ export function getAiConfig(db: DB, secrets: Secrets): AiConfig {
     provider === 'gemini'
       ? process.env.GEMINI_API_KEY
       : process.env.LLM_API_KEY || process.env.OPENAI_API_KEY;
+  const base_url = saved.base_url || process.env.LLM_BASE_URL || 'https://api.openai.com/v1';
+  const chosen = providerPresetIds.find((id) => id === saved.preset);
+  const preset: ProviderPreset =
+    provider === 'gemini'
+      ? 'gemini'
+      : chosen && chosen !== 'gemini'
+        ? chosen
+        : presetForBase(base_url);
   return {
     provider,
+    preset,
     model:
       saved.model ||
       (provider === 'gemini'
         ? process.env.GEMINI_MODEL || 'gemini-2.5-flash'
         : process.env.LLM_MODEL || 'gpt-4.1-mini'),
-    base_url: saved.base_url || process.env.LLM_BASE_URL || 'https://api.openai.com/v1',
+    base_url,
     api_key: saved.api_key ? secrets.decrypt(saved.api_key) : fallback || '',
     source: saved.api_key ? 'database' : fallback ? 'environment' : 'unconfigured',
   };
 }
-export function publicSettings(config: AiConfig): Settings {
+export function publicSettings(
+  config: AiConfig,
+  status: Settings['status'] = null,
+): Settings {
   return {
     provider: config.provider,
+    preset: config.preset,
+    status,
     model: config.model,
     base_url: config.base_url,
     has_api_key: Boolean(config.api_key),

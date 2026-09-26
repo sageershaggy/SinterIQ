@@ -27,6 +27,16 @@ function derivePasswordKey(password: string, salt: string): Promise<Buffer> {
   });
 }
 const COOKIE = 'innovista_session';
+/** A session lasts a working day, or 30 days when "Keep me signed in" was ticked. */
+export const SESSION_LIFETIME = 12 * 60 * 60_000;
+export const REMEMBERED_SESSION_LIFETIME = 30 * 24 * 60 * 60_000;
+/**
+ * The sign-in page has two doors: Administrator, and Guest for team members (the researcher
+ * role). The door is checked only after the password is proven, so it never tells a stranger
+ * whether an account exists or what it is; the account owner is told which door is theirs.
+ */
+export const signInPortals = ['admin', 'guest'] as const;
+const portalRole = { admin: 'admin', guest: 'researcher' } as const;
 export async function passwordHash(password: string) {
   const salt = crypto.randomBytes(16).toString('hex');
   const key = await derivePasswordKey(password, salt);
@@ -179,14 +189,15 @@ export function installAuth(app: Express, db: DB, production: boolean) {
       error: 'Too many password resets. Please retry in 15 minutes.',
     },
   });
-  const createSession = (res: Response, user: User) => {
+  const createSession = (res: Response, user: User, remember = false) => {
     const token = crypto.randomBytes(32).toString('hex');
     const csrfToken = crypto.randomBytes(32).toString('hex');
+    const lifetime = remember ? REMEMBERED_SESSION_LIFETIME : SESSION_LIFETIME;
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
     db.prepare(
       'INSERT INTO sessions (token_hash,account_id,csrf_token,expires_at) VALUES (?,?,?,?)',
-    ).run(hash(token), user.id, csrfToken, Date.now() + 12 * 60 * 60_000);
-    res.cookie(COOKIE, token, { ...cookieOptions, maxAge: 12 * 60 * 60_000 });
+    ).run(hash(token), user.id, csrfToken, Date.now() + lifetime);
+    res.cookie(COOKIE, token, { ...cookieOptions, maxAge: lifetime });
     return {
       user: publicUser(user),
       csrf_token: csrfToken,
@@ -255,6 +266,9 @@ export function installAuth(app: Express, db: DB, production: boolean) {
       .object({
         username: z.string().trim().toLowerCase().max(120),
         password: z.string().max(128),
+        // Optional so scripted clients keep working; the sign-in page always sends it.
+        portal: z.enum(signInPortals).optional(),
+        remember: z.boolean().default(false),
       })
       .parse(req.body);
     const user = db
@@ -262,7 +276,14 @@ export function installAuth(app: Express, db: DB, production: boolean) {
       .get(input.username) as (User & { password_hash: string }) | undefined;
     const matches = await passwordMatches(input.password, user?.password_hash || dummyHash);
     if (!user || !matches) throw new HttpError(401, 'Invalid username or password.');
-    res.json(createSession(res, user));
+    if (input.portal && portalRole[input.portal] !== user.role)
+      throw new HttpError(
+        403,
+        user.role === 'admin'
+          ? 'This is an administrator account. Choose the Administrator tab to sign in.'
+          : 'This is a team member account. Choose the Guest tab to sign in.',
+      );
+    res.json(createSession(res, user, input.remember));
   });
   app.use('/api', (req, _res, next) => {
     if (req.path === '/health') return next();
@@ -294,11 +315,16 @@ export function installAuth(app: Express, db: DB, production: boolean) {
     if (!(await passwordMatches(input.current_password, row.password_hash)))
       throw new HttpError(400, 'Current password is incorrect.');
     const encoded = await passwordHash(input.password);
+    // The replacement session keeps the length the person chose when they signed in.
+    const current = db
+      .prepare('SELECT expires_at FROM sessions WHERE token_hash=?')
+      .get(req.sessionHash) as { expires_at: number } | undefined;
+    const remembered = Boolean(current && current.expires_at - Date.now() > SESSION_LIFETIME);
     db.transaction(() => {
       db.prepare('UPDATE accounts SET password_hash=? WHERE id=?').run(encoded, req.user.id);
       db.prepare('DELETE FROM sessions WHERE account_id=?').run(req.user.id);
     })();
-    res.json(createSession(res, req.user));
+    res.json(createSession(res, req.user, remembered));
   });
   app.get('/api/users', adminOnly, (_req, res) => {
     const accounts = db

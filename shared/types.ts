@@ -359,6 +359,10 @@ export interface EmailMessage {
 }
 export interface Settings {
   provider: 'gemini' | 'openai_compatible';
+  /** Which provider (shared/ai-providers.ts). */
+  preset: import('./ai-providers').ProviderPreset;
+  /** The last connection check of exactly this configuration, if there was one. */
+  status: import('./ai-providers').ConnectionStatus | null;
   model: string;
   base_url: string;
   has_api_key: boolean;

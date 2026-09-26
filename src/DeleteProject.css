@@ -1,0 +1,90 @@
+/* The project deletion dialog. */
+.modal .delete-project {
+  gap: 14px;
+}
+.modal .delete-project-lead {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #3d4a38;
+}
+.delete-project-list {
+  margin: 0;
+  padding: 12px 14px 12px 32px;
+  border: 1px solid #efd9d3;
+  border-radius: 10px;
+  background: #fdf6f4;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #4a3a35;
+}
+.delete-project-list li + li {
+  margin-top: 5px;
+}
+.delete-project-list strong {
+  color: #7c2f25;
+  font-weight: 600;
+}
+.delete-project-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f1f5ea;
+  color: #3e5234;
+}
+.delete-project-note > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.modal .delete-project-note p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.delete-project-name {
+  font-weight: 650;
+  color: #7c2f25;
+  overflow-wrap: anywhere;
+}
+.delete-project input[aria-invalid='true'] {
+  border-color: #d9a79d;
+}
+.delete-project .form-actions .button.danger:hover:not(:disabled) {
+  background: #963a31;
+}
+/* The danger zone at the foot of Project settings. */
+.project-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 6px;
+  padding: 14px 16px;
+  border: 1px solid #efd9d3;
+  border-radius: 10px;
+  background: #fdf8f6;
+}
+.project-danger-zone > div {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.project-danger-zone strong {
+  display: block;
+  font-size: 13px;
+  color: #7c2f25;
+}
+.modal .project-danger-zone p {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5c4a45;
+}
+.project-danger-zone .button {
+  border-color: #e4bfb7;
+  color: #9f3a2f;
+}
+.project-danger-zone .button:hover:not(:disabled) {
+  background: #fbefec;
+  border-color: #d59c91;
+}

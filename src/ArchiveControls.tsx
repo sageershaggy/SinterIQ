@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Archive, ArchiveRestore } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Archive, ArchiveRestore, ChevronDown } from 'lucide-react';
 import type { Lead, Project } from '../shared/types';
 import { api, date, json } from './api';
 import { Alert, Modal, Spinner } from './ui';
 import './ArchiveControls.css';
+import './ArchiveMenu.css';
 
 /**
  * Archiving, never deleting: a lead scoring below 50 or a company that has closed is set aside
@@ -163,7 +164,10 @@ export function LeadArchiveButton({
   );
 }
 
-/** The lead list's archive tools: the archived shelf, and archiving everything below 50. */
+/**
+ * The lead list's one Archive control: a menu offering to archive everything below 50 (after
+ * showing the exact leads) and the archived shelf, where leads are restored.
+ */
 export function ArchiveTools({
   project,
   onChange,
@@ -175,6 +179,50 @@ export function ArchiveTools({
 }) {
   const base = '/projects/' + project.id;
   const [view, setView] = useState<'shelf' | 'bulk' | null>(null);
+  const [menu, setMenu] = useState(false),
+    [archivedCount, setArchivedCount] = useState<number | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null),
+    buttonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    let cancelled = false;
+    // The shelf's size, fresh each time the menu opens: a lead archived from its own page
+    // since the last look must count.
+    api<{ total: number }>(base + '/archive')
+      .then((data) => !cancelled && setArchivedCount(data.total))
+      .catch(() => undefined);
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const away = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenu(false);
+        buttonRef.current?.focus();
+        return;
+      }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      const items = [
+        ...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []),
+      ];
+      if (!items.length) return;
+      event.preventDefault();
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      const next = event.key === 'ArrowDown' ? at + 1 : at - 1;
+      items[(next + items.length) % items.length].focus();
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [menu, base]);
+  const choose = (next: 'shelf' | 'bulk') => {
+    setMenu(false);
+    setView(next);
+  };
   const [shelf, setShelf] = useState<{
     leads: Array<{
       id: number;
@@ -211,13 +259,41 @@ export function ArchiveTools({
   }, [view, refresh, base]);
   return (
     <>
-      <button type="button" className="button secondary" onClick={() => setView('shelf')}>
-        <Archive size={16} />
-        Archived leads
-      </button>
-      <button type="button" className="button secondary" onClick={() => setView('bulk')}>
-        Archive below 50
-      </button>
+      <div className="archive-menu" ref={menuRef}>
+        <button
+          ref={buttonRef}
+          type="button"
+          className="button secondary"
+          aria-haspopup="menu"
+          aria-expanded={menu}
+          onClick={() => setMenu((open) => !open)}
+        >
+          <Archive size={16} aria-hidden="true" />
+          Archive
+          <ChevronDown
+            size={14}
+            aria-hidden="true"
+            className={'archive-menu-caret' + (menu ? ' is-open' : '')}
+          />
+        </button>
+        {menu && (
+          <div className="archive-menu-list" role="menu" aria-label="Archive">
+            <button type="button" role="menuitem" onClick={() => choose('bulk')}>
+              <Archive size={15} aria-hidden="true" />
+              Archive leads below 50…
+            </button>
+            <button type="button" role="menuitem" onClick={() => choose('shelf')}>
+              <ArchiveRestore size={15} aria-hidden="true" />
+              <span>
+                View archived leads
+                {archivedCount !== null && (
+                  <span className="archive-menu-count"> ({archivedCount.toLocaleString()})</span>
+                )}
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
       {view === 'shelf' && (
         <Modal title="Archived leads" wide onClose={() => setView(null)}>
           <div className="form-stack">

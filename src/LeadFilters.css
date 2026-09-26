@@ -1,5 +1,5 @@
-/* Lead list: counts row, Filters panel, active-filter chips, pager, merged fit/qualification
-   cell and the assignment controls that replaced the "Assigned to" column. */
+/* Lead list: counts row, filter bar, active-filter chips, pager, column headers, merged
+   fit/qualification cell and the assignment controls that replaced the "Assigned to" column. */
 
 /* ---------- Counts above the table ---------- */
 .lead-counts-row {
@@ -98,16 +98,9 @@
   color: #63754d;
 }
 
-/* ---------- Filters button and panel ---------- */
-.leads-panel > .table-toolbar {
-  /* The panel is anchored to the toolbar, so it can use the toolbar's full width when narrow. */
-  position: relative;
-}
+/* ---------- Filters button ---------- */
 .lead-filters {
   margin-left: auto;
-}
-.lead-filters + .filter-menu {
-  margin-left: 0;
 }
 .lead-filters-button {
   display: inline-flex;
@@ -131,7 +124,8 @@
   outline: 2px solid var(--green);
   outline-offset: 2px;
 }
-.lead-filters-button.is-active {
+.lead-filters-button.is-active,
+.lead-filters-button[aria-expanded='true'] {
   border-color: #9fb58c;
   background: #f5f8ef;
   color: var(--green);
@@ -155,211 +149,50 @@
   font-size: 10px;
   font-weight: 650;
 }
-.lead-filters-panel {
-  position: absolute;
-  top: calc(100% - 8px);
-  right: 20px;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  width: min(640px, calc(100% - 40px));
-  max-height: min(640px, 76vh);
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 16px 40px rgba(25, 46, 38, 0.16);
-  overflow: hidden;
-}
-.lead-filters-panel > header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 12px 12px 18px;
-  border-bottom: 1px solid var(--line);
-}
-.lead-filters-panel > header > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-right: auto;
-}
-.lead-filters-panel > header strong {
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--ink);
-}
-.lead-filters-panel > header small {
-  font-size: 11px;
-  color: var(--muted);
-}
-.lead-sort {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 18px;
+
+/* ---------- Filter bar: labelled selects, three to a row ---------- */
+.lead-filter-bar {
+  margin: 0 0 14px;
+  padding: 14px 20px 12px;
+  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: #fbfcf8;
+}
+/* Three to a row at most; two, then one, as the bar narrows below 260px a column. */
+.lead-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(min(100%, max(260px, calc((100% - 44px) / 3))), 1fr)
+  );
+  gap: 8px 22px;
+}
+/* The name sits beside its control, not above it, to keep the bar short. */
+.lead-filter-field {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.lead-filter-field > label {
+  display: block;
   font-size: 11px;
   font-weight: 600;
-  color: #5d6a58;
+  line-height: 1.25;
+  color: #3d4a3f;
 }
-.lead-sort select {
-  flex: 1;
-  max-width: 280px;
-  min-height: 32px;
+.lead-filter-field > select,
+.lead-filter-field > input {
+  height: 32px;
   padding: 4px 8px;
   font-size: 12px;
+  line-height: 1.2;
 }
-.lead-facets {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 2px 10px;
-}
-.lead-facet + .lead-facet {
-  border-top: 1px solid #eef1e8;
-}
-.lead-facet > button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 11px 8px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-.lead-facet > button:hover {
-  color: var(--green);
-}
-.lead-facet > button > svg {
-  margin-left: auto;
-  opacity: 0.6;
-  transition: transform 0.15s ease;
-}
-.lead-facet.is-open > button > svg {
-  transform: rotate(180deg);
-}
-.lead-facet-selected {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--pale);
-  color: var(--green);
-  font-size: 10px;
-  font-weight: 650;
-}
-.lead-facet-body {
-  padding: 0 4px 12px;
-}
-.lead-checks {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 2px 10px;
-}
-.lead-check {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 6px 6px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink);
-  cursor: pointer;
-}
-.lead-check:hover {
-  background: #f3f6ee;
-}
-.lead-check input {
-  margin: 1px 0 0;
-  flex-shrink: 0;
-  width: 15px;
-  height: 15px;
-  accent-color: var(--green);
-}
-.lead-check > span {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.lead-check small {
-  font-size: 10px;
-  font-weight: 450;
-  color: var(--muted);
-}
-.lead-check em {
-  margin-left: auto;
-  padding-left: 6px;
-  font-style: normal;
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.lead-facet-search {
-  width: 100%;
-  margin: 0 0 6px;
-  padding: 7px 10px;
-  font-size: 12px;
-}
-.lead-facet-scroll {
-  max-height: 212px;
-  overflow-y: auto;
-}
-.lead-facet-scroll .lead-checks {
-  grid-template-columns: minmax(0, 1fr);
-}
-.lead-facet-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-.lead-facet-subtitle {
-  display: block;
-  padding: 0 6px 4px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.lead-facet-empty {
-  margin: 4px 6px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.lead-date-range {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
-  padding: 0 6px;
-}
-.lead-date-range label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #5d6a58;
-}
-.lead-date-range input {
-  padding: 6px 8px;
-  font-size: 12px;
-}
-.lead-filters-panel > footer {
+.lead-filter-bar > footer {
   display: flex;
   justify-content: flex-end;
-  padding: 10px 14px;
-  border-top: 1px solid var(--line);
-  background: #fbfcf8;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* ---------- Active filter chips ---------- */
@@ -370,6 +203,9 @@
   gap: 6px;
   margin-top: -6px;
   padding: 0 20px 14px;
+}
+.lead-filter-bar + .lead-chips {
+  margin-top: 0;
 }
 .lead-chip {
   display: inline-flex;
@@ -403,24 +239,39 @@
   font-size: 11px;
 }
 
-/* ---------- Pager ---------- */
+/* ---------- Pager: « First  ‹ Previous  Page 2 of 41  Next ›  Last » ---------- */
 .lead-pager {
   display: flex;
   align-items: center;
   gap: 2px;
 }
-.lead-pager > span {
+.lead-pager-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #3f4e40;
+  white-space: nowrap;
+}
+.lead-pager-step:hover:not(:disabled) {
+  background: #edf0e6;
+  color: #2e4530;
+}
+.lead-pager-step:disabled {
+  opacity: 0.4;
+}
+.lead-pager-where {
   margin: 0 8px;
   font-size: 11px;
   white-space: nowrap;
 }
-.lead-pager > span strong {
+.lead-pager-where strong {
   font-weight: 650;
   color: var(--ink);
-}
-.table-footer .lead-pager .icon-button {
-  width: 28px;
-  height: 28px;
 }
 
 /* The header's visually hidden "Open" label is absolutely positioned; without a positioned
@@ -429,48 +280,81 @@
   position: relative;
 }
 
+/* ---------- Column headers: readable, not faint ---------- */
+.leads-panel thead th {
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: 0.1px;
+  /* #2f3d34 on the #f8faf3 header row is about 10:1. */
+  color: #2f3d34;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 /* ---------- Fit score and qualification, one column ---------- */
+/* Three lines in every row: score and bar, one badge, a muted meta line. */
 .fit-cell {
-  min-width: 170px;
-}
-.fit-line {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 178px;
+}
+.fit-cell-score {
+  display: flex;
   align-items: center;
-  gap: 8px 12px;
+  gap: 8px;
+  height: 18px;
 }
-.fit-score {
-  display: block;
-  width: 58px;
+.fit-cell-score > strong {
+  /* A fixed width, so every bar starts at the same place whatever the score. */
+  flex: 0 0 48px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  color: #3f5433;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.fit-score strong {
-  font-size: 14px;
-  font-weight: 600;
-  color: #4f6340;
+.fit-cell-score > strong small {
+  margin-left: 1px;
+  font-size: 9px;
+  font-weight: 500;
+  color: #636a5b;
 }
-.fit-score small {
-  margin-left: 2px;
-  font-size: 8px;
-  font-weight: 400;
-  color: #6b7162;
+.fit-cell-score .score-track {
+  flex: 0 0 64px;
+  margin-top: 0;
 }
-.fit-score .score-track {
-  margin-top: 6px;
+.fit-cell-score.is-empty > strong {
+  font-weight: 500;
+  color: #6a7264;
 }
-.fit-score.is-stale {
-  opacity: 0.55;
+.fit-cell-score.is-stale {
+  opacity: 0.6;
 }
-.fit-none {
-  display: block;
-  width: 58px;
-  color: var(--muted);
+.fit-cell > .badge {
+  white-space: nowrap;
 }
-.fit-cell .table-subtext {
-  margin-top: 7px;
-  line-height: 1.5;
+.fit-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 230px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #636a5b;
 }
-.fit-cell .table-subtext svg {
-  vertical-align: -2px;
+.fit-meta > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fit-meta > svg {
+  flex-shrink: 0;
+  color: #4a703d;
 }
 
 /* ---------- Assignment ---------- */
@@ -527,18 +411,27 @@
   .lead-filters {
     margin-left: 0;
   }
-  .lead-filters-panel {
-    right: 14px;
-    width: calc(100% - 28px);
-    max-height: 80vh;
+  .lead-filter-bar {
+    padding: 12px 14px;
   }
-  .lead-facet-columns {
+  .lead-filter-grid {
     grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+  .lead-filter-bar > footer > .button {
+    flex: 1;
   }
   .lead-chips {
     padding: 0 14px 12px;
   }
-  .lead-pager > span {
+  /* The words go; the arrows, the page number and the aria-labels stay. */
+  .lead-pager-word {
+    display: none;
+  }
+  .lead-pager-step {
+    padding: 0 6px;
+  }
+  .lead-pager-where {
     margin: 0 4px;
   }
 }

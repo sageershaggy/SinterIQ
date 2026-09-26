@@ -4,6 +4,8 @@ import type { DB } from './database';
 import { HttpError, positiveId, text } from './validation';
 import { pipelineStatusSql } from './crm';
 import {
+  ASSIGNED_TO_ANYONE,
+  ASSIGNED_TO_ME,
   UNASSIGNED,
   callOutcomeStatus,
   callStatuses,
@@ -13,17 +15,19 @@ import {
   fitScoreValues,
   leadSortValues,
   leadStatuses,
+  nextStepFilters,
   qualificationStates,
   researchStatuses,
   type LeadFacetOptions,
   type LeadSort,
   type LeadSummary,
+  type NextStepFilter,
   type QualificationState,
 } from '../shared/lead-filters';
-import type { Project, User } from '../shared/types';
+import { nextStepBands, type Project, type User } from '../shared/types';
 
 /**
- * The Filters panel's half of the lead query. app.ts spreads this into leadQuerySchema and
+ * The filter bar's half of the lead query. app.ts spreads this into leadQuerySchema and
  * calls facetWhere from leadFilter, so the table and the CSV export share every facet and sort.
  */
 type Param = string | number;
@@ -46,11 +50,12 @@ const day = z
 export const leadFacetShape = {
   qualification: many(z.enum(qualificationStates)),
   score: many(z.enum(fitScoreValues)),
+  next_step: many(z.enum(nextStepFilters)),
   call: many(z.enum(callStatuses)),
   industry: many(text(200)),
   country: many(text(120)),
   city: many(text(120)),
-  assignee: many(z.string().regex(/^(none|[1-9]\d{0,9})$/, 'Unknown assignee.')),
+  assignee: many(z.string().regex(/^(none|me|any|[1-9]\d{0,9})$/, 'Unknown assignee.')),
   lead_status: many(z.enum(leadStatuses)),
   email_status: many(z.enum(emailStatuses)),
   research: many(z.enum(researchStatuses)),
@@ -120,6 +125,34 @@ export const researchedSql =
   '(l.latest_run_id IS NOT NULL OR EXISTS (SELECT 1 FROM lead_research_citations r WHERE r.project_id=l.project_id AND r.lead_id=l.id))';
 /** The facts a qualification leans on — the same test as the NEEDS_RESEARCH view. */
 export const missingDetailsSql = "(l.website='' OR l.industry='' OR (l.city='' AND l.country=''))";
+/** The same test as the NO_WEBSITE view. */
+export const noWebsiteSql = "l.website=''";
+/**
+ * The outreach step, as nextStepFor (shared/types.ts) derives it for a current result: a lead
+ * with no run, a superseded run or no score has none, so the filter and the row always agree.
+ */
+export function nextStepSql(project: Project, step: NextStepFilter) {
+  const band =
+    step === 'CALL_READY'
+      ? "l.status='QUALIFIED' AND l.score>=" + integer(nextStepBands.call)
+      : step === 'SEND_EMAIL'
+        ? "l.status='QUALIFIED' AND l.score>=" +
+          integer(nextStepBands.email) +
+          ' AND l.score<' +
+          integer(nextStepBands.call)
+        : "(l.status='NEEDS_REVIEW' OR (l.status='QUALIFIED' AND l.score>=" +
+          integer(nextStepBands.review) +
+          ' AND l.score<' +
+          integer(nextStepBands.email) +
+          '))';
+  return (
+    '(l.latest_run_id IS NOT NULL AND l.score IS NOT NULL AND NOT ' +
+    staleSql(project) +
+    ' AND ' +
+    band +
+    ')'
+  );
+}
 
 /**
  * The instants that bound "date added". Presets count whole days in the viewer's time zone,
@@ -154,14 +187,16 @@ export function addedRange(input: LeadFacetInput, nowMs = Date.now()) {
 
 /**
  * The facet conditions, appended to leadFilter's WHERE. Pushes its parameters onto `params` in
- * placeholder order. Facets AND together; the values inside one facet OR.
+ * placeholder order. Facets AND together; the values inside one facet OR. `viewerId` is the
+ * signed-in account, which the Assigned-to facet's "me" means.
  */
 export function facetWhere(
   project: Project,
   input: LeadFacetInput,
   params: Param[],
-  nowMs = Date.now(),
+  context: { viewerId: number; nowMs?: number },
 ) {
+  const nowMs = context.nowMs ?? Date.now();
   let where = '';
   const oneOf = (expression: string, values: readonly Param[]) => {
     params.push(...values);
@@ -179,19 +214,31 @@ export function facetWhere(
           return '(l.score BETWEEN ? AND ?)';
         }),
     );
+  if (input.next_step.length)
+    where += anyOf(
+      nextStepFilters
+        .filter((step) => input.next_step.includes(step))
+        .map((step) => nextStepSql(project, step)),
+    );
   if (input.call.length) where += oneOf(callStatusSql(), input.call);
   // Case-insensitive, as the options are grouped; an empty value selects the blank ones.
   for (const column of ['industry', 'country', 'city'] as const)
     if (input[column].length)
       where += oneOf('trim(l.' + column + ') COLLATE NOCASE', input[column]);
   if (input.assignee.length) {
-    const ids = input.assignee.filter((value) => value !== UNASSIGNED).map(Number);
+    const words = [UNASSIGNED, ASSIGNED_TO_ME, ASSIGNED_TO_ANYONE];
+    const ids = input.assignee.filter((value) => !words.includes(value)).map(Number);
+    if (input.assignee.includes(ASSIGNED_TO_ME)) {
+      if (!Number.isSafeInteger(context.viewerId)) throw new Error('No viewer for "me".');
+      ids.push(context.viewerId);
+    }
     const parts: string[] = [];
     if (ids.length) {
       parts.push('l.assigned_to IN (' + ids.map(() => '?').join(',') + ')');
       params.push(...ids);
     }
     if (input.assignee.includes(UNASSIGNED)) parts.push('l.assigned_to IS NULL');
+    if (input.assignee.includes(ASSIGNED_TO_ANYONE)) parts.push('l.assigned_to IS NOT NULL');
     where += anyOf(parts);
   }
   if (input.lead_status.length) where += oneOf(leadStatusSql, input.lead_status);
@@ -203,7 +250,9 @@ export function facetWhere(
           ? researchedSql
           : status === 'NOT_RESEARCHED'
             ? 'NOT ' + researchedSql
-            : missingDetailsSql,
+            : status === 'NO_WEBSITE'
+              ? noWebsiteSql
+              : missingDetailsSql,
       ),
     );
   const range = addedRange(input, nowMs);
@@ -238,7 +287,7 @@ export function leadOrder(sort: LeadSort) {
   return orders[sort];
 }
 
-/** Counts for the row above the table, over the default "All leads" view of the project. */
+/** Counts for the row above the table, over the unfiltered lead list of the project. */
 export function leadSummary(
   db: DB,
   project: Project,

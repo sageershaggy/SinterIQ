@@ -480,6 +480,8 @@ test('every Filters facet narrows the lead list on the server', async () => {
       'lead_status=REPLIED',
       'email_status=WON',
       'research=HALF',
+      'next_step=NONE',
+      'assignee=everyone',
       'added=YESTERDAY',
       'added=CUSTOM',
       'added=CUSTOM&added_from=2026-02-30',
@@ -488,6 +490,104 @@ test('every Filters facet narrows the lead list on the server', async () => {
       'sort=random',
     ])
       assert.equal((await list(bad)).status, 400, bad);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('the filter bar reaches every view the old status dropdown offered', async () => {
+  const f = fixture();
+  try {
+    const { names, list, exportNames, ids, project } = await seeded(f);
+    // A second member holding a lead of their own, so "me" means the viewer, not "anyone".
+    const account = await f.post('/users', {
+      name: 'Second Researcher',
+      username: 'second-researcher',
+      password: 'A-long-researcher-password-2026',
+      role: 'researcher',
+    });
+    assert.equal(account.status, 201, JSON.stringify(account.body));
+    const member = await f.put('/users/' + account.body.id + '/projects', {
+      project_ids: [project.id],
+    });
+    assert.equal(member.status, 200, JSON.stringify(member.body));
+    f.db
+      .prepare('UPDATE leads SET assigned_to=?,assigned_at=? WHERE id=?')
+      .run(account.body.id, new Date().toISOString(), ids['Gamma Legal']);
+
+    /** The facet finds exactly the rows the old status view found. */
+    const same = async (facet: string, view: string) => {
+      const expected = await names(view);
+      assert.deepEqual(await names(facet), expected, facet + ' against ' + view);
+      return expected;
+    };
+    assert.deepEqual(await same('assignee=me', 'status=ASSIGNED&assigned_to=me'), [
+      'Alpha Pumps',
+      'Beta Law',
+    ]);
+    assert.deepEqual(await same('assignee=any', 'status=ASSIGNED'), [
+      'Alpha Pumps',
+      'Beta Law',
+      'Gamma Legal',
+    ]);
+    assert.deepEqual(await same('research=MISSING_DETAILS', 'status=NEEDS_RESEARCH'), [
+      'Delta Trading',
+      'Eta Raw Researched',
+    ]);
+    assert.deepEqual(await same('research=NO_WEBSITE', 'status=NO_WEBSITE'), ['Delta Trading']);
+    assert.deepEqual(await same('qualification=REQUALIFY', 'status=STALE'), ['Zeta Stale']);
+    // A superseded result (Zeta, 85) has no outreach step, exactly as the band views said.
+    assert.deepEqual(await same('next_step=CALL_READY', 'status=CALL_READY'), ['Alpha Pumps']);
+    assert.deepEqual(await same('next_step=SEND_EMAIL', 'status=SEND_EMAIL'), []);
+    assert.deepEqual(await same('next_step=REVIEW_WITH_CLIENT', 'status=REVIEW_WITH_CLIENT'), [
+      'Beta Law',
+      'Gamma Legal',
+    ]);
+    // Moving Beta into the email band moves it between the step filters.
+    f.db.prepare('UPDATE leads SET score=75 WHERE id=?').run(ids['Beta Law']);
+    assert.deepEqual(await same('next_step=SEND_EMAIL', 'status=SEND_EMAIL'), ['Beta Law']);
+    assert.deepEqual(await names('next_step=SEND_EMAIL&next_step=CALL_READY'), [
+      'Alpha Pumps',
+      'Beta Law',
+    ]);
+    // The filter and each row's own next step are one rule.
+    const everyone = (await list('')).body.leads as Lead[];
+    for (const step of ['CALL_READY', 'SEND_EMAIL', 'REVIEW_WITH_CLIENT'])
+      assert.deepEqual(
+        await names('next_step=' + step),
+        everyone
+          .filter((lead) => lead.next_step === step)
+          .map((lead) => lead.name)
+          .sort(),
+        step,
+      );
+    // "Me" in someone else's session is their own leads.
+    const researcher = request.agent(f.app);
+    const login = await researcher
+      .post('/api/auth/login')
+      .set('X-Requested-With', 'Innovista')
+      .send({ username: 'second-researcher', password: 'A-long-researcher-password-2026' });
+    assert.equal(login.status, 200);
+    const theirs = await researcher.get(
+      '/api/projects/' + project.id + '/leads?page_size=100&assignee=me',
+    );
+    assert.equal(theirs.status, 200, JSON.stringify(theirs.body));
+    assert.deepEqual(
+      (theirs.body.leads as Lead[]).map((lead) => lead.name),
+      ['Gamma Legal'],
+    );
+    // The Review queue's own view still ANDs with the facets.
+    assert.deepEqual(await names('status=REVIEW_QUEUE&assignee=me'), ['Alpha Pumps', 'Beta Law']);
+    // The browser builds the list and the export from one function; the new values agree too.
+    const params = new URLSearchParams(
+      facetParams(
+        { ...emptyFacets, next_step: ['REVIEW_WITH_CLIENT'], assignee: ['any'], sort: 'name_asc' },
+        0,
+      ),
+    ).toString();
+    const shown = ((await list(params)).body.leads as Lead[]).map((lead) => lead.name);
+    assert.deepEqual(shown, ['Gamma Legal']);
+    assert.deepEqual(await exportNames(params), shown);
   } finally {
     f.dispose();
   }
@@ -595,6 +695,10 @@ test('the CSV export selects exactly the rows the list shows, in the same order'
       'added=30D&tz=240&sort=added_asc',
       'status=REVIEW_QUEUE&score=50_59',
       'search=a&qualification=QUALIFIED&sort=name_asc',
+      'assignee=me&next_step=CALL_READY',
+      'assignee=any&research=NO_WEBSITE',
+      'research=NO_WEBSITE&research=RESEARCHED&sort=name_desc',
+      'next_step=REVIEW_WITH_CLIENT&sort=score_desc',
     ];
     for (const query of queries) {
       const shown = ((await list(query)).body.leads as Lead[]).map((lead) => lead.name);

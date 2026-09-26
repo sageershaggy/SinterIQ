@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   CheckCircle2,
   ChevronDown,
@@ -15,6 +15,9 @@ import {
   BookOpen,
 } from 'lucide-react';
 import {
+  ASSIGNED_TO_ANYONE,
+  ASSIGNED_TO_ME,
+  UNASSIGNED,
   activeFacetCount,
   callStatusHints,
   callStatusLabels,
@@ -29,6 +32,9 @@ import {
   leadStatusLabels,
   leadStatuses,
   listFacets,
+  nextStepFilters,
+  nextStepHints,
+  nextStepLabels,
   qualificationHints,
   qualificationLabels,
   qualificationStates,
@@ -47,7 +53,7 @@ import { Badge } from './ui';
 import './LeadFilters.css';
 
 /**
- * The lead list's Filters panel, its active-filter chips, the counts row above the table, the
+ * The lead list's filter bar, its active-filter chips, the counts row above the table, the
  * pager and the merged fit-score/qualification cell. Filtering and sorting happen on the server
  * (server/lead-filters.ts); this file only holds the state and says it back to the person.
  */
@@ -63,7 +69,7 @@ export function useLeadFacetOptions(base: string, version: number) {
       .then((data) => {
         if (!cancelled) setOptions(data);
       })
-      // The panel still works without them: the fixed facets need no options.
+      // The bar still works without them: the fixed facets need no options.
       .catch(() => undefined);
     return () => {
       cancelled = true;
@@ -74,6 +80,10 @@ export function useLeadFacetOptions(base: string, version: number) {
 
 type Option = { value: string; label: string; hint?: string; count?: number };
 const blankLabel = 'Not set';
+const assigneeWords: Option[] = [
+  { value: ASSIGNED_TO_ME, label: 'Me', hint: 'Leads assigned to you for calling' },
+  { value: ASSIGNED_TO_ANYONE, label: 'Anyone (assigned)', hint: 'Assigned to any person' },
+];
 const fixed = {
   qualification: qualificationStates.map((value) => ({
     value,
@@ -81,6 +91,11 @@ const fixed = {
     hint: qualificationHints[value],
   })),
   score: fitScoreBands.map((band) => ({ value: band.value, label: band.label })),
+  next_step: nextStepFilters.map((value) => ({
+    value,
+    label: nextStepLabels[value],
+    hint: nextStepHints[value],
+  })),
   call: callStatuses.map((value) => ({
     value,
     label: callStatusLabels[value],
@@ -95,8 +110,9 @@ const fixed = {
   })),
 };
 const facetTitles: Record<ListFacet, string> = {
-  qualification: 'Qualification',
+  qualification: 'AI qualification',
   score: 'Fit score',
+  next_step: 'Next step',
   call: 'Call status',
   industry: 'Industry',
   country: 'Country',
@@ -108,7 +124,11 @@ const facetTitles: Record<ListFacet, string> = {
 };
 function valueLabel(facet: ListFacet, value: string, options: LeadFacetOptions) {
   if (facet === 'assignee')
-    return options.assignee.find((option) => option.value === value)?.label || 'Account #' + value;
+    return (
+      assigneeWords.find((option) => option.value === value)?.label ||
+      options.assignee.find((option) => option.value === value)?.label ||
+      (value === UNASSIGNED ? 'Unassigned' : 'Account #' + value)
+    );
   if (facet === 'industry' || facet === 'country' || facet === 'city') return value || blankLabel;
   return (fixed[facet] as Option[]).find((option) => option.value === value)?.label || label(value);
 }
@@ -125,102 +145,28 @@ function addedLabel(facets: LeadFacets) {
   return 'Custom range (pick a date)';
 }
 
-/**
- * The Filters button and its panel. Every change applies at once; the panel only closes when
- * asked to, so several facets can be set in one go.
- */
-export function LeadFilters({
-  facets,
-  options,
-  total,
-  onChange,
+/** The Filters button in the toolbar. The bar it opens sits under the toolbar. */
+export function LeadFiltersButton({
+  open,
+  count,
+  controls,
+  onToggle,
 }: {
-  facets: LeadFacets;
-  options: LeadFacetOptions;
-  total: number;
-  onChange: (facets: LeadFacets) => void;
+  open: boolean;
+  /** Active filters, the sort order not counted. */
+  count: number;
+  /** The bar's element id. */
+  controls: string;
+  onToggle: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [expanded, setExpanded] = useState<string[]>([]);
-  const ref = useRef<HTMLDivElement>(null);
-  const button = useRef<HTMLButtonElement>(null);
-  const panelId = useId();
-  const count = activeFacetCount(facets);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setOpen(false);
-      button.current?.focus();
-    };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', key);
-    };
-  }, [open]);
-  function show() {
-    // Open the sections already in use; with none, start at Qualification.
-    const used = [
-      ...(
-        [
-          'qualification',
-          'score',
-          'call',
-          'industry',
-          'assignee',
-          'lead_status',
-          'email_status',
-          'research',
-        ] as const
-      ).filter((facet) => facets[facet].length),
-      ...(facets.country.length || facets.city.length ? ['location'] : []),
-      ...(facets.added ? ['added'] : []),
-    ];
-    setExpanded(used.length ? used : ['qualification']);
-    setOpen(true);
-  }
-  const set = (patch: Partial<LeadFacets>) => onChange({ ...facets, ...patch });
-  const list = (facet: ListFacet, choices: Option[]) => (
-    <CheckList
-      choices={choices}
-      selected={facets[facet]}
-      onToggle={(value) => set({ [facet]: toggle(facets[facet] as string[], value) })}
-    />
-  );
-  const dynamic = (facet: 'industry' | 'country' | 'city' | 'assignee'): Option[] =>
-    facet === 'assignee'
-      ? options.assignee
-      : options[facet].map((option) => ({
-          value: option.value,
-          label: option.value || blankLabel,
-          count: option.count,
-        }));
-  const section = (id: string, title: string, selected: number, body: ReactNode) => (
-    <FacetSection
-      key={id}
-      title={title}
-      selected={selected}
-      open={expanded.includes(id)}
-      onToggle={() => setExpanded((ids) => toggle(ids, id))}
-    >
-      {body}
-    </FacetSection>
-  );
   return (
-    <div className="lead-filters" ref={ref}>
+    <div className="lead-filters">
       <button
-        ref={button}
         type="button"
         className={'lead-filters-button' + (count ? ' is-active' : '')}
-        aria-haspopup="dialog"
         aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        onClick={() => (open ? setOpen(false) : show())}
+        aria-controls={open ? controls : undefined}
+        onClick={onToggle}
       >
         <SlidersHorizontal size={15} aria-hidden="true" />
         Filters
@@ -229,290 +175,226 @@ export function LeadFilters({
             {count}
           </span>
         )}
-        <ChevronDown size={15} className={'filter-caret' + (open ? ' is-open' : '')} />
+        <ChevronDown
+          size={15}
+          aria-hidden="true"
+          className={'filter-caret' + (open ? ' is-open' : '')}
+        />
       </button>
-      {open && (
-        <div
-          className="lead-filters-panel"
-          id={panelId}
-          role="dialog"
-          aria-label="Filter and sort leads"
-        >
-          <header>
-            <div>
-              <strong>Filter and sort</strong>
-              <small aria-live="polite">
-                {total.toLocaleString()} lead{total === 1 ? '' : 's'} match
-              </small>
-            </div>
-            {(count > 0 || facets.sort !== emptyFacets.sort) && (
-              <button type="button" className="text-button" onClick={() => onChange(emptyFacets)}>
-                Clear all
-              </button>
-            )}
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Close filters"
-              onClick={() => setOpen(false)}
-            >
-              <X size={17} />
-            </button>
-          </header>
-          <label className="lead-sort">
-            <span>Sort by</span>
+    </div>
+  );
+}
+
+/** "No filter" in a select; distinct from '', which picks the blank values. */
+const ANY = '*';
+/** Shown when a facet already holds several values (the server accepts several). */
+const SEVERAL = '**';
+
+/**
+ * The compact filter bar: one labelled select per facet, three to a row, applied together.
+ * It edits a draft; nothing reaches the list until Apply (or Clear all, which resets and
+ * applies). One value per facet is offered here, though the server still accepts several.
+ */
+export function LeadFilterBar({
+  id,
+  facets,
+  options,
+  view,
+  views,
+  onApply,
+  onClose,
+}: {
+  id: string;
+  facets: LeadFacets;
+  options: LeadFacetOptions;
+  /** The Review queue chooses between its queue and every lead; the lead list has no views. */
+  view?: string;
+  views?: Array<{ value: string; label: string }>;
+  onApply: (facets: LeadFacets, view: string | undefined) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(facets),
+    [draftView, setDraftView] = useState(view);
+  const first = useRef<HTMLSelectElement>(null);
+  // A chip removed or a count tile clicked while the bar is open changes what is applied.
+  useEffect(() => setDraft(facets), [facets]);
+  useEffect(() => setDraftView(view), [view]);
+  useEffect(() => first.current?.focus({ preventScroll: true }), []);
+  const backToButton = () =>
+    document.querySelector<HTMLElement>('[aria-controls="' + CSS.escape(id) + '"]')?.focus();
+  const close = () => {
+    onClose();
+    backToButton();
+  };
+  function apply(event?: FormEvent) {
+    event?.preventDefault();
+    let next = draft;
+    if (next.added !== 'CUSTOM') next = { ...next, added_from: '', added_to: '' };
+    else if (!next.added_from && !next.added_to) next = { ...next, added: '' };
+    else if (next.added_from && next.added_to && next.added_from > next.added_to)
+      next = { ...next, added_from: next.added_to, added_to: next.added_from };
+    onApply(next, draftView);
+    close();
+  }
+  function clearAll() {
+    setDraft(emptyFacets);
+    setDraftView(views?.[0]?.value);
+    onApply(emptyFacets, views?.[0]?.value);
+  }
+  const set = (patch: Partial<LeadFacets>) => setDraft((current) => ({ ...current, ...patch }));
+  const dynamic = (facet: 'industry' | 'country' | 'city'): Option[] =>
+    options[facet].map((option) => ({
+      value: option.value,
+      label: option.value || blankLabel,
+      count: option.count,
+    }));
+  const people: Option[] = [
+    ...assigneeWords,
+    ...(options.assignee.some((option) => option.value === UNASSIGNED)
+      ? []
+      : [{ value: UNASSIGNED, label: 'Unassigned' }]),
+    ...options.assignee,
+  ];
+  /** A label beside its control; the label names the control and nothing else. */
+  const field = (key: string, title: string, control: (fieldId: string) => ReactNode) => (
+    <div className="lead-filter-field" key={key}>
+      <label htmlFor={id + '-' + key}>{title}</label>
+      {control(id + '-' + key)}
+    </div>
+  );
+  const select = (facet: ListFacet, anyLabel: string, choices: Option[]) => {
+    const values = draft[facet] as string[];
+    // A value no lead holds any more must still show as chosen, and stay removable.
+    const missing: Option[] = values
+      .filter((value) => !choices.some((choice) => choice.value === value))
+      .map((value) => ({ value, label: valueLabel(facet, value, options) }));
+    return field(facet, facetTitles[facet], (fieldId) => (
+      <select
+        id={fieldId}
+        ref={facet === 'qualification' && !views ? first : undefined}
+        value={values.length > 1 ? SEVERAL : (values[0] ?? ANY)}
+        onChange={(event) => {
+          const value = event.target.value;
+          if (value !== SEVERAL) set({ [facet]: value === ANY ? [] : [value] });
+        }}
+      >
+        <option value={ANY}>{anyLabel}</option>
+        {values.length > 1 && (
+          <option value={SEVERAL} disabled>
+            {values.length} selected
+          </option>
+        )}
+        {[...missing, ...choices].map((choice) => (
+          <option key={choice.value || 'blank'} value={choice.value} title={choice.hint}>
+            {choice.label}
+            {choice.count !== undefined ? ' (' + choice.count.toLocaleString() + ')' : ''}
+          </option>
+        ))}
+      </select>
+    ));
+  };
+  return (
+    <form
+      className="lead-filter-bar"
+      id={id}
+      role="group"
+      aria-label="Filter and sort leads"
+      // A range picked back to front is swapped on Apply rather than refused.
+      noValidate
+      onSubmit={apply}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.stopPropagation();
+        close();
+      }}
+    >
+      <div className="lead-filter-grid">
+        {views &&
+          field('view', 'Show', (fieldId) => (
             <select
-              value={facets.sort}
-              onChange={(event) => set({ sort: event.target.value as LeadFacets['sort'] })}
+              id={fieldId}
+              ref={first}
+              value={draftView}
+              onChange={(event) => setDraftView(event.target.value)}
             >
-              {leadSorts.map((sort) => (
-                <option key={sort.value} value={sort.value}>
-                  {sort.label}
+              {views.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
-          </label>
-          <div className="lead-facets">
-            {section(
-              'qualification',
-              'Qualification',
-              facets.qualification.length,
-              list('qualification', fixed.qualification),
-            )}
-            {section('score', 'Fit score', facets.score.length, list('score', fixed.score))}
-            {section('call', 'Call status', facets.call.length, list('call', fixed.call))}
-            {section(
-              'industry',
-              'Industry',
-              facets.industry.length,
-              <SearchableList
-                noun="industries"
-                choices={dynamic('industry')}
-                selected={facets.industry}
-                onToggle={(value) => set({ industry: toggle(facets.industry, value) })}
-              />,
-            )}
-            {section(
-              'location',
-              'Location',
-              facets.country.length + facets.city.length,
-              <div className="lead-facet-columns">
-                <div>
-                  <span className="lead-facet-subtitle">Country</span>
-                  <SearchableList
-                    noun="countries"
-                    choices={dynamic('country')}
-                    selected={facets.country}
-                    onToggle={(value) => set({ country: toggle(facets.country, value) })}
-                  />
-                </div>
-                <div>
-                  <span className="lead-facet-subtitle">City</span>
-                  <SearchableList
-                    noun="cities"
-                    choices={dynamic('city')}
-                    selected={facets.city}
-                    onToggle={(value) => set({ city: toggle(facets.city, value) })}
-                  />
-                </div>
-              </div>,
-            )}
-            {section(
-              'assignee',
-              'Assigned to',
-              facets.assignee.length,
-              <SearchableList
-                noun="people"
-                choices={dynamic('assignee')}
-                selected={facets.assignee}
-                onToggle={(value) => set({ assignee: toggle(facets.assignee, value) })}
-              />,
-            )}
-            {section(
-              'lead_status',
-              'Lead status',
-              facets.lead_status.length,
-              list('lead_status', fixed.lead_status),
-            )}
-            {section(
-              'email_status',
-              'Email status',
-              facets.email_status.length,
-              list('email_status', fixed.email_status),
-            )}
-            {section(
-              'research',
-              'Research status',
-              facets.research.length,
-              list('research', fixed.research),
-            )}
-            {section(
-              'added',
-              'Date added',
-              facets.added ? 1 : 0,
-              <DateAdded facets={facets} onChange={set} />,
-            )}
-          </div>
-          <footer>
-            <button type="button" className="button primary small" onClick={() => setOpen(false)}>
-              Show {total.toLocaleString()} lead{total === 1 ? '' : 's'}
-            </button>
-          </footer>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FacetSection({
-  title,
-  selected,
-  open,
-  onToggle,
-  children,
-}: {
-  title: string;
-  selected: number;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  const id = useId();
-  return (
-    <section className={'lead-facet' + (open ? ' is-open' : '')}>
-      <button type="button" aria-expanded={open} aria-controls={id} onClick={onToggle}>
-        <span>{title}</span>
-        {selected > 0 && <span className="lead-facet-selected">{selected} selected</span>}
-        <ChevronDown size={15} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="lead-facet-body" id={id}>
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function CheckList({
-  choices,
-  selected,
-  onToggle,
-}: {
-  choices: Option[];
-  selected: string[];
-  onToggle: (value: string) => void;
-}) {
-  return (
-    <div className="lead-checks">
-      {choices.map((choice) => (
-        <label key={choice.value} className="lead-check" title={choice.hint}>
+          ))}
+        {select('qualification', 'All', fixed.qualification)}
+        {select('score', 'Any score', fixed.score)}
+        {select('next_step', 'Any step', fixed.next_step)}
+        {select('lead_status', 'All statuses', fixed.lead_status)}
+        {select('email_status', 'All statuses', fixed.email_status)}
+        {select('call', 'All call statuses', fixed.call)}
+        {select('assignee', 'All', people)}
+        {select('research', 'All', fixed.research)}
+        {select('industry', 'All industries', dynamic('industry'))}
+        {select('country', 'All countries', dynamic('country'))}
+        {select('city', 'All cities', dynamic('city'))}
+        {field('sort', 'Sort by', (fieldId) => (
+          <select
+            id={fieldId}
+            value={draft.sort}
+            onChange={(event) => set({ sort: event.target.value as LeadFacets['sort'] })}
+          >
+            {leadSorts.map((sort) => (
+              <option key={sort.value} value={sort.value}>
+                {sort.label}
+              </option>
+            ))}
+          </select>
+        ))}
+        {field('added', 'Added', (fieldId) => (
+          <select
+            id={fieldId}
+            value={draft.added || ANY}
+            onChange={(event) => {
+              const value = event.target.value as LeadFacets['added'] | typeof ANY;
+              if (value === ANY) set({ added: '', added_from: '', added_to: '' });
+              else if (value === 'CUSTOM') set({ added: 'CUSTOM' });
+              else set({ added: value, added_from: '', added_to: '' });
+            }}
+          >
+            <option value={ANY}>Any time</option>
+            {dateAddedPresets.map((value) => (
+              <option key={value} value={value}>
+                {dateAddedLabels[value]}
+              </option>
+            ))}
+          </select>
+        ))}
+        {field('added-from', 'Added from', (fieldId) => (
           <input
-            type="checkbox"
-            checked={selected.includes(choice.value)}
-            onChange={() => onToggle(choice.value)}
+            id={fieldId}
+            type="date"
+            value={draft.added_from}
+            max={draft.added_to || undefined}
+            onChange={(event) => set({ added: 'CUSTOM', added_from: event.target.value })}
           />
-          <span>
-            {choice.label}
-            {choice.hint && <small>{choice.hint}</small>}
-          </span>
-          {choice.count !== undefined && <em>{choice.count.toLocaleString()}</em>}
-        </label>
-      ))}
-    </div>
-  );
-}
-
-/** A long list of project values gets its own search box; a selected value always stays visible. */
-function SearchableList({
-  noun,
-  choices,
-  selected,
-  onToggle,
-}: {
-  noun: string;
-  choices: Option[];
-  selected: string[];
-  onToggle: (value: string) => void;
-}) {
-  const [term, setTerm] = useState('');
-  const needle = term.trim().toLowerCase();
-  const shown = needle
-    ? choices.filter(
-        (choice) => selected.includes(choice.value) || choice.label.toLowerCase().includes(needle),
-      )
-    : choices;
-  // A value chosen earlier that no lead holds any more must still be removable here.
-  const missing = selected
-    .filter((value) => !choices.some((choice) => choice.value === value))
-    .map((value) => ({ value, label: value || blankLabel, count: 0 }));
-  if (!choices.length && !missing.length) return <p className="lead-facet-empty">No {noun} yet.</p>;
-  return (
-    <>
-      {choices.length > 8 && (
-        <input
-          className="lead-facet-search"
-          type="search"
-          value={term}
-          onChange={(event) => setTerm(event.target.value)}
-          placeholder={'Find ' + noun + '…'}
-          aria-label={'Find ' + noun}
-        />
-      )}
-      <div className="lead-facet-scroll">
-        <CheckList choices={[...missing, ...shown]} selected={selected} onToggle={onToggle} />
-        {needle && !shown.length && <p className="lead-facet-empty">No {noun} match.</p>}
-      </div>
-    </>
-  );
-}
-
-function DateAdded({
-  facets,
-  onChange,
-}: {
-  facets: LeadFacets;
-  onChange: (patch: Partial<LeadFacets>) => void;
-}) {
-  const name = useId();
-  return (
-    <div className="lead-dates">
-      <div className="lead-checks">
-        {(['', ...dateAddedPresets] as const).map((value) => (
-          <label key={value || 'any'} className="lead-check">
-            <input
-              type="radio"
-              name={name}
-              checked={facets.added === value}
-              onChange={() => onChange({ added: value })}
-            />
-            <span>{value ? dateAddedLabels[value] : 'Any time'}</span>
-          </label>
+        ))}
+        {field('added-to', 'Added to', (fieldId) => (
+          <input
+            id={fieldId}
+            type="date"
+            value={draft.added_to}
+            min={draft.added_from || undefined}
+            onChange={(event) => set({ added: 'CUSTOM', added_to: event.target.value })}
+          />
         ))}
       </div>
-      {facets.added === 'CUSTOM' && (
-        <div className="lead-date-range">
-          <label>
-            From
-            <input
-              type="date"
-              value={facets.added_from}
-              max={facets.added_to || undefined}
-              onChange={(event) => onChange({ added_from: event.target.value })}
-            />
-          </label>
-          <label>
-            To
-            <input
-              type="date"
-              value={facets.added_to}
-              min={facets.added_from || undefined}
-              onChange={(event) => onChange({ added_to: event.target.value })}
-            />
-          </label>
-        </div>
-      )}
-    </div>
+      <footer>
+        <button type="button" className="button secondary small" onClick={clearAll}>
+          Clear all
+        </button>
+        <button type="submit" className="button primary small">
+          Apply
+        </button>
+      </footer>
+    </form>
   );
 }
 
@@ -528,7 +410,7 @@ export function LeadFilterChips({
   facets: LeadFacets;
   options: LeadFacetOptions;
   onChange: (facets: LeadFacets) => void;
-  /** Filters the list page owns: the status view and the search term. */
+  /** Filters the list page owns: the Review queue's view and the search term. */
   extra: Chip[];
   onClearAll: () => void;
 }) {
@@ -682,7 +564,7 @@ export function LeadCounts({
   );
 }
 
-/** First, previous, where you are, next, last. */
+/** « First  ‹ Previous  Page 2 of 41  Next ›  Last » — the words hide on a phone. */
 export function Pager({
   page,
   pages,
@@ -695,68 +577,113 @@ export function Pager({
   onPage: (page: number) => void;
 }) {
   const at = Math.min(page, pages);
-  const step = (to: number, title: string, icon: ReactNode, off: boolean) => (
+  const step = (
+    to: number,
+    word: string,
+    title: string,
+    icon: ReactNode,
+    after: boolean,
+    off: boolean,
+  ) => (
     <button
       type="button"
-      className="icon-button"
+      className="lead-pager-step"
       disabled={disabled || off}
       onClick={() => onPage(to)}
       aria-label={title}
       title={title}
     >
-      {icon}
+      {!after && icon}
+      <span className="lead-pager-word">{word}</span>
+      {after && icon}
     </button>
   );
   return (
     <nav className="lead-pager" aria-label="Lead pages">
-      {step(1, 'First page', <ChevronsLeft size={17} />, at <= 1)}
-      {step(at - 1, 'Previous page', <ChevronLeft size={17} />, at <= 1)}
-      <span aria-live="polite">
+      {step(
+        1,
+        'First',
+        'First page',
+        <ChevronsLeft size={15} aria-hidden="true" />,
+        false,
+        at <= 1,
+      )}
+      {step(
+        at - 1,
+        'Previous',
+        'Previous page',
+        <ChevronLeft size={15} aria-hidden="true" />,
+        false,
+        at <= 1,
+      )}
+      <span className="lead-pager-where" aria-live="polite">
         Page <strong>{at.toLocaleString()}</strong> of {pages.toLocaleString()}
       </span>
-      {step(at + 1, 'Next page', <ChevronRight size={17} />, at >= pages)}
-      {step(pages, 'Last page', <ChevronsRight size={17} />, at >= pages)}
+      {step(
+        at + 1,
+        'Next',
+        'Next page',
+        <ChevronRight size={15} aria-hidden="true" />,
+        true,
+        at >= pages,
+      )}
+      {step(
+        pages,
+        'Last',
+        'Last page',
+        <ChevronsRight size={15} aria-hidden="true" />,
+        true,
+        at >= pages,
+      )}
     </nav>
   );
 }
 
-/** Fit score and qualification are one judgement, so they share one column. */
+/**
+ * Fit score and qualification are one judgement, so they share one column. Every cell has the
+ * same three lines — the score and its bar, one badge, a muted meta line — so rows line up
+ * whether or not the lead has been scored.
+ */
 export function FitQualification({ lead }: { lead: Lead }) {
+  const scored = lead.score !== null;
+  const meta = [
+    lead.training_version ? 'Training v' + lead.training_version : 'No AI run yet',
+    lead.reviewed ? 'reviewed' : '',
+    lead.outreach_status && lead.outreach_status !== 'NOT_CONTACTED'
+      ? 'email ' + label(lead.outreach_status).toLowerCase()
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <div className="fit-cell">
-      <div className="fit-line">
-        {lead.score === null ? (
-          <span className="fit-none" title="No fit score yet">
-            —
-          </span>
+      <span
+        className={'fit-cell-score' + (scored ? '' : ' is-empty') + (lead.stale ? ' is-stale' : '')}
+        title={
+          !scored ? 'No fit score yet' : lead.stale ? 'Fit score from an earlier run' : 'Fit score'
+        }
+      >
+        {scored ? (
+          <strong>
+            {lead.score}
+            <small>/100</small>
+          </strong>
         ) : (
-          <span
-            className={'fit-score' + (lead.stale ? ' is-stale' : '')}
-            title={lead.stale ? 'Fit score from an earlier run' : 'Fit score'}
-          >
-            <strong>
-              {lead.score}
-              <small>/100</small>
-            </strong>
-            <span className="score-track">
-              <i style={{ width: lead.score + '%' }} />
-            </span>
-          </span>
+          <strong>
+            <span aria-hidden="true">—</span>
+            <span className="visually-hidden">No fit score yet</span>
+          </strong>
         )}
-        <Badge value={lead.stale ? 'stale' : lead.status}>
-          {lead.stale ? 'Requalification needed' : label(lead.status)}
-        </Badge>
-      </div>
-      <small className="table-subtext">
-        {lead.reviewed && (
-          <>
-            <ShieldCheck size={12} /> Human reviewed ·{' '}
-          </>
-        )}
-        {lead.training_version ? 'Training v' + lead.training_version : 'No run'}
-        {lead.outreach_status && lead.outreach_status !== 'NOT_CONTACTED' && (
-          <> · Outreach: {label(lead.outreach_status)}</>
-        )}
+        <span className="score-track" aria-hidden="true">
+          <i style={{ width: (lead.score ?? 0) + '%' }} />
+        </span>
+      </span>
+      <Badge value={lead.stale ? 'stale' : lead.status}>
+        {lead.stale ? 'Requalification needed' : label(lead.status)}
+      </Badge>
+      <small className="fit-meta" title={meta}>
+        {lead.reviewed && <ShieldCheck size={11} aria-hidden="true" />}
+        <span>{meta}</span>
       </small>
     </div>
   );
