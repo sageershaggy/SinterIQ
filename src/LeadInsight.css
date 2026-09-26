@@ -1,124 +1,227 @@
 /* The lead page: header with the main actions and the fit score, provenance, people, log. */
+
+/* One card in two columns: the company with its controls, and the fit score panel. The columns
+   share the card's top, height and vertical padding. The layout answers to the card's own width
+   (a container query), so it holds whether the sidebar is open, collapsed or gone. */
 .lead-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
-  gap: 28px;
-  align-items: start;
-  padding: 28px 30px;
+  container: lead-header / inline-size;
+  margin-bottom: 26px;
   background: white;
   border: 1px solid var(--line);
   border-radius: 14px;
-  margin-bottom: 26px;
+}
+.lead-header-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 256px;
+  align-items: stretch;
+}
+.lead-header-inner.is-loading {
+  grid-template-columns: minmax(0, 1fr);
+}
+.lead-header-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 26px 30px;
+}
+.lead-header .eyebrow,
+.lead-fit-label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 1.8px;
+  font-weight: 650;
+  color: #65755b;
+  white-space: nowrap;
 }
 .lead-header .eyebrow {
-  margin-bottom: 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .lead-header h1 {
+  max-width: 100%;
+  margin: 0 0 10px;
   font-size: clamp(24px, 2.6vw, 34px);
   line-height: 1.2;
-  margin: 0 0 12px;
   overflow-wrap: anywhere;
 }
 .lead-header-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 18px;
+  gap: 6px 20px;
+  max-width: 100%;
   font-size: 12px;
+  line-height: 18px;
   color: #56634f;
 }
-.lead-header-meta span {
+.lead-header-fact {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
-.lead-header-meta .external-link {
-  font-size: 12px;
+.lead-header-fact > svg {
+  color: #7f8c75;
 }
-.lead-header-badges {
+/* The website link and its "No website" stand-in read at the size of the facts beside them. */
+.lead-header-fact .external-link,
+.lead-header-fact .muted {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+/* One row of controls at one height: the status select with its history, calling, archiving. */
+.lead-header-controls {
+  --lead-control-height: 36px;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  margin-top: 12px;
+  max-width: 100%;
+  margin-top: 20px;
 }
-.lead-header-badges:empty {
-  display: none;
+.lead-header-controls .lead-status-control {
+  height: var(--lead-control-height);
+  min-height: 0;
 }
+.lead-header-controls .lead-status-control select {
+  height: 100%;
+  padding-block: 0;
+}
+.lead-header-controls .assign-chip,
+.lead-header-controls .archive-action {
+  height: var(--lead-control-height);
+  min-height: 0;
+  gap: 7px;
+  padding: 0 13px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.lead-header-controls .assign-chip {
+  border-color: #cdd8c1;
+}
+.lead-header-controls .assign-chip.is-assigned {
+  padding-left: 8px;
+}
+.lead-header-controls .assign-chip .assignee-avatar {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.lead-header-controls .alert {
+  flex-basis: 100%;
+}
+
+/* The page's main actions: one height, one row where it fits. */
 .lead-header-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 22px;
+  max-width: 100%;
+  margin-top: 12px;
+}
+.lead-header-actions .button {
+  height: 40px;
+  min-height: 0;
+  padding-block: 0;
 }
 .lead-header-count {
   display: inline-grid;
   place-items: center;
   min-width: 20px;
-  padding: 1px 6px;
+  height: 18px;
+  padding: 0 6px;
   border-radius: 999px;
   background: #eef3e4;
   color: #3f5a33;
   font-size: 10px;
   font-weight: 700;
+  line-height: 1;
 }
-.fit-score {
+
+/* The fit score panel. Classes are lead-fit-*: the lead list's score cell owns .fit-score. */
+.lead-fit {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 7px;
-  padding-left: 26px;
-  border-left: 1px solid var(--line);
+  gap: 8px;
   min-width: 0;
+  padding: 26px 24px;
+  border-left: 1px solid var(--line);
+  border-radius: 0 13px 13px 0;
+  background: #f8faf4;
 }
-.fit-score > small {
-  font-size: 10px;
-  letter-spacing: 1.4px;
-  font-weight: 700;
-  color: #59714a;
+.lead-fit .lead-fit-label {
+  margin: 0;
 }
-.fit-score-value {
+.lead-fit-value {
   display: flex;
   align-items: baseline;
-  gap: 3px;
+  gap: 4px;
+  white-space: nowrap;
 }
-.fit-score-value strong {
-  font-size: 56px;
+.lead-fit-value strong {
+  font-size: 52px;
   line-height: 1;
   font-weight: 650;
   letter-spacing: -1.5px;
+  font-variant-numeric: tabular-nums;
   color: #1f3a2a;
 }
-.fit-score-value span {
+.lead-fit-value span {
   font-size: 15px;
   color: #6b7566;
 }
-.fit-score-value .fit-score-empty {
+.lead-fit-value .lead-fit-empty {
   color: #a4ac9d;
 }
-.fit-score.is-stale .fit-score-value strong {
+.lead-fit.is-stale .lead-fit-value strong {
   color: #97a08f;
 }
-.fit-score-band {
+.lead-fit-band {
   margin: 0;
   font-size: 14px;
+  line-height: 1.35;
   font-weight: 650;
   color: #2f5034;
 }
-.fit-score.is-stale .fit-score-band {
+.lead-fit.is-stale .lead-fit-band {
   color: #8a6a24;
 }
-.fit-score-help {
-  font-size: 11px;
+.lead-fit-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.fit-score-legend {
+/* Sits at the foot of the panel, level with the action buttons beside it. */
+.lead-fit-help {
+  margin-top: auto;
+  padding: 2px 0 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.lead-fit-legend {
   width: 100%;
   font-size: 11px;
   line-height: 1.5;
   color: #5b6655;
 }
-.fit-score-legend p {
+.lead-fit-legend p {
   margin: 6px 0 0;
+}
+.lead-fit-legend .fit-bands li {
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 6px;
+  padding: 4px 7px;
 }
 .fit-bands {
   list-style: none;
@@ -132,13 +235,16 @@
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
   gap: 8px;
+  margin: 0;
   padding: 5px 8px;
   border-radius: 6px;
   font-size: 11px;
+  line-height: 1.4;
   color: #56614f;
 }
 .fit-bands li strong {
   font-weight: 600;
+  white-space: nowrap;
 }
 .fit-bands li.is-current {
   background: #eaf2df;
@@ -158,19 +264,84 @@
   padding: 3px 7px;
   background: #f4f6f0;
 }
-@media (max-width: 860px) {
-  .lead-header {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 22px 20px;
-    gap: 20px;
+
+/* Tablet widths: the score panel stays beside the company, narrower. */
+@container lead-header (max-width: 760px) {
+  .lead-header-inner {
+    grid-template-columns: minmax(0, 1fr) 212px;
   }
-  .fit-score {
-    padding: 18px 0 0;
-    border-left: 0;
-    border-top: 1px solid var(--line);
+  .lead-header-main {
+    padding: 22px 22px;
   }
+  .lead-fit {
+    padding: 22px 18px;
+  }
+  .lead-fit-value strong {
+    font-size: 44px;
+  }
+  /* The rows wrap here, so each wrapped row fills the column instead of trailing off. */
+  .lead-header-controls > *,
   .lead-header-actions .button {
     flex: 1 1 auto;
+  }
+  .lead-header-controls .lead-status-control {
+    width: 100%;
+  }
+  .lead-header-controls .lead-status-control select {
+    flex: 1 1 auto;
+  }
+}
+/* Phone widths: the score goes under the company, full width, with its band beside it. */
+@container lead-header (max-width: 560px) {
+  .lead-header-inner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lead-header-main {
+    padding: 20px 18px;
+  }
+  .lead-header-actions {
+    gap: 8px;
+  }
+  .lead-header-actions .button {
+    padding-inline: 14px;
+  }
+  .lead-fit {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'label label'
+      'value band'
+      'value badges'
+      'help help'
+      'legend legend';
+    align-items: center;
+    gap: 6px 18px;
+    padding: 16px 18px;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0 0 13px 13px;
+  }
+  .lead-fit .lead-fit-label {
+    grid-area: label;
+  }
+  .lead-fit-value {
+    grid-area: value;
+  }
+  .lead-fit-band {
+    grid-area: band;
+    align-self: end;
+  }
+  .lead-fit-badges {
+    grid-area: badges;
+    align-self: start;
+  }
+  .lead-fit-help {
+    grid-area: help;
+    justify-self: start;
+    margin-top: 4px;
+  }
+  .lead-fit-legend {
+    grid-area: legend;
   }
 }
 
@@ -246,20 +417,69 @@
   flex-shrink: 0;
   margin-top: 2px;
 }
+/* The "Missing details" card: title and action on one line, then the blank fields as chips of
+   one size on the card's text edge, then the fine print. */
+.missing-card .section-title {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 20px;
+  margin-bottom: 16px;
+}
+/* On a phone the button moves under the text rather than squeezing it into a narrow column. */
+.missing-card .section-title > div {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.missing-card .section-title h3 {
+  line-height: 1.35;
+}
+.missing-card .section-title .muted {
+  max-width: 680px;
+  margin-top: 4px;
+}
+.missing-card .section-title .button {
+  flex-shrink: 0;
+}
 .missing-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 12px 0 4px;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
   padding: 0;
   list-style: none;
+  line-height: 1;
 }
 .missing-chips li {
-  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  /* The global `li + li` rule pushed every chip after the first 6px lower. */
+  margin: 0;
+  padding: 0 12px 0 10px;
+  border: 1px dashed #c9d3bd;
   border-radius: 999px;
-  border: 1px dashed #d2d9c7;
-  font-size: 11px;
-  color: #5d6858;
+  background: #fafbf7;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1;
+  color: #56614f;
+  white-space: nowrap;
+}
+/* An empty ring: a field with nothing in it yet. */
+.missing-chips li::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid #a9b69b;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.missing-card .missing-chips + .fine-print {
+  max-width: 760px;
+  margin: 16px 0 0;
+  line-height: 1.6;
 }
 .rule-tally {
   display: flex;
