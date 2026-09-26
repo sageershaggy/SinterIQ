@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -9,7 +9,6 @@ import {
   ClipboardCheck,
   Download,
   FileText,
-  Filter,
   Globe,
   History,
   Plus,
@@ -60,8 +59,9 @@ import { LeadComments } from './LeadComments';
 import {
   FitQualification,
   LeadCounts,
+  LeadFilterBar,
   LeadFilterChips,
-  LeadFilters,
+  LeadFiltersButton,
   Pager,
   countView,
   useLeadFacetOptions,
@@ -96,17 +96,21 @@ export default function Leads({
   const [leads, setLeads] = useState<Lead[]>([]),
     [total, setTotal] = useState(0),
     [page, setPage] = useState(1);
+  // The page's view: the Review queue, or every lead (the count tiles and the queue's "Show").
+  // Everything else the old status dropdown offered is a facet in the filter bar now.
   const [search, setSearch] = useState(''),
     [query, setQuery] = useState(''),
-    [status, setStatus] = useState(queue ? 'REVIEW_QUEUE' : 'ALL');
+    [status, setStatus] = useState<'ALL' | 'REVIEW_QUEUE'>(queue ? 'REVIEW_QUEUE' : 'ALL');
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
     [refresh, setRefresh] = useState(0);
-  // The Filters panel's facets and sort, and what the server says about the whole project.
+  // The filter bar's facets and sort, and what the server says about the whole project.
   const [facets, setFacets] = useState<LeadFacets>(emptyFacets),
     [pages, setPages] = useState(1),
     [summary, setSummary] = useState<LeadSummary | null>(null);
   const facetOptions = useLeadFacetOptions(base, refresh);
+  const [filtersOpen, setFiltersOpen] = useState(false),
+    filterBarId = useId();
   const defaultStatus = queue ? 'REVIEW_QUEUE' : 'ALL';
   const filtered = Boolean(query) || status !== 'ALL' || activeFacetCount(facets) > 0;
   const changeFacets = (next: LeadFacets) => {
@@ -131,15 +135,13 @@ export default function Leads({
     [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
-  const exportRef = useRef<HTMLDivElement>(null),
-    filterRef = useRef<HTMLDivElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
   const detail = detailId;
   const setDetail = (id: number | null, tab: LeadTab = 'overview') => {
     window.location.hash = id
       ? leadLink(project.id, id, tab, queue)
       : `#projects/${project.id}/${queue ? 'review' : 'leads'}`;
   };
-  const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false),
     [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
     [assigning, setAssigning] = useState<number[] | null>(null),
@@ -164,18 +166,13 @@ export default function Leads({
     return () => clearTimeout(timer);
   }, [search]);
   useEffect(() => {
-    // Either menu closes on an outside click or Escape.
-    if (!exportOpen && !filterOpen) return;
+    // The Export menu closes on an outside click or Escape.
+    if (!exportOpen) return;
     const away = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (!exportRef.current?.contains(target)) setExportOpen(false);
-      if (!filterRef.current?.contains(target)) setFilterOpen(false);
+      if (!exportRef.current?.contains(event.target as Node)) setExportOpen(false);
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setExportOpen(false);
-        setFilterOpen(false);
-      }
+      if (event.key === 'Escape') setExportOpen(false);
     };
     document.addEventListener('mousedown', away);
     document.addEventListener('keydown', key);
@@ -183,7 +180,7 @@ export default function Leads({
       document.removeEventListener('mousedown', away);
       document.removeEventListener('keydown', key);
     };
-  }, [exportOpen, filterOpen]);
+  }, [exportOpen]);
   useEffect(() => {
     api<User[]>(base + '/assignees')
       .then(setAssignees)
@@ -195,9 +192,7 @@ export default function Leads({
     setSelected([]);
     const params = new URLSearchParams({
       search: query,
-      // "Assigned to me" is the ASSIGNED view narrowed to the signed-in account.
-      status: status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status,
-      ...(status === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
+      status,
       page: String(page),
       page_size: '30',
     });
@@ -289,7 +284,7 @@ export default function Leads({
               who +
               ' for calling. They will see ' +
               (ids.length === 1 ? 'it' : 'them') +
-              ' under “Assigned to me” in the Review queue.',
+              ' in the Review queue under Filters → Assigned to: Me.',
       );
     } catch (e) {
       if (mounted.current) setError((e as Error).message);
@@ -395,61 +390,15 @@ export default function Leads({
                 placeholder="Search company, industry or country…"
               />
             </div>
-            <LeadFilters
-              facets={facets}
-              options={facetOptions}
-              total={total}
-              onChange={changeFacets}
+            <LeadFiltersButton
+              open={filtersOpen}
+              count={activeFacetCount(facets) + (status !== defaultStatus ? 1 : 0)}
+              controls={filterBarId}
+              onToggle={() => {
+                setFiltersOpen((open) => !open);
+                setExportOpen(false);
+              }}
             />
-            {/* A real dropdown rather than a native select: the OS popup cannot be aligned
-                or padded, and its hit area does not match the control, which is why it kept
-                reading as unclickable. */}
-            <div className="filter-menu" ref={filterRef}>
-              <button
-                type="button"
-                className="table-filter"
-                aria-haspopup="listbox"
-                aria-expanded={filterOpen}
-                onClick={() => {
-                  setFilterOpen((open) => !open);
-                  setExportOpen(false);
-                }}
-              >
-                <Filter size={15} aria-hidden="true" />
-                <span className="filter-value">
-                  {statusFilters(queue).find((o) => o.value === status)?.label || 'All leads'}
-                </span>
-                <ChevronDown
-                  size={15}
-                  className={'filter-caret ' + (filterOpen ? 'is-open' : '')}
-                />
-              </button>
-              {filterOpen && (
-                <div className="filter-dropdown" role="listbox">
-                  {statusFilterGroups(queue).map((group, gIdx) => (
-                    <div key={group.name || gIdx} className="filter-group" role="group">
-                      {group.name && <div className="filter-group-title">{group.name}</div>}
-                      {group.options.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          role="option"
-                          aria-selected={status === option.value}
-                          className={status === option.value ? 'is-selected' : ''}
-                          onClick={() => {
-                            setStatus(option.value);
-                            setPage(1);
-                            setFilterOpen(false);
-                          }}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
             <div className="export-menu" ref={exportRef}>
               <button
                 className="button secondary"
@@ -472,8 +421,7 @@ export default function Leads({
                       base +
                       '/leads/export?' +
                       new URLSearchParams([
-                        ['status', status === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : status],
-                        ...(status === 'ASSIGNED_TO_ME' ? [['assigned_to', 'me']] : []),
+                        ['status', status],
                         ['search', query],
                         // The same facets and sort as the table, from the same function.
                         ...facetParams(facets),
@@ -520,6 +468,20 @@ export default function Leads({
               )}
             </div>
           </div>
+          {filtersOpen && (
+            <LeadFilterBar
+              id={filterBarId}
+              facets={facets}
+              options={facetOptions}
+              view={queue ? status : undefined}
+              views={queue ? queueViews : undefined}
+              onApply={(next, view) => {
+                if (view === 'ALL' || view === 'REVIEW_QUEUE') setStatus(view);
+                changeFacets(next);
+              }}
+              onClose={() => setFiltersOpen(false)}
+            />
+          )}
           <LeadFilterChips
             facets={facets}
             options={facetOptions}
@@ -794,9 +756,9 @@ export default function Leads({
           >
             <div className="form-stack">
               <p className="muted">
-                The person you pick sees these {assigning.length === 1 ? 'lead' : 'leads'} under
-                &ldquo;Assigned to me&rdquo; in the Review queue, where they log each call. Only
-                people with access to {project.name} can be assigned.
+                The person you pick sees these {assigning.length === 1 ? 'lead' : 'leads'} in the
+                Review queue under Filters &rarr; &ldquo;Assigned to: Me&rdquo;, where they log
+                each call. Only people with access to {project.name} can be assigned.
               </p>
               {assignees.length === 0 ? (
                 <Alert>
@@ -2067,11 +2029,17 @@ function FeedbackTab({
   );
 }
 
+/** The Review queue's "Show" choice in the filter bar; the first is the page's default. */
+const queueViews = [
+  { value: 'REVIEW_QUEUE', label: 'Review queue' },
+  { value: 'ALL', label: 'All leads' },
+];
+
 /**
- * Status filters shared by the table dropdown and the export menu. The values come from the
- * shared vocabulary so the server enum and this list cannot drift; ASSIGNED_TO_ME is the one
- * client-only value, being the ASSIGNED view narrowed to the signed-in account, which the
- * server expresses as status=ASSIGNED&assigned_to=me.
+ * Preset views, offered as one-click exports in the Export menu (the list itself filters with
+ * the filter bar's facets). The values come from the shared vocabulary so the server enum and
+ * this list cannot drift; ASSIGNED_TO_ME is the one client-only value, being the ASSIGNED view
+ * narrowed to the signed-in account, which the server expresses as status=ASSIGNED&assigned_to=me.
  */
 type FilterValue = LeadStatusFilter | 'ASSIGNED_TO_ME';
 type FilterOption = { value: FilterValue; label: string };

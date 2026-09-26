@@ -2478,23 +2478,36 @@ test('the block editor renders email-safe HTML, merges the subject, and names a 
 });
 
 /**
- * The leads status filter must stay an owned dropdown. A native <select> has now shipped twice
- * and both times users reported it as "not clickable": the OS popup cannot be aligned or padded
- * and its hit area does not match the control. This asserts the control, not an implementation
- * detail -- if the filter is deliberately redesigned, update this test in the same commit.
+ * The lead list filters with one Filters button and the bar it opens; the old status dropdown
+ * beside it is gone (owner feedback 3) and everything it offered is a facet in the bar. Its
+ * lesson stands: a native <select> tucked inside a styled box, whose hit area did not match the
+ * visible control, shipped twice and read as "not clickable". So nothing in the toolbar is a
+ * select, and every select in the bar is itself the visible bordered control, named by a label
+ * beside it, with no restyled appearance. If the filters are redesigned on purpose, update this
+ * test in the same commit.
  */
-test('the leads status filter is an owned dropdown, not a native select', () => {
+test('the lead filters are one Filters button and a bar of plain labelled selects', () => {
   const source = fs.readFileSync(new URL('../src/Leads.tsx', import.meta.url), 'utf8');
   const start = source.indexOf('className="table-toolbar"');
   const end = source.indexOf('className="selection-bar"');
   assert.ok(start > 0 && end > start, 'could not locate the leads table toolbar');
   const toolbar = source.slice(start, end);
-  assert.match(toolbar, /className="filter-dropdown"/, 'the owned filter menu is missing');
-  assert.ok(
-    !toolbar.includes('<select'),
-    'the status filter is a native <select> again; it reads as unclickable to users',
+  assert.match(toolbar, /<LeadFiltersButton/, 'the Filters button is missing');
+  assert.match(toolbar, /<LeadFilterBar/, 'the filter bar is missing');
+  assert.ok(!toolbar.includes('<select'), 'a native <select> is back in the toolbar');
+  assert.ok(!toolbar.includes('filter-menu'), 'the old status dropdown is back beside Filters');
+  const filters = fs.readFileSync(new URL('../src/LeadFilters.tsx', import.meta.url), 'utf8');
+  const bar = filters.slice(
+    filters.indexOf('export function LeadFilterBar'),
+    filters.indexOf('export type Chip'),
   );
-  assert.match(toolbar, /role="listbox"/, 'the filter menu lost its listbox role');
+  const controls = bar.match(/<(select|input)\b/g) ?? [];
+  assert.ok((bar.match(/\{select\('/g) ?? []).length >= 10, 'the bar lost its facet selects');
+  // Each control is the element a <label htmlFor> names: first attribute, its field id.
+  assert.equal((bar.match(/<(select|input)\s+id=\{fieldId\}/g) ?? []).length, controls.length);
+  assert.match(bar, /<label htmlFor=\{id \+ '-' \+ key\}>/);
+  const css = fs.readFileSync(new URL('../src/LeadFilters.css', import.meta.url), 'utf8');
+  assert.ok(!/appearance\s*:/.test(css), 'the filter selects must keep their native appearance');
 });
 
 test('a real page sentence does not authorize an invented value', async () => {
