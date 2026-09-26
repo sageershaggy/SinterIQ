@@ -255,7 +255,7 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, vi
     where += ' AND l.assigned_to=?';
     params.push(viewerId);
   }
-  where += facetWhere(project, input, params);
+  where += facetWhere(project, input, params, { viewerId });
   return { where, params };
 }
 const fieldLabels: Record<string, string> = {
