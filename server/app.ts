@@ -23,11 +23,21 @@ import {
   analyzeTraining,
   generate,
   getAiConfig,
+  presetForBase,
   publicSettings,
   qualify,
   type Generate,
   type AiConfig,
 } from './ai';
+import {
+  assertProviderBase,
+  installAiSettings,
+  listModels,
+  readStatus,
+  recordStatus,
+  type ListModels,
+} from './ai-settings';
+import { cleanKey, presetInfo, providerPresetIds } from '../shared/ai-providers';
 import {
   createDecision,
   healthDecisionQuestions,
@@ -330,6 +340,8 @@ export function createApp(options: {
   extractDocument?: typeof extractDocument;
   sendMail?: Send;
   readInbox?: ReadInbox;
+  /** Asks an AI provider which models a key may use (tests pass a stub). */
+  listModels?: ListModels;
 }) {
   const production = options.production || false;
   const { db, secrets } = openDatabase(options.dataDir, options.legacyPath);
@@ -456,6 +468,12 @@ export function createApp(options: {
       error:
         'Analysis limit reached (100 AI runs per 15 minutes). Wait, then continue with the next batch of up to 20 leads.',
     },
+  });
+  installAiSettings(app, {
+    db,
+    secrets,
+    list: options.listModels || listModels,
+    limit: expensiveLimit,
   });
   const mailLimit = rateLimit({
     windowMs: 15 * 60_000,
@@ -1789,44 +1807,74 @@ export function createApp(options: {
     );
   });
 
-  app.get('/api/settings/llm', adminOnly, (_req, res) =>
-    res.json(publicSettings(getAiConfig(db, secrets))),
-  );
+  app.get('/api/settings/llm', adminOnly, (_req, res) => {
+    const config = getAiConfig(db, secrets);
+    res.json(publicSettings(config, readStatus(db, config)));
+  });
   app.put('/api/settings/llm', adminOnly, (req, res) => {
     const input = z
       .object({
         provider: z.enum(['gemini', 'openai_compatible']),
+        /** Which listed provider (shared/ai-providers.ts); older clients omit it. */
+        preset: z.enum(providerPresetIds).optional(),
         model: requiredText(200),
-        base_url: webUrl.min(1),
-        api_key: text(1000).default(''),
+        base_url: webUrl.default(''),
+        // Not trimmed by the schema: cleanKey removes every space and line break a paste adds.
+        api_key: z.string().max(1000).default(''),
         clear_api_key: z.boolean().default(false),
       })
       .strict()
       .parse(req.body);
-    if (input.provider === 'openai_compatible') {
-      const url = checkedUrl(input.base_url);
-      if (url.protocol !== 'https:' || url.search || url.hash)
-        throw new HttpError(400, 'Use a public HTTPS base URL without query parameters.');
-    }
     const current = getAiConfig(db, secrets);
+    const preset =
+      input.provider === 'gemini'
+        ? 'gemini'
+        : input.preset && input.preset !== 'gemini'
+          ? input.preset
+          : presetForBase(input.base_url);
+    // A listed provider always uses its own endpoint; only "Other" takes a typed base URL.
+    const base_url =
+      input.provider === 'gemini'
+        ? current.base_url
+        : preset === 'custom'
+          ? assertProviderBase(input.base_url)
+          : presetInfo(preset).base_url;
+    const api_key = cleanKey(input.api_key);
     if (
       current.api_key &&
-      !input.api_key &&
+      !api_key &&
       !input.clear_api_key &&
       (input.provider !== current.provider ||
-        new URL(input.base_url).origin !== new URL(current.base_url).origin)
+        new URL(base_url).origin !== new URL(current.base_url).origin)
     )
-      throw new HttpError(400, 'Enter a new API key when switching providers or endpoint domains.');
+      throw new HttpError(
+        400,
+        'Paste the API key for ' +
+          presetInfo(preset).label +
+          ': the saved key belongs to ' +
+          presetInfo(current.preset).label +
+          ' and is never sent to another provider.',
+      );
     db.transaction(() => {
       const save = db.prepare(
         'INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
       );
-      for (const key of ['provider', 'model', 'base_url'] as const) save.run(key, input[key]);
+      save.run('provider', input.provider);
+      save.run('preset', preset);
+      save.run('model', input.model);
+      save.run('base_url', base_url);
       if (input.clear_api_key) save.run('api_key', '');
-      else if (input.api_key) save.run('api_key', secrets.encrypt(input.api_key));
-      audit(db, null, req.user.name, 'settings.updated', 'AI provider configuration updated.');
+      else if (api_key) save.run('api_key', secrets.encrypt(api_key));
+      audit(
+        db,
+        null,
+        req.user.name,
+        'settings.updated',
+        'AI provider set to ' + presetInfo(preset).label + ' · ' + input.model + '.',
+      );
     })();
-    res.json(publicSettings(getAiConfig(db, secrets)));
+    const saved = getAiConfig(db, secrets);
+    res.json(publicSettings(saved, readStatus(db, saved)));
   });
   app.post('/api/settings/llm/test', adminOnly, async (req, res) => {
     const input = z
@@ -1858,7 +1906,7 @@ export function createApp(options: {
             : '') ||
           '')
       : input.api_key
-        ? input.api_key.trim()
+        ? cleanKey(input.api_key)
         : current.api_key;
     if (!api_key && !(useDecisions ? options.createDecision : options.generate))
       throw new HttpError(
@@ -1884,26 +1932,55 @@ export function createApp(options: {
       });
       return;
     }
-    if (provider === 'openai_compatible') {
-      const url = checkedUrl(base_url);
-      if (url.protocol !== 'https:' || url.search || url.hash)
-        throw new HttpError(400, 'Use a public HTTPS base URL without query parameters.');
-    }
+    if (provider === 'openai_compatible') assertProviderBase(base_url);
+    // The saved key only ever goes to the provider and endpoint it was saved for.
+    if (
+      !input.api_key &&
+      (provider !== current.provider ||
+        (provider === 'openai_compatible' &&
+          new URL(base_url).origin !== new URL(current.base_url).origin))
+    )
+      throw new HttpError(400, 'Paste the API key for this provider to test it.');
     const testConfig: AiConfig = {
       provider,
+      preset: provider === 'gemini' ? 'gemini' : presetForBase(base_url),
       model,
       base_url,
       api_key,
       source: 'test',
     };
+    // Testing exactly what is saved is what the status on the settings page reports.
+    const savedSetup =
+      !input.api_key &&
+      provider === current.provider &&
+      model === current.model &&
+      base_url === current.base_url;
     const start = Date.now();
-    await callAi(
-      testConfig,
-      'You are a health check assistant. Return only strict JSON: {"ok":true}',
-      { ping: true },
-    );
+    try {
+      await callAi(
+        testConfig,
+        'You are a health check assistant. Return only strict JSON: {"ok":true}',
+        { ping: true },
+      );
+    } catch (error) {
+      if (savedSetup)
+        recordStatus(db, current, {
+          ok: false,
+          message: error instanceof HttpError ? error.message : 'The provider could not be reached.',
+          latency_ms: null,
+        });
+      throw error;
+    }
     const latency_ms = Date.now() - start;
-    res.json({ ok: true, mode: 'chat', model, latency_ms });
+    if (savedSetup)
+      recordStatus(db, current, { ok: true, message: 'Connected', latency_ms });
+    res.json({
+      ok: true,
+      mode: 'chat',
+      model,
+      latency_ms,
+      status: savedSetup ? readStatus(db, current) : null,
+    });
   });
   /** Every project sends from its own mailbox, so these routes are project-scoped. */
   app.get('/api/projects/:projectId/mailbox/email', adminOnly, (req, res) => {

@@ -1,20 +1,19 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import {
   BookOpen,
   CheckCircle2,
   FolderPlus,
-  KeyRound,
   LockKeyhole,
   Mail,
   Plus,
-  Save,
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import type { Account, Project, Settings as AiSettings, User } from '../shared/types';
+import type { Account, Project, User } from '../shared/types';
 import { api, json, setSession, type Session } from './api';
 import { Alert, Badge, Modal, Spinner } from './ui';
 import { initials } from './AccountMenu';
+import { AiProviderSettings } from './AiProviderSettings';
 
 export default function Settings({
   user,
@@ -27,29 +26,19 @@ export default function Settings({
   notify: (message: string) => void;
   onCreateProject: () => void;
 }) {
-  const [settings, setSettings] = useState<AiSettings | null>(null),
-    [key, setKey] = useState(''),
-    [clearKey, setClearKey] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]),
     [adding, setAdding] = useState(false),
     [assigning, setAssigning] = useState<Account | null>(null),
     // Held only until the administrator closes the dialog: the server will not show it again.
     [issued, setIssued] = useState<{ name: string; password: string } | null>(null);
   const [busy, setBusy] = useState(''),
-    [error, setError] = useState(''),
-    [testResult, setTestResult] = useState('');
+    [error, setError] = useState('');
   const loadUsers = () => api<typeof accounts>('/users').then(setAccounts);
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      user.role === 'admin' ? api<AiSettings>('/settings/llm') : Promise.resolve(null),
-      user.role === 'admin' ? api<typeof accounts>('/users') : Promise.resolve([]),
-    ])
-      .then(([data, users]) => {
-        if (!cancelled) {
-          setSettings(data);
-          setAccounts(users);
-        }
+    (user.role === 'admin' ? api<typeof accounts>('/users') : Promise.resolve([]))
+      .then((users) => {
+        if (!cancelled) setAccounts(users);
       })
       .catch((e) => {
         if (!cancelled) setError(e.message);
@@ -58,100 +47,6 @@ export default function Settings({
       cancelled = true;
     };
   }, []);
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!settings) return;
-    setBusy('settings');
-    setError('');
-    try {
-      const result = await api<AiSettings>('/settings/llm', {
-        method: 'PUT',
-        body: json({
-          provider: settings.provider,
-          model: settings.model,
-          base_url: settings.base_url,
-          api_key: key,
-          clear_api_key: clearKey,
-        }),
-      });
-      setSettings(result);
-      setKey('');
-      setClearKey(false);
-      notify('AI settings saved.');
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy('');
-    }
-  }
-  async function testConnection() {
-    if (!settings) return;
-    setBusy('test-ai');
-    setError('');
-    setTestResult('');
-    try {
-      const res = await api<{
-        ok: boolean;
-        model: string;
-        latency_ms: number;
-        mode?: string;
-      }>('/settings/llm/test', {
-        method: 'POST',
-        body: json({
-          provider: settings.provider,
-          model: settings.model,
-          base_url: settings.base_url,
-          api_key: key || undefined,
-          mode: 'chat',
-        }),
-      });
-      const msg = 'Connected to ' + res.model + ' successfully (' + res.latency_ms + 'ms).';
-      setTestResult(msg);
-      notify(msg);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy('');
-    }
-  }
-  async function testJevDecision() {
-    if (!settings) return;
-    setBusy('test-jev');
-    setError('');
-    setTestResult('');
-    try {
-      const res = await api<{
-        ok: boolean;
-        model: string;
-        latency_ms: number;
-        mode?: string;
-        answers?: Record<string, { type: string; noul?: number }>;
-      }>('/settings/llm/test', {
-        method: 'POST',
-        body: json({
-          provider: 'openai_compatible',
-          model: 'typesafe/jev-1.13',
-          base_url: 'https://openrouter.ai/api/v1',
-          api_key: key || undefined,
-          mode: 'decisions',
-        }),
-      });
-      const noul = res.answers?.ok?.type === 'noul' ? res.answers.ok.noul : undefined;
-      const msg =
-        'Jev decision OK via ' +
-        res.model +
-        ' (' +
-        res.latency_ms +
-        'ms)' +
-        (noul !== undefined ? ' · health noul=' + noul.toFixed(2) : '');
-      setTestResult(msg);
-      notify(msg);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy('');
-    }
-  }
   return (
     <>
       <div className="page-heading">
@@ -204,166 +99,7 @@ export default function Settings({
               </p>
             </section>
           )}
-          <section className="panel" hidden={user.role !== 'admin'}>
-            <div className="section-title">
-              <h2>
-                <KeyRound size={20} />
-                AI provider
-              </h2>
-              {settings && (
-                <Badge value={settings.has_api_key ? 'ready' : 'draft'}>
-                  {settings.has_api_key ? 'Key configured' : 'Setup required'}
-                </Badge>
-              )}
-            </div>
-            <p className="muted">
-              Training analysis and qualification use this provider. Project source text and lead
-              evidence are sent when an analysis runs.
-            </p>
-            {!settings ? (
-              <Spinner text="Loading configuration…" />
-            ) : (
-              <form className="form-stack" onSubmit={save}>
-                <label>
-                  Provider
-                  <select
-                    value={settings.provider}
-                    onChange={(e) => {
-                      const provider = e.target.value as AiSettings['provider'];
-                      setSettings({
-                        ...settings,
-                        provider,
-                        model: provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4.1-mini',
-                        base_url: 'https://api.openai.com/v1',
-                      });
-                      setKey('');
-                    }}
-                  >
-                    <option value="gemini">Google Gemini</option>
-                    <option value="openai_compatible">OpenAI-compatible provider</option>
-                  </select>
-                </label>
-                <label>
-                  Model ID
-                  <input
-                    value={settings.model}
-                    onChange={(e) => setSettings({ ...settings, model: e.target.value })}
-                    required
-                    maxLength={200}
-                  />
-                </label>
-                {settings.provider === 'openai_compatible' && (
-                  <label>
-                    API base URL
-                    <input
-                      type="url"
-                      value={settings.base_url}
-                      onChange={(e) => setSettings({ ...settings, base_url: e.target.value })}
-                      required
-                      maxLength={2000}
-                      placeholder="https://openrouter.ai/api/v1"
-                    />
-                    <small>
-                      Public HTTPS only. For OpenRouter chat models use{' '}
-                      <code>https://openrouter.ai/api/v1</code>. TypeSafe Jev uses the Decisions API
-                      (Test Jev decision) — do not set the chat model to{' '}
-                      <code>typesafe/jev-1.13</code>.
-                    </small>
-                  </label>
-                )}
-                <label>
-                  API key
-                  <input
-                    type="password"
-                    value={key}
-                    onChange={(e) => setKey(e.target.value)}
-                    maxLength={1000}
-                    autoComplete="off"
-                    placeholder={
-                      settings.has_api_key
-                        ? 'Saved key ' + settings.api_key_preview + ' · leave blank to keep'
-                        : 'Paste your provider API key'
-                    }
-                  />
-                  <small>
-                    {settings.has_api_key
-                      ? 'Loaded from ' + settings.source + '. Saved keys are encrypted at rest.'
-                      : 'A provider key is required for AI analysis.'}
-                  </small>
-                </label>
-                {settings.source === 'database' && (
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={clearKey}
-                      onChange={(e) => setClearKey(e.target.checked)}
-                    />
-                    Clear saved key on save
-                  </label>
-                )}
-                {clearKey && (
-                  <p className="fine-print">
-                    A server environment key will be used if one is configured.
-                  </p>
-                )}
-                {testResult && (
-                  <p className="field-hint" style={{ color: 'var(--success, #15803d)', fontWeight: 500 }}>
-                    <CheckCircle2 size={15} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} />
-                    {testResult}
-                  </p>
-                )}
-                <div className="form-actions">
-                  <button className="button primary" disabled={!!busy}>
-                    {busy === 'settings' ? (
-                      <Spinner />
-                    ) : (
-                      <>
-                        <Save size={16} />
-                        Save configuration
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    disabled={!!busy || (!settings.has_api_key && !key)}
-                    onClick={testConnection}
-                  >
-                    {busy === 'test-ai' ? (
-                      <Spinner text="Testing connection…" />
-                    ) : (
-                      <>
-                        <CheckCircle2 size={16} />
-                        Test connection
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    disabled={!!busy}
-                    onClick={() => void testJevDecision()}
-                    title="Uses the key typed above, OPENROUTER_API_KEY on the server, or a saved OpenRouter chat key — never a Gemini key"
-                  >
-                    {busy === 'test-jev' ? (
-                      <Spinner text="Testing Jev…" />
-                    ) : (
-                      <>
-                        <CheckCircle2 size={16} />
-                        Test Jev decision
-                      </>
-                    )}
-                  </button>
-                </div>
-                <p className="fine-print">
-                  Test Jev uses OpenRouter&apos;s Decisions API with{' '}
-                  <code>typesafe/jev-1.13</code>. Paste an OpenRouter key above, or set{' '}
-                  <code>OPENROUTER_API_KEY</code> on the server. A Gemini chat key is never sent to
-                  OpenRouter.
-                </p>
-              </form>
-            )}
-          </section>
+          {user.role === 'admin' && <AiProviderSettings notify={notify} />}
           <section className="panel">
             <div className="section-title">
               <h2>

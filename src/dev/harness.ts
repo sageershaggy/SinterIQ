@@ -15,6 +15,7 @@ import { callStage } from '../../shared/calls';
 import type { CallOutcome } from '../../shared/types';
 import { shellRoutes } from './shell-fixtures';
 import { contactEnrollments, emailRoutes, emailWrites } from './emailFixtures';
+import { settingsRoutes, settingsWrites } from './settingsFixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -545,6 +546,7 @@ const proposal = {
 
 const routes: Array<[RegExp, (route: string) => unknown]> = [
   ...shellRoutes,
+  ...settingsRoutes,
   [
     /^\/auth\/me$/,
     () => ({
@@ -631,7 +633,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (method === 'POST' && /^\/projects\/2\/training\/analyze$/.test(route))
     return new Response(JSON.stringify(proposal), { status: 200, headers });
   if (method !== 'GET') {
-    const write = emailWrites.find(([verb, pattern]) => verb === method && pattern.test(route));
+    const write = [...settingsWrites, ...emailWrites].find(([verb, pattern]) => verb === method && pattern.test(route));
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
     return new Response(JSON.stringify(write ? write[2](body) : {}), { status: 200, headers });
   }

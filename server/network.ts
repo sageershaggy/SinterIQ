@@ -47,6 +47,8 @@ export async function publicRequest(
     body?: string;
     timeout?: number;
     maxBytes?: number;
+    /** False for a request carrying credentials: a redirect must never receive them. */
+    followRedirects?: boolean;
   } = {},
   redirects = 0,
 ): Promise<NetworkResponse> {
@@ -108,7 +110,12 @@ export async function publicRequest(
     request.end(options.body);
   });
   if (response.status >= 300 && response.status < 400) {
-    if (options.method === 'POST' || !response.location || redirects >= 3)
+    if (
+      options.method === 'POST' ||
+      options.followRedirects === false ||
+      !response.location ||
+      redirects >= 3
+    )
       throw new HttpError(502, 'Remote redirect refused. Use the final public URL.');
     return publicRequest(new URL(response.location, url).href, options, redirects + 1);
   }
