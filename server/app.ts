@@ -16,6 +16,7 @@ import { installResearchLog, recordResearchPass } from './research-log';
 import { installCompose } from './compose';
 import { installEmailFiles } from './email-files';
 import { installArchive } from './archive';
+import { installProjectDeletion } from './project-delete';
 import { fetchWebsite, checkedUrl } from './network';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
@@ -447,6 +448,12 @@ export function createApp(options: {
   installEmailFiles(app, { db, getProject });
   installCompose(app, { db, secrets, getProject, getLead, outreach, funnels, generate: callAi });
   installArchive(app, { db, getProject });
+  installProjectDeletion(app, {
+    db,
+    dataDir: options.dataDir,
+    getProject,
+    mailboxSyncing: mailbox.syncing,
+  });
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {

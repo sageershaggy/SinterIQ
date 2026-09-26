@@ -1,0 +1,187 @@
+/* The sign-in page. Loaded before index.css, so every rule here is written under .login-page to
+   stay the more specific one.
+
+   Left panel: every line is light on the forest green (7:1 or more for text; the serif headline
+   is 12:1), and the headline group sits vertically centred between the brand and the footer.
+   Right panel: one column, centred both ways; the heading is centred, the form itself reads
+   left-aligned. */
+
+.login-page .login-story {
+  justify-content: flex-start;
+  gap: 40px;
+  color: #e3ebd8;
+}
+.login-page .login-story .brand small {
+  opacity: 1;
+  color: #c4d3b8;
+}
+.login-page .login-story > .login-story-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 24px 0;
+}
+.login-page .login-story .eyebrow.light {
+  margin-bottom: 18px;
+  font-size: 11px;
+  letter-spacing: 2.4px;
+  color: #c7dfa0;
+}
+.login-page .login-story h1 {
+  color: #e9f1dc;
+}
+.login-page .login-story p {
+  max-width: 410px;
+  margin-top: 22px;
+  font-size: 15px;
+  line-height: 1.75;
+  color: #d2dec6;
+}
+.login-page .login-features {
+  gap: 18px;
+  margin-top: 38px;
+}
+.login-page .login-features span {
+  font-size: 14px;
+  color: #e3ebd8;
+}
+.login-page .login-features svg {
+  flex-shrink: 0;
+  color: #bcd98f;
+}
+.login-page .login-story > small {
+  font-size: 12px;
+  color: #b3c3a5;
+}
+
+.login-page .login-form {
+  width: 100%;
+  max-width: none;
+  min-height: 100vh;
+  margin: 0;
+  padding: 48px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+}
+.login-page .login-card-head {
+  margin-bottom: 24px;
+  text-align: center;
+}
+.login-page .login-card-head .eyebrow {
+  margin-bottom: 10px;
+  font-size: 10px;
+  color: #5b6b4f;
+}
+.login-page .login-card-head h2 {
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -1px;
+}
+.login-page .login-card-head .muted {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #5f685a;
+}
+
+/* Two doors: Administrator and Guest. */
+.login-portals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #e0e6d6;
+  border-radius: 10px;
+  background: #eef2e7;
+}
+.login-portals [role='tab'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4f5d48;
+}
+.login-portals [role='tab']:hover {
+  color: #203e25;
+}
+.login-portals [role='tab'][aria-selected='true'] {
+  background: #fff;
+  color: #203e25;
+  box-shadow:
+    0 1px 3px #1a302322,
+    0 0 0 1px #d8e0cd;
+}
+.login-portals [role='tab']:focus-visible {
+  outline: 2px solid #9cb982;
+  outline-offset: 1px;
+}
+.login-page .login-form form {
+  gap: 16px;
+  margin-top: 14px;
+}
+.login-page .login-portal-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5d6857;
+}
+.login-page .login-form label {
+  font-size: 12px;
+  color: #4d5c41;
+}
+.login-page .login-remember {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.login-page .login-remember label {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #33422f;
+  cursor: pointer;
+}
+.login-page .login-remember input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.login-page .login-remember small {
+  padding-left: 25px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #5f685a;
+}
+.login-page .login-form .button.primary {
+  width: 100%;
+  margin-top: 4px;
+}
+.login-page .login-card .fine-print {
+  margin-top: 22px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #5f685a;
+}
+
+@media (max-width: 760px) {
+  .login-page .login-form {
+    padding: 32px 20px;
+  }
+  .login-page .login-mobile-brand {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 32px;
+  }
+}

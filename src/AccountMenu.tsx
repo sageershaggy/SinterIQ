@@ -1,5 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ChevronDown, LogOut, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  LogOut,
+  Settings as SettingsIcon,
+  ShieldCheck,
+} from 'lucide-react';
 import type { User } from '../shared/types';
 import './AccountMenu.css';
 
@@ -13,20 +19,23 @@ export const initials = (name: string) =>
     .toUpperCase() || '?';
 
 /**
- * The signed-in account, top right. Workspace settings, the profile and signing out live here
- * rather than at the foot of the sidebar, so the sidebar holds only navigation.
+ * The signed-in account: workspace settings, the profile and signing out. It sits top right,
+ * and the same menu is pinned to the foot of the sidebar ("sidebar" variant), where it opens
+ * upwards and names the person and their role.
  */
 export function AccountMenu({
   user,
   active,
   onSettings,
   onLogout,
+  variant = 'header',
 }: {
   user: User;
   /** The settings page is open, so the trigger shows where you are. */
   active: boolean;
   onSettings: () => void;
   onLogout: () => void;
+  variant?: 'header' | 'sidebar';
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -71,28 +80,53 @@ export function AccountMenu({
     setOpen(false);
     action();
   };
+  const sidebar = variant === 'sidebar';
   return (
-    <div className="account-menu" ref={root}>
+    <div className={'account-menu' + (sidebar ? ' is-sidebar' : '')} ref={root}>
       <button
         ref={trigger}
-        className={'account-trigger' + (active ? ' is-active' : '')}
+        className={
+          'account-trigger' +
+          (sidebar ? ' account-trigger-sidebar' : '') +
+          (active ? ' is-active' : '')
+        }
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         aria-label={`Account and workspace settings for ${user.name}`}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="account-trigger-label">
-          <ShieldCheck size={14} aria-hidden="true" />
-          Team workspace
-        </span>
-        <span className="account-avatar" aria-hidden="true">
-          {initials(user.name)}
-        </span>
-        <ChevronDown size={14} className={open ? 'is-open' : ''} aria-hidden="true" />
+        {sidebar ? (
+          <>
+            <span className="account-avatar" aria-hidden="true">
+              {initials(user.name)}
+            </span>
+            <span className="account-identity" aria-hidden="true">
+              <strong>{user.name}</strong>
+              <small>{role}</small>
+            </span>
+            <ChevronUp size={15} className={open ? 'is-open' : ''} aria-hidden="true" />
+          </>
+        ) : (
+          <>
+            <span className="account-trigger-label">
+              <ShieldCheck size={14} aria-hidden="true" />
+              Team workspace
+            </span>
+            <span className="account-avatar" aria-hidden="true">
+              {initials(user.name)}
+            </span>
+            <ChevronDown size={14} className={open ? 'is-open' : ''} aria-hidden="true" />
+          </>
+        )}
       </button>
       {open && (
-        <div className="account-dropdown" id={menuId} role="menu" aria-label="Account">
+        <div
+          className={'account-dropdown' + (sidebar ? ' opens-up' : '')}
+          id={menuId}
+          role="menu"
+          aria-label="Account"
+        >
           <div className="account-profile" role="none">
             <span className="account-avatar large" aria-hidden="true">
               {initials(user.name)}

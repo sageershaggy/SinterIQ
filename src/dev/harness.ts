@@ -544,18 +544,79 @@ const proposal = {
   revision: 10,
 };
 
+// Fixture switches, read from the query string (or the hash) so the hash routes stay untouched:
+// ?signed-out shows the sign-in page; ?many-projects fills the project library.
+const flags = new URLSearchParams(location.search);
+const signedOut = flags.has('signed-out') || location.hash === '#signed-out';
+const library = flags.has('many-projects')
+  ? [
+      {
+        ...project,
+        id: 1,
+        name: 'Sintertechnik',
+        description:
+          'Precision ceramics, hybrid bearings and engineering-led prospect research across Europe.',
+        revision: 12,
+        trained_revision: 12,
+        active_version: 5,
+        lead_count: 1211,
+        source_count: 3,
+        is_starter: true,
+        preserved_lead_count: 1211,
+        preserved_contact_count: 340,
+      },
+      project,
+      {
+        ...project,
+        id: 3,
+        name: 'Gulf Hospitality Leads for the 2027 Renovation Season',
+        description:
+          'Hotels and resorts across the GCC that are renovating or opening properties in the next two years, with procurement teams we can reach directly and a clear need for new digital guest services.',
+        revision: 4,
+        trained_revision: null,
+        active_version: null,
+        lead_count: 0,
+        source_count: 1,
+      },
+    ]
+  : [project];
+const signedInAs = {
+  user: { id: 1, username: 'admin', name: 'Workspace Administrator', role: 'admin' },
+  csrf_token: 'harness',
+  setup_required: false,
+};
+
 const routes: Array<[RegExp, (route: string) => unknown]> = [
   ...shellRoutes,
   ...settingsRoutes,
   [
     /^\/auth\/me$/,
-    () => ({
-      user: { id: 1, username: 'admin', name: 'Workspace Administrator', role: 'admin' },
-      csrf_token: 'harness',
-      setup_required: false,
+    () => (signedOut ? { user: null, csrf_token: '', setup_required: false } : signedInAs),
+  ],
+  [/^\/projects$/, () => library],
+  [
+    /^\/projects\/\d+\/deletion-summary$/,
+    (route) => ({
+      project_id: Number(route.split('/')[2]),
+      name: library.find((p) => p.id === Number(route.split('/')[2]))?.name || project.name,
+      counts: {
+        leads: 1211,
+        archived_leads: 12,
+        sources: 3,
+        training_versions: 5,
+        runs: 842,
+        emails: 120,
+        calls: 30,
+        comments: 12,
+        campaigns: 2,
+        queued_sequences: 40,
+        contacts: 15,
+        members: 2,
+        incoming_messages: 50,
+      },
+      mailbox: true,
     }),
   ],
-  [/^\/projects$/, () => [project]],
   [/^\/projects\/2$/, () => ({ ...project, sources, versions })],
   [/^\/projects\/2\/activity$/, () => activity],
   [/^\/projects\/2\/leads\/7$/, () => lead],
@@ -632,6 +693,30 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const headers = { 'Content-Type': 'application/json' };
   if (method === 'POST' && /^\/projects\/2\/training\/analyze$/.test(route))
     return new Response(JSON.stringify(proposal), { status: 200, headers });
+  // Sign-in: the Guest tab refuses the administrator fixture the way the server does.
+  if (method === 'POST' && route === '/auth/login') {
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+    return body.portal === 'guest'
+      ? new Response(
+          JSON.stringify({
+            error: 'This is an administrator account. Choose the Administrator tab to sign in.',
+          }),
+          { status: 403, headers },
+        )
+      : new Response(JSON.stringify(signedInAs), { status: 200, headers });
+  }
+  if (method === 'DELETE' && /^\/projects\/\d+$/.test(route)) {
+    const id = Number(route.split('/')[2]);
+    return new Response(
+      JSON.stringify({
+        deleted: true,
+        name: library.find((p) => p.id === id)?.name || project.name,
+        snapshot: 'backups/before-delete-project-' + id + '-20260926T101500123Z.db',
+        removed: {},
+      }),
+      { status: 200, headers },
+    );
+  }
   if (method !== 'GET') {
     const write = [...settingsWrites, ...emailWrites].find(([verb, pattern]) => verb === method && pattern.test(route));
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
