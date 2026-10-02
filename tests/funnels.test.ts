@@ -16,6 +16,12 @@ import nodemailer from 'nodemailer';
 import type { Lead, Project, TrainingSnapshot } from '../shared/types';
 import type { Enrollment, Funnel, FunnelCounts, FunnelStep } from '../shared/funnels';
 import { emptyCounts, funnelCompleted } from '../shared/funnels';
+import {
+  activeFunnelFilterCount,
+  emptyFunnelFilters,
+  filterFunnels,
+  funnelAudiences,
+} from '../shared/funnel-filters';
 
 delete process.env.INNOVISTA_SETUP_TOKEN;
 const day = 86_400_000;
@@ -1792,3 +1798,110 @@ test('a funnel records when it last changed: edits, start and pause, the open sw
   }
 });
 
+test('the funnel list searches, filters and sorts by what the server counted', () => {
+  const noon = (n: number) => new Date(2026, 0, n, 12).toISOString();
+  const make = (
+    id: number,
+    values: Partial<Omit<Funnel, 'counts'>> & { counts?: Partial<FunnelCounts> },
+  ): Funnel => ({
+    id,
+    project_id: 1,
+    name: 'Funnel ' + id,
+    audience: '',
+    steps: [{ delay_days: 0, subject: 'Hello', body: '' }],
+    status: 'DRAFT',
+    revision: 1,
+    created_at: noon(id),
+    updated_at: noon(id),
+    enrolled_count: 0,
+    queued_count: 0,
+    converted_count: 0,
+    stop_on_reply: true,
+    track_opens: true,
+    fit_band: 'ANY',
+    ...values,
+    counts: { ...emptyCounts, ...values.counts },
+  });
+  const funnels = [
+    make(1, {
+      name: 'UAE engineering introduction',
+      audience: 'Pump manufacturers',
+      fit_band: 'HIGH',
+      updated_at: noon(20),
+    }),
+    make(2, {
+      name: 'Valve follow-up',
+      audience: 'Valve makers',
+      fit_band: 'EMAIL',
+      status: 'ACTIVE',
+      enrolled_count: 10,
+      queued_count: 4,
+      counts: { enrolled: 10, sent: 8, opened: 4, replied: 2, open_rate: 0.5, reply_rate: 0.25 },
+    }),
+    make(3, {
+      name: 'Trade fair',
+      steps: [{ delay_days: 0, subject: 'Meeting at Hannover Messe', body: '' }],
+      status: 'ACTIVE',
+      enrolled_count: 5,
+      queued_count: 0,
+      counts: {
+        enrolled: 5,
+        sent: 5,
+        opened: 1,
+        replied: 2,
+        bounced: 1,
+        open_rate: 0.2,
+        reply_rate: 0.4,
+      },
+    }),
+    make(4, {
+      name: 'Paused one',
+      audience: 'Pump manufacturers',
+      status: 'PAUSED',
+      enrolled_count: 3,
+      queued_count: 3,
+      counts: { enrolled: 3 },
+    }),
+  ];
+  const ids = (patch: Partial<typeof emptyFunnelFilters>) =>
+    filterFunnels(funnels, { ...emptyFunnelFilters, ...patch }).map((funnel) => funnel.id);
+  assert.deepEqual(ids({}), [4, 3, 2, 1]);
+  // Search covers the name, the audience and every message subject; every word must match.
+  assert.deepEqual(ids({ search: 'hannover' }), [3]);
+  assert.deepEqual(ids({ search: 'uae intro' }), [1]);
+  assert.deepEqual(ids({ search: 'VALVE MAKERS' }), [2]);
+  // Completed is a funnel that ran its course; it can still be Active.
+  assert.deepEqual(funnels.map(funnelCompleted), [false, false, true, false]);
+  assert.deepEqual(ids({ status: 'ACTIVE' }), [3, 2]);
+  assert.deepEqual(ids({ status: 'COMPLETED' }), [3]);
+  assert.deepEqual(ids({ status: 'PAUSED' }), [4]);
+  assert.deepEqual(ids({ status: 'DRAFT' }), [1]);
+  assert.deepEqual(ids({ type: 'HIGH' }), [1]);
+  assert.deepEqual(ids({ type: 'ANY' }), [4, 3]);
+  assert.deepEqual(funnelAudiences(funnels), ['', 'Pump manufacturers', 'Valve makers']);
+  assert.deepEqual(ids({ audience: '' }), [3]);
+  assert.deepEqual(ids({ audience: 'Pump manufacturers' }), [4, 1]);
+  assert.deepEqual(ids({ performance: 'REPLIES' }), [3, 2]);
+  assert.deepEqual(ids({ performance: 'OPENS' }), [3, 2]);
+  assert.deepEqual(ids({ performance: 'BOUNCES' }), [3]);
+  assert.deepEqual(ids({ performance: 'NOT_SENT' }), [4, 1]);
+  assert.deepEqual(ids({ created_from: '2026-01-02', created_to: '2026-01-03' }), [3, 2]);
+  assert.deepEqual(ids({ created_from: '2026-01-03', created_to: '2026-01-02' }), [3, 2]);
+  assert.deepEqual(ids({ sort: 'OLDEST' }), [1, 2, 3, 4]);
+  assert.deepEqual(ids({ sort: 'UPDATED' }), [1, 4, 3, 2]);
+  // Nothing sent means no rate: those go last, newest first.
+  assert.deepEqual(ids({ sort: 'REPLY_RATE' }), [3, 2, 4, 1]);
+  assert.deepEqual(ids({ sort: 'OPEN_RATE' }), [2, 3, 4, 1]);
+  assert.deepEqual(ids({ sort: 'ENROLLED' }), [2, 3, 4, 1]);
+  assert.equal(
+    activeFunnelFilterCount({
+      ...emptyFunnelFilters,
+      search: 'valve',
+      status: 'ACTIVE',
+      created_from: '2026-01-01',
+      created_to: '2026-01-31',
+      sort: 'OLDEST',
+    }),
+    2,
+  );
+});

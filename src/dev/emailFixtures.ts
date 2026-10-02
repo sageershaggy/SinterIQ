@@ -212,6 +212,25 @@ const progress = (
   completed,
   total: waiting.reduce((a, b) => a + b, 0) + replied + bounced + stopped + completed,
 });
+/** Enrolled → Sent → Opened → Replied → Follow-up → Bounced, as the server counts them. */
+const reached = (
+  enrolled: number,
+  sent: number,
+  opened: number,
+  replied: number,
+  followed_up: number,
+  bounced: number,
+) => ({
+  enrolled,
+  sent,
+  opened,
+  replied,
+  followed_up,
+  bounced,
+  open_rate: sent ? opened / sent : null,
+  reply_rate: sent ? replied / sent : null,
+});
+/** The trade-fair funnel has run its course (nothing queued), so it shows as Completed. */
 const funnels = campaigns.map((campaign, index) => ({
   id: campaign.id,
   project_id: 2,
@@ -220,11 +239,16 @@ const funnels = campaigns.map((campaign, index) => ({
   status: campaign.status,
   revision: 1,
   created_at: ago(60 * 24 * (3 - index)),
+  updated_at: ago([60 * 3, 60 * 24 * 2, 60 * 30][index]),
   enrolled_count: [14, 0, 5][index],
-  queued_count: [8, 0, 2][index],
+  queued_count: [8, 0, 0][index],
   converted_count: [1, 0, 0][index],
   stop_on_reply: campaign.stop_on_reply,
+  track_opens: index !== 2,
   fit_band: campaign.fit_band,
+  counts: [reached(14, 12, 7, 3, 6, 1), reached(0, 0, 0, 0, 0, 0), reached(5, 5, 0, 1, 0, 0)][
+    index
+  ],
   steps: campaign.steps.map((step) => ({
     delay_days: step.delay_days,
     send_time: step.send_time,
@@ -236,7 +260,7 @@ const funnels = campaigns.map((campaign, index) => ({
   progress: [
     progress([3, 3, 2], 3, 1, 1, 1),
     progress([0, 0, 0], 0, 0, 0, 0),
-    progress([2, 0, 0], 1, 0, 2, 0),
+    progress([0, 0, 0], 1, 0, 2, 2),
   ][index],
 }));
 
