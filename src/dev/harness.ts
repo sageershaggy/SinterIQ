@@ -359,13 +359,37 @@ const researched = {
       model: 'gpt-4.1-mini',
       created_at: ago(40),
       created_by: 'Workspace Administrator',
-      evidence: [],
+      // Cited ids link to these pages; the lead record has no page and stays a plain tag.
+      evidence: [
+        {
+          id: 'E1',
+          kind: 'lead_record',
+          title: 'User-provided lead record (unverified)',
+          url: '',
+          content: '{"name":"Amusement Whitewater (L.L.C)"}',
+          captured_at: ago(40),
+        },
+        {
+          id: 'E2',
+          kind: 'website',
+          title: 'amusement-whitewater.example.com/',
+          url: site + '/',
+          content: 'Amusement Whitewater designs and installs water rides and splash parks.',
+          captured_at: ago(40),
+        },
+      ],
       result: {
         decision: 'QUALIFIED',
         score: 75,
         confidence: 82,
         summary:
           'A Dubai company that designs and installs water rides, with an outdated website and manual enquiry handling that an Innovista website and automation project could address.',
+        blockers: [],
+        opportunity: {
+          summary:
+            'Enquiries arrive through a contact form with no booking or follow-up; a rebuilt site with an AI enquiry workflow would answer resorts the same day.',
+          source_ids: ['E2'],
+        },
         criteria: rubric.criteria.map((criterion, index) => ({
           criterion,
           outcome: index === 1 ? 'UNKNOWN' : 'MATCH',

@@ -35,6 +35,7 @@ import type {
   Decision,
   Run,
   CriterionResult,
+  Evidence,
   NextStep,
   LeadFeedback,
   EmailMessage,
@@ -51,7 +52,14 @@ import { ArchiveTools, ArchivedNotice, LeadArchiveButton } from './ArchiveContro
 import { IncomingReplies } from './IncomingReplies';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
-import { FitBands, LeadHeader, fitBandsText, ruleOutcomeLabel } from './LeadInsight';
+import {
+  FitBands,
+  LeadHeader,
+  RunFindings,
+  SourceLinks,
+  fitBandsText,
+  ruleOutcomeLabel,
+} from './LeadInsight';
 import { leadLink, type LeadTab } from './navigation';
 import { LeadCalls } from './LeadCalls';
 import { LeadStatus } from './LeadStatus';
@@ -1570,6 +1578,7 @@ function LeadDetail({
                       {run.created_by} · {date(run.created_at)} · {run.model}
                     </small>
                   </section>
+                  <RunFindings run={run} />
                   {(lead.next_step !== 'NONE' || run.result.outreach?.call_script) && (
                     <section className="outreach-box">
                       <div className="outreach-heading">
@@ -1617,18 +1626,23 @@ function LeadDetail({
                   <h3>Qualification criteria</h3>
                   <p className="rule-legend">
                     Every approved rule is evaluated as Meets, Does not meet or Unable to verify.
-                    Unable to verify is used only after research could not settle it.
+                    Unable to verify is used only after research could not settle it, and Meets
+                    needs a web source.
                   </p>
-                  <Criteria items={run.result.criteria} kind="criterion" />
+                  <Criteria items={run.result.criteria} kind="criterion" evidence={run.evidence} />
                   <h3>Exclusion checks</h3>
                   {run.result.exclusions.length ? (
-                    <Criteria items={run.result.exclusions} kind="exclusion" />
+                    <Criteria
+                      items={run.result.exclusions}
+                      kind="exclusion"
+                      evidence={run.evidence}
+                    />
                   ) : (
                     <p className="muted">No exclusion rules defined in this training version.</p>
                   )}
                   {run.result.gaps.length > 0 && (
                     <section className="gaps-box">
-                      <h3>Evidence gaps & review notes</h3>
+                      <h3>Evidence gaps</h3>
                       <ul>
                         {run.result.gaps.map((gap, i) => (
                           <li key={i}>{gap}</li>
@@ -1865,9 +1879,12 @@ function LeadDetail({
 function Criteria({
   items,
   kind,
+  evidence,
 }: {
   items: CriterionResult[];
   kind: 'criterion' | 'exclusion';
+  /** The run's evidence, so each cited id links to the page it came from. */
+  evidence: Evidence[];
 }) {
   return (
     <div className="criteria-list">
@@ -1879,11 +1896,7 @@ function Criteria({
             <Badge value={item.outcome}>{ruleOutcomeLabel(item.outcome, kind)}</Badge>
           </div>
           <p>{item.evidence}</p>
-          <div className="evidence-tags">
-            {item.source_ids.map((id) => (
-              <span key={id}>{id}</span>
-            ))}
-          </div>
+          <SourceLinks ids={item.source_ids} evidence={evidence} />
         </div>
       ))}
     </div>

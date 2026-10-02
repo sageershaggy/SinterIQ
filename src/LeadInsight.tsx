@@ -12,7 +12,14 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import type { CriterionResult, Lead, Project } from '../shared/types';
+import {
+  qualifiedFloor,
+  type CriterionResult,
+  type Evidence,
+  type Lead,
+  type Project,
+  type Run,
+} from '../shared/types';
 import {
   fitBandFor,
   fitBands,
@@ -21,7 +28,7 @@ import {
   type LeadContact,
   type ResearchProfile,
 } from '../shared/research';
-import { label } from './api';
+import { label, safeHref } from './api';
 import { Badge, ExternalLink, Spinner } from './ui';
 import { ContactCampaigns } from './ContactCampaigns';
 import './LeadInsight.css';
@@ -106,12 +113,76 @@ export function FitScore({ lead }: { lead: Lead }) {
         <div className="lead-fit-legend" id={legendId}>
           <FitBands score={lead.stale ? null : lead.score} />
           <p>
-            The score is the share of the project’s positive criteria this company meets. A
-            supported exclusion sets it to 0.
+            The score is the share of the project’s positive criteria this company meets, with a web
+            source behind each. A supported exclusion sets it to 0.
+          </p>
+          <p>
+            Status: {qualifiedFloor}–100 Qualified, 0–{qualifiedFloor - 1} Not a target; the bands
+            above are the outreach step. Needs review only when research or verification is blocked,
+            such as a website that cannot be read.
           </p>
         </div>
       )}
     </section>
+  );
+}
+
+/** Cited evidence ids, each opening the page it came from. The lead record has no page. */
+export function SourceLinks({ ids, evidence }: { ids: string[]; evidence: Evidence[] }) {
+  if (!ids.length) return null;
+  return (
+    <div className="evidence-tags">
+      {ids.map((id) => {
+        const item = evidence.find((entry) => entry.id === id);
+        const href = item?.url ? safeHref(item.url) : '';
+        return href ? (
+          <a key={id} href={href} target="_blank" rel="noreferrer" title={item?.title}>
+            {id}
+            <ArrowUpRight size={9} />
+          </a>
+        ) : (
+          <span key={id} title={item?.title}>
+            {id}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * What a run found beyond the rules: why it needs review, and the opportunity the evidence shows
+ * for the project's offering. A run saved before blockers existed says so instead of guessing.
+ */
+export function RunFindings({ run }: { run: Run }) {
+  const { decision, blockers, opportunity } = run.result;
+  return (
+    <>
+      {decision === 'NEEDS_REVIEW' && (
+        <section className="gaps-box run-blockers">
+          <h3>Why it needs review</h3>
+          {blockers?.length ? (
+            <ul>
+              {blockers.map((blocker) => (
+                <li key={blocker}>{blocker}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>
+              This result was saved before review was limited to research or verification problems.
+              Run qualification again to apply the current rules.
+            </p>
+          )}
+        </section>
+      )}
+      {opportunity?.summary && (
+        <section className="run-opportunity">
+          <h3>Opportunity</h3>
+          <p>{opportunity.summary}</p>
+          <SourceLinks ids={opportunity.source_ids} evidence={run.evidence} />
+        </section>
+      )}
+    </>
   );
 }
 
