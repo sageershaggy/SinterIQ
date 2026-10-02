@@ -131,7 +131,8 @@ function shortReason(error: unknown) {
   if (/model .*not found/i.test(message)) return 'The AI model in Settings was not found.';
   if (/timed out/i.test(message)) return 'The AI provider took too long to answer.';
   if (/could not connect/i.test(message)) return 'The AI provider could not be reached.';
-  if (/incomplete/i.test(message)) return 'The AI returned an incomplete answer; nothing was saved.';
+  if (/incomplete/i.test(message))
+    return 'The AI returned an incomplete answer; nothing was saved.';
   if (error instanceof HttpError && error.status < 500) return message.slice(0, 200);
   return 'The analysis could not be completed; nothing was saved for this lead.';
 }
@@ -178,7 +179,10 @@ export function createQualificationJobs(deps: {
       )
       .all(jobId) as Array<{ decision: Decision; n: number }>;
     return Object.fromEntries(
-      decisions.map((decision) => [decision, rows.find((row) => row.decision === decision)?.n ?? 0]),
+      decisions.map((decision) => [
+        decision,
+        rows.find((row) => row.decision === decision)?.n ?? 0,
+      ]),
     ) as Record<Decision, number>;
   }
 
@@ -620,7 +624,8 @@ export function createQualificationJobs(deps: {
         .prepare('SELECT * FROM qualification_jobs WHERE id=? AND project_id=?')
         .get(positiveId(req.params.jobId), project.id) as JobRow | undefined;
       if (!job) throw new HttpError(404, 'Qualification job not found in this project.');
-      if (job.status !== 'RUNNING') throw new HttpError(409, 'This qualification job has already ended.');
+      if (job.status !== 'RUNNING')
+        throw new HttpError(409, 'This qualification job has already ended.');
       if (req.user.role !== 'admin' && req.user.id !== job.created_by_id)
         throw new HttpError(
           403,

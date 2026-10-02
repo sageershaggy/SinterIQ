@@ -331,7 +331,10 @@ test('project-wide requalification is for administrators; members may queue thei
       404,
     );
     // A project the member cannot reach answers as if it did not exist.
-    assert.equal((await f.start(other, { scope: 'ids', lead_ids: [foreign.id] }, member)).status, 404);
+    assert.equal(
+      (await f.start(other, { scope: 'ids', lead_ids: [foreign.id] }, member)).status,
+      404,
+    );
     assert.equal(
       (await send(member, 'get', '/projects/' + other.id + '/qualification-jobs/current')).status,
       404,
@@ -492,8 +495,7 @@ test('a job qualifies one lead at a time through the ordinary path, skips leads 
 
     // The job's outcomes are the decisions the leads now carry, and its runs are ordinary runs.
     const tally = { QUALIFIED: 0, NOT_A_TARGET: 0, NEEDS_REVIEW: 0 };
-    for (const lead of leads.slice(0, 3))
-      tally[f.status(lead).status as keyof typeof tally]++;
+    for (const lead of leads.slice(0, 3)) tally[f.status(lead).status as keyof typeof tally]++;
     assert.deepEqual(progress.outcomes, tally);
     assert.equal(f.status(leads[1]).status, 'NOT_A_TARGET');
     const runs = f.db
@@ -514,7 +516,9 @@ test('a job qualifies one lead at a time through the ordinary path, skips leads 
         ' need review (4 leads, 1 skipped)',
     ]);
     const audit = f.db
-      .prepare("SELECT action FROM audit_events WHERE project_id=? AND action LIKE 'qualification_job.%' ORDER BY id")
+      .prepare(
+        "SELECT action FROM audit_events WHERE project_id=? AND action LIKE 'qualification_job.%' ORDER BY id",
+      )
       .all(project.id) as Array<{ action: string }>;
     assert.deepEqual(
       audit.map((row) => row.action),
@@ -785,7 +789,9 @@ test('a research pass says when the lead is ready for qualification, and qualify
     const titles = () =>
       (
         f.db
-          .prepare("SELECT title FROM notifications WHERE lead_id=? AND kind='research' ORDER BY id")
+          .prepare(
+            "SELECT title FROM notifications WHERE lead_id=? AND kind='research' ORDER BY id",
+          )
           .all(lead.id) as Array<{ title: string }>
       ).map((row) => row.title);
     assert.equal((await research()).status, 200);
