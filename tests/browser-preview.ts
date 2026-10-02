@@ -29,6 +29,25 @@ const { app, db } = createApp({
         exclusions: ['Manufactures bearings as its primary product'],
         questions: [],
       };
+    // Research before qualification reads the fixture page, finds nothing to fill and guesses no
+    // other domain, so the seeded leads keep exactly the details they were created with.
+    if (system.includes('extract company facts'))
+      return { fields: [], contacts: [], facts: [], notes: [] };
+    if (system.includes('candidate official website domains')) return { domains: [] };
+    if (system.includes('quick-screen the rows')) {
+      const { rows } = input as { rows: Array<{ id: number; name: string; industry: string }> };
+      return {
+        verdicts: rows.map((row) => ({
+          id: row.id,
+          ...(/bearing/i.test(row.name + ' ' + row.industry)
+            ? { verdict: 'REJECT', reason: 'Row names a bearing maker.' }
+            : /pump|engineering|chemical/i.test(row.industry)
+              ? { verdict: 'PASS', reason: 'Industry fits the pump-maker criteria.' }
+              : { verdict: 'UNCLEAR', reason: 'The row does not say what the company makes.' }),
+          rule: '',
+        })),
+      };
+    }
     const { approved_training } = input as {
       approved_training: TrainingSnapshot;
     };
