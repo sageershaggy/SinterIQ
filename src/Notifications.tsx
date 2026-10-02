@@ -33,7 +33,7 @@ function href(item: NotificationItem) {
     return leadLink(item.project_id, item.lead_id, leadTab(item.kind));
   const view = item.kind.startsWith('training')
     ? 'training'
-    : item.kind === 'leads_imported'
+    : item.kind === 'leads_imported' || item.kind === 'qualification_job'
       ? 'leads'
       : 'overview';
   return `#projects/${item.project_id}/${view}`;

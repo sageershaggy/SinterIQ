@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   BookOpen,
   ChevronLeft,
+  CircleStop,
   ClipboardCheck,
   FileText,
   Globe,
@@ -48,6 +49,7 @@ import { EmailComposer } from './EmailComposer';
 import { EmailHistory } from './EmailHistory';
 import { ArchiveTools, ArchivedNotice, LeadArchiveButton } from './ArchiveControls';
 import { IncomingReplies } from './IncomingReplies';
+import { QualificationJob } from './QualificationJob';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
 import {
@@ -300,12 +302,19 @@ export default function Leads({
       if (mounted.current) setBusy('');
     }
   }
+  // The selection bar's Stop: the lead in progress finishes, the rest are not started.
+  const stopBatch = useRef(false),
+    [stopping, setStopping] = useState(false);
   async function bulkQualify() {
     setError('');
-    let completed = 0;
+    stopBatch.current = false;
+    setStopping(false);
+    let completed = 0,
+      started = 0;
     const failures: string[] = [];
     for (const [index, id] of selected.entries()) {
-      if (!mounted.current) break;
+      if (!mounted.current || stopBatch.current) break;
+      started = index + 1;
       setBusy('Qualifying ' + (index + 1) + ' of ' + selected.length + '…');
       try {
         await api(base + '/leads/' + id + '/qualify', {
@@ -332,10 +341,23 @@ export default function Leads({
     }
     if (mounted.current) {
       setBusy('');
+      setStopping(false);
       reload();
       setSelected([]);
       if (failures.length) setError(failures.join(' · '));
-      notify(completed + ' lead' + (completed === 1 ? '' : 's') + ' qualified.');
+      const left = selected.length - started;
+      notify(
+        stopBatch.current && left > 0
+          ? 'Stopped after ' +
+              started +
+              ' of ' +
+              selected.length +
+              ' — ' +
+              left +
+              (left === 1 ? ' lead was' : ' leads were') +
+              ' not qualified.'
+          : completed + ' lead' + (completed === 1 ? '' : 's') + ' qualified.',
+      );
     }
   }
   return (
@@ -387,6 +409,7 @@ export default function Leads({
           trainingVersion={ready ? project.active_version : null}
         />
         {error && <Alert>{error}</Alert>}
+        <QualificationJob project={project} refresh={refresh} notify={notify} onProgress={reload} />
         <section className="panel leads-panel">
           <div className="table-toolbar">
             <div className="search-input">
@@ -541,6 +564,19 @@ export default function Leads({
                   </>
                 )}
               </button>
+              {busy.startsWith('Qualifying') && (
+                <button
+                  className="button danger"
+                  disabled={stopping}
+                  onClick={() => {
+                    stopBatch.current = true;
+                    setStopping(true);
+                  }}
+                >
+                  <CircleStop size={15} />
+                  {stopping ? 'Stopping after this lead…' : 'Stop qualification'}
+                </button>
+              )}
               <button
                 className="button secondary"
                 disabled={!!busy}
@@ -1070,7 +1106,9 @@ function LeadDetail({
     [reviewNotes, setReviewNotes] = useState('');
   const [enrolling, setEnrolling] = useState(false);
   const [researching, setResearching] = useState(false),
-    [research, setResearch] = useState<ResearchOutcome | null>(null);
+    [research, setResearch] = useState<ResearchOutcome | null>(null),
+    // What follows a research pass: the qualification it feeds, or why that has to wait.
+    [researchNext, setResearchNext] = useState<{ text: string; training?: boolean } | null>(null);
   const [composeReady, setComposeReady] = useState(false);
   const emailPanelRef = useRef<HTMLDivElement | null>(null);
   const ready = project.active_version && project.revision === project.trained_revision;
@@ -1125,43 +1163,76 @@ function LeadDetail({
           ? 'Researched first and filled ' + filled + (filled === 1 ? ' detail' : ' details') + '. '
           : '') + 'Qualification complete. Review the evidence and reasoning.',
       );
+      return result;
     } catch (e) {
       setError((e as Error).message);
+      return null;
     } finally {
       setBusy(false);
     }
   }
   /**
-   * Fills this record's blanks from the company's own website. Applying is a real edit, so the
-   * lead is reloaded and the panel then invites a fresh qualification instead of running one:
-   * the earlier verdict is stale, and spending another analysis is a person's decision.
+   * Fills this record's blanks from the company's own website, then carries on into the
+   * qualification that research exists to feed. The analysis reuses this pass (it ran on the
+   * same version of the record), so nothing is researched twice. A lead whose qualification is
+   * still current is left alone, and without published training the lead waits for it.
    */
   async function researchLead() {
     setResearching(true);
     setError('');
+    setResearchNext(null);
+    let outcome: ResearchOutcome;
     try {
-      const outcome = await api<ResearchOutcome>(base + '/research', {
+      outcome = await api<ResearchOutcome>(base + '/research', {
         method: 'POST',
         body: json({}),
       });
       setResearch(outcome);
-      const filled = outcome.applied?.length || 0;
-      if (filled) {
-        setRefresh((n) => n + 1);
-        onChange();
-        notify(
-          filled === 1
-            ? 'One detail filled in from the website. Qualify again to use it.'
-            : filled + ' details filled in from the website. Qualify again to use them.',
-        );
-      } else notify('Research finished. Nothing could be confirmed, so the lead is unchanged.');
     } catch (e) {
       // Clear the previous report: leaving it up would read as "ran again, found nothing".
       setResearch(null);
       setError((e as Error).message);
+      return;
     } finally {
       setResearching(false);
     }
+    const filled = outcome.applied?.length || 0;
+    const found = filled
+      ? filled === 1
+        ? 'one detail filled in'
+        : filled + ' details filled in'
+      : 'nothing new found';
+    setRefresh((n) => n + 1);
+    onChange();
+    const fresh = await api<Lead>(base).catch(() => null);
+    if (fresh?.latest_run_id && !fresh.stale) {
+      setResearchNext({
+        text: 'Research completed — ' + found + '. The current qualification still stands.',
+      });
+      return;
+    }
+    if (!ready) {
+      setResearchNext({
+        text: 'Research completed — ready for qualification once the training is published.',
+        training: true,
+      });
+      return;
+    }
+    setResearchNext({
+      text: filled
+        ? 'Research completed — qualifying now…'
+        : 'Research completed — nothing new found. Qualifying with what is on record…',
+    });
+    const result = await qualifyLead();
+    setResearchNext({
+      text: result
+        ? 'Research completed, then qualified: ' +
+          label(result.decision) +
+          ' · fit ' +
+          result.score +
+          '/100. The reasoning tab shows why.'
+        : 'Research completed — ready for qualification.',
+    });
   }
   async function eraseContact() {
     setError('');
@@ -1263,6 +1334,18 @@ function LeadDetail({
       </LeadHeader>
       <div className="lead-detail">
         {error && <Alert>{error}</Alert>}
+        {researchNext && (
+          <div className="inline-notice" role="status">
+            <Search size={18} />
+            <span>{researchNext.text}</span>
+            {researchNext.training && (
+              <button className="text-button" onClick={onTraining}>
+                Open training
+                <ArrowRight size={15} />
+              </button>
+            )}
+          </div>
+        )}
         {!lead ? (
           <Spinner text="Loading research…" />
         ) : (

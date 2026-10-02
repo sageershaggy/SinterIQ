@@ -295,7 +295,7 @@ export function createLeadResearch(deps: {
       );
     })();
     // The Research history log and its "research completed" update (server/research-log.ts).
-    recordResearchPass(db, project.id, lead, actor, outcome, applied);
+    recordResearchPass(db, project.id, lead, actor, outcome, applied, origin);
     return { ...outcome, applied, contacts_added: contactsAdded };
   }
 

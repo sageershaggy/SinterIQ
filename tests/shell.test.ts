@@ -330,9 +330,10 @@ test('training, imports and research completion reach the updates feed', async (
     const research = find(updates.items, 'research');
     assert.equal(research?.scope, 'lead');
     assert.equal(research?.lead_id, lead.body.id);
+    // Research gathers facts; the lead has no qualification yet, so the update says it is next.
     assert.equal(
       research?.title,
-      'Rotterdam Pump Works: research completed — filled industry, contact email',
+      'Rotterdam Pump Works: research completed — filled industry, contact email · ready for qualification',
     );
 
     // A project row is read by its own route; lead ids do not reach it.

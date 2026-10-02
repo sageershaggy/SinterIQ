@@ -18,6 +18,7 @@ import { installCompose } from './compose';
 import { installEmailFiles } from './email-files';
 import { installArchive } from './archive';
 import { installProjectDeletion } from './project-delete';
+import { createQualificationJobs } from './qualification-jobs';
 import { fetchWebsite, checkedUrl } from './network';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
@@ -289,6 +290,8 @@ export function createApp(options: {
   readInbox?: ReadInbox;
   /** Asks an AI provider which models a key may use (tests pass a stub). */
   listModels?: ListModels;
+  /** False leaves qualification jobs to the caller, which steps them (tests). */
+  runJobs?: boolean;
 }) {
   const production = options.production || false;
   const { db, secrets } = openDatabase(options.dataDir, options.legacyPath);
@@ -1346,6 +1349,16 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     res.json(await qualifyLead(project, positiveId(req.params.leadId), req.user.name));
   });
+  // Requalifying many leads runs on the server, one lead at a time, through qualifyLead itself.
+  const qualificationJobs = createQualificationJobs({
+    db,
+    getProject,
+    qualifyLead,
+    aiReady: () => Boolean(getAiConfig(db, secrets).api_key || options.generate),
+    limit: expensiveLimit,
+    autoRun: options.runJobs !== false,
+  });
+  qualificationJobs.install(app);
   app.post('/api/projects/:projectId/leads/:leadId/review', (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const lead = getLead(db, project, positiveId(req.params.leadId));
@@ -1949,5 +1962,7 @@ export function createApp(options: {
     res.status(500).json({ error: 'The request could not be completed. Please retry.' });
   };
   app.use(errorHandler);
-  return { app, db, errorHandler, funnels, mailbox };
+  // A job that was running when the server stopped carries on from where it was.
+  qualificationJobs.resume();
+  return { app, db, errorHandler, funnels, mailbox, qualificationJobs };
 }

@@ -178,6 +178,21 @@ function seed(db: DB, projectId: number, accountId: number, tag: string) {
     lead,
     at,
   );
+  // A finished qualification job and the lead it qualified.
+  const job = insert(
+    "INSERT INTO qualification_jobs (project_id,status,scope,training_version,training_revision,total,done,created_by_id,created_by,created_at,updated_at,finished_at) VALUES (?,'DONE','all',1,1,1,1,?,'QA',?,?,?)",
+    projectId,
+    accountId,
+    at,
+    at,
+    at,
+  );
+  insert(
+    "INSERT INTO qualification_job_items (job_id,project_id,lead_id,status,decision) VALUES (?,?,?,'DONE','QUALIFIED')",
+    job,
+    projectId,
+    lead,
+  );
   insert(
     "INSERT INTO preserved_research (project_id,lead_id,kind,legacy_id,data_json,imported_at) VALUES (?,?,'notes',?,'{}',?)",
     projectId,
