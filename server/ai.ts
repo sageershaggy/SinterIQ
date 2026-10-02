@@ -1,8 +1,11 @@
 import { GoogleGenAI } from '@google/genai';
 import type { DB, Secrets } from './database';
 import {
+  conflictFields,
   qualifiedFloor,
+  type ConflictField,
   type CriterionResult,
+  type DetailConflict,
   type Evidence,
   type Lead,
   type LeadServiceFit,
@@ -15,11 +18,13 @@ import {
 import {
   HttpError,
   categoryKey,
+  leadSchema,
   parseJson,
   qualificationSchema,
   rubricSchema,
 } from './validation';
 import { publicRequest } from './network';
+import { citationSupports } from './enrich';
 import {
   providerPresetIds,
   providerPresets,
@@ -372,8 +377,9 @@ const qualifySystem = (project: string) =>
   'Then rate the services: for EVERY entry in approved_training.rubric.categories, in order, copy its name into category and assign GOOD (the website evidence shows a clear need this service meets, as its description defines a good fit), POSSIBLE (some signals of that need) or NONE (no evidenced need), with a one-line reason and source_ids naming the website evidence. GOOD and POSSIBLE need website evidence; the lead record alone proves nothing. A lead that meets an exclusion is NONE for every category. With no categories, service_fit is []. ' +
   '5. Score the criteria: evaluate EVERY criterion and EVERY exclusion, in order, even when information is missing; never stop early or skip a rule. Copy each rule’s exact text into criterion, assign MATCH (meets it), NO_MATCH (does not meet it) or UNKNOWN (the evidence, after research, does not settle it), and give a short factual explanation with source_ids. A blank field is not evidence and not a reason for NO_MATCH. A MATCH needs website evidence; the lead record alone proves nothing. ' +
   '6. The final status is set from the score and these checks, so decision is only your suggestion. Reviewer feedback in the training records earlier corrections: apply the reasoning it establishes, but never copy its verdict onto a different company. When research could not verify something, say in the summary what was checked. ' +
+  'Compare the record with the website: when website evidence states a different city, country, industry or employee_count for THIS company than the lead record holds, add a conflict with the field, record_value exactly as the lead record has it, found_value as the page states it, quote (the sentence from that page, verbatim, that states it) and source_ids naming that page. Report a conflict only when the page states the value about this company itself, never about a customer, partner, event or another office, and never for a blank record field, contact details or the website. In the summary, when the record and the website disagree, name both — for example "The record says Arverne; the company’s website gives Brooklyn, NY" — instead of silently using one. ' +
   'Also fill outreach. contact_name and contact_role: only a named business role holder that the supplied website evidence itself publishes (for example an engineering or purchasing contact on an imprint or team page), with contact_source_ids naming that website evidence. Never guess, infer from email patterns, or carry a name over from earlier research; leave both empty when the website does not publish one. why_qualified: two or three sentences citing the matched rules. call_script: a short factual call opener a researcher can read aloud, grounded only in the evidence — no invented references, discounts, urgency or claims about the company. Leave why_qualified and call_script empty when the lead is not a target. ' +
-  'Return {"decision":"QUALIFIED"|"NOT_A_TARGET"|"NEEDS_REVIEW","score":integer 0–100,"confidence":integer 0–100,"summary":string,"blocker":string,"opportunity":{"summary":string,"source_ids":string[]},"criteria":[{"criterion":string,"outcome":"MATCH"|"NO_MATCH"|"UNKNOWN","evidence":string,"source_ids":string[]}],"exclusions":[same structure],"service_fit":[{"category":string,"fit":"GOOD"|"POSSIBLE"|"NONE","reason":string,"source_ids":string[]}],"gaps":string[],"next_steps":string[],"outreach":{"contact_name":string,"contact_role":string,"contact_source_ids":string[],"why_qualified":string,"call_script":string}}. Return concise decision reasoning, not speculative purchasing predictions.';
+  'Return {"decision":"QUALIFIED"|"NOT_A_TARGET"|"NEEDS_REVIEW","score":integer 0–100,"confidence":integer 0–100,"summary":string,"blocker":string,"opportunity":{"summary":string,"source_ids":string[]},"criteria":[{"criterion":string,"outcome":"MATCH"|"NO_MATCH"|"UNKNOWN","evidence":string,"source_ids":string[]}],"exclusions":[same structure],"service_fit":[{"category":string,"fit":"GOOD"|"POSSIBLE"|"NONE","reason":string,"source_ids":string[]}],"conflicts":[{"field":"city"|"country"|"industry"|"employee_count","record_value":string,"found_value":string,"quote":string,"source_ids":string[]}],"gaps":string[],"next_steps":string[],"outreach":{"contact_name":string,"contact_role":string,"contact_source_ids":string[],"why_qualified":string,"call_script":string}}. Return concise decision reasoning, not speculative purchasing predictions.';
 export async function qualify(
   config: AiConfig,
   snapshot: TrainingSnapshot,
@@ -464,6 +470,12 @@ export async function qualify(
     !evidence.some((item) => item.kind === 'website');
   return validateQualification(result, snapshot, evidence, {
     name: lead.name,
+    record: {
+      city: lead.city,
+      country: lead.country,
+      industry: lead.industry,
+      employee_count: lead.employee_count,
+    },
     blockers: unread
       ? [
           'The website on record (' +
@@ -646,6 +658,8 @@ export function validateQualification(
   found: {
     /** The company's name, so a blocker that only names it is still read as generic. */
     name?: string;
+    /** The record's details as evaluated, which a reported conflict must start from. */
+    record?: Partial<Record<ConflictField, string>>;
     /** Research blockers the server found itself, such as a website that could not be read. */
     blockers?: string[];
   } = {},
@@ -653,7 +667,7 @@ export function validateQualification(
   const parsed = qualificationSchema.safeParse(raw);
   if (!parsed.success)
     throw new HttpError(502, 'The AI returned an incomplete qualification. No result was saved.');
-  const { blocker, service_fit: rated, ...answer } = parsed.data;
+  const { blocker, service_fit: rated, conflicts, ...answer } = parsed.data;
   const result: Qualification = answer;
   const cite = citationReader(evidence);
   const retrieved = new Set(evidence.filter((e) => e.kind === 'website').map((e) => e.id));
@@ -736,6 +750,7 @@ export function validateQualification(
     excluded,
     gaps: result.gaps,
   });
+  result.conflicts = detailConflicts(conflicts, found.record, evidence, cite);
   // A contact is personal data, so it is kept only when the company's own site published it.
   const contact = read(result.outreach.contact_source_ids).ids;
   const contactCited = contact.some((id) => retrieved.has(id));
@@ -802,6 +817,57 @@ function serviceFit(
     }
     return { category: name, fit: item.fit, reason: item.reason, source_ids: ids };
   });
+}
+/** A detail's comparison form: case, spacing and punctuation are not the value. */
+const detailKey = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+/** Text as a quote is compared with its page: case and runs of whitespace do not count. */
+const quoteKey = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
+/**
+ * The detail conflicts worth putting in front of a person: the company's own website states, in a
+ * sentence really on the cited page, a value for the field that differs from what the record held
+ * when it was evaluated and that the lead form would accept. The sentence has to contain the value
+ * (citationSupports, the rule research uses), because the page text is in the prompt and pairing a
+ * real sentence with an invented value is free. Anything else is dropped without a gap — a false
+ * conflict is noise, a missed one costs nothing — and only the first for each field is kept.
+ */
+function detailConflicts(
+  reported: Array<Omit<DetailConflict, 'field'> & { field: string }>,
+  record: Partial<Record<ConflictField, string>> | undefined,
+  evidence: Evidence[],
+  cite: (cited: string) => string[],
+): DetailConflict[] {
+  if (!record) return [];
+  const kept: DetailConflict[] = [];
+  for (const item of reported) {
+    const field = conflictFields.find((name) => name === item.field.trim().toLowerCase());
+    if (!field || kept.some((entry) => entry.field === field)) continue;
+    // Research fills blanks; a conflict is only ever about a value the record already holds.
+    const current = (record[field] ?? '').trim();
+    if (!current || quoteKey(item.record_value) !== quoteKey(current)) continue;
+    const found = leadSchema.shape[field].safeParse(item.found_value.replace(/\s+/g, ' '));
+    if (!found.success || !found.data || detailKey(found.data) === detailKey(current)) continue;
+    const quote = item.quote.replace(/\s+/g, ' ').trim();
+    if (quote.length < 12 || !citationSupports(field, found.data, quote)) continue;
+    const page = evidence.find(
+      (entry) =>
+        entry.kind === 'website' &&
+        item.source_ids.some((cited) => cite(cited).includes(entry.id)) &&
+        quoteKey(entry.content).includes(quoteKey(quote)),
+    );
+    if (!page) continue;
+    kept.push({
+      field,
+      record_value: current,
+      found_value: found.data,
+      quote,
+      source_ids: [page.id],
+    });
+  }
+  return kept;
 }
 /** What leads.service_fit keeps for listing and filtering: the GOOD ratings, then the POSSIBLE. */
 export function leadServiceFit(fits: ServiceFit[] | undefined): LeadServiceFit {

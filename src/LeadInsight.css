@@ -388,6 +388,59 @@
   margin: 0 0 4px;
   font-style: italic;
 }
+/* "Website says: Brooklyn, NY" under a detail the latest analysis found stated differently
+   (ConflictNote in CompanyOverview.tsx): the badge's amber, so it reads as something to settle. */
+.fact-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 8px;
+  padding: 8px 11px;
+  border: 1px solid #f0e6c8;
+  border-radius: 7px;
+  background: #fffcf3;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b5320;
+}
+.company-card .fact-conflict > p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.fact-conflict > p > svg {
+  flex-shrink: 0;
+  color: #8a6a24;
+}
+.fact-conflict strong {
+  color: #4f3d16;
+  overflow-wrap: anywhere;
+}
+.fact-conflict details {
+  flex: 1 1 auto;
+}
+.fact-conflict summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #74561a;
+}
+.fact-conflict blockquote {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid #ecdcae;
+  background: #fff;
+  font-style: italic;
+  color: #56614f;
+}
+.fact-conflict > .button {
+  flex: 0 0 auto;
+}
 .company-notes {
   margin-top: 4px;
   font-size: 12px;

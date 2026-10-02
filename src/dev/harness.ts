@@ -350,6 +350,8 @@ const researched = {
   country: 'United Arab Emirates',
   city: 'Dubai',
   industry: 'Water ride design and installation',
+  // Typed into the record; the website gives another headcount (the run's conflicts below).
+  employee_count: '20',
   contact_role: '',
   contact_email: 'dmaww@emirates.net.ae',
   notes: 'Imported from the GCC events list. Met at the leisure expo.',
@@ -395,7 +397,8 @@ const researched = {
           kind: 'website',
           title: 'amusement-whitewater.example.com/',
           url: site + '/',
-          content: 'Amusement Whitewater designs and installs water rides and splash parks.',
+          content:
+            'Amusement Whitewater designs and installs water rides and splash parks. Amusement Whitewater employs 45 people across design, fabrication and installation.',
           captured_at: ago(40),
         },
       ],
@@ -416,7 +419,7 @@ const researched = {
           outcome: index === 1 ? 'UNKNOWN' : 'MATCH',
           evidence:
             index === 1
-              ? 'The website does not state a headcount, and research could not confirm one.'
+              ? 'The record says 20 employees; the company’s website gives 45. Confirm which is current.'
               : 'The company website describes this directly.',
           source_ids: index === 1 ? [] : ['E2'],
         })),
@@ -452,7 +455,17 @@ const researched = {
             source_ids: [],
           },
         ],
-        gaps: ['Company size is not published on the website.'],
+        conflicts: [
+          {
+            field: 'employee_count',
+            record_value: '20',
+            found_value: '45',
+            quote:
+              'Amusement Whitewater employs 45 people across design, fabrication and installation.',
+            source_ids: ['E2'],
+          },
+        ],
+        gaps: ['The record and the website give different company sizes (20 and 45).'],
         next_steps: ['Confirm the team size on the first call.'],
         outreach: {
           contact_name: '',

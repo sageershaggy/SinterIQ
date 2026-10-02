@@ -53,6 +53,23 @@ export interface ServiceFit {
 }
 /** The categories a lead's current result rates GOOD or POSSIBLE, GOOD first (leads.service_fit). */
 export type LeadServiceFit = Array<{ category: string; fit: Exclude<ServiceFitLevel, 'NONE'> }>;
+/** Record details a qualification may find the company's own website stating differently. */
+export const conflictFields = ['city', 'country', 'industry', 'employee_count'] as const;
+export type ConflictField = (typeof conflictFields)[number];
+/**
+ * The company's own website states a different value for a detail than the lead record holds.
+ * Reported with the sentence that states it; nothing is written until a person chooses it.
+ */
+export interface DetailConflict {
+  field: ConflictField;
+  /** The record's value when the run was made. */
+  record_value: string;
+  found_value: string;
+  /** The sentence on the cited page that states found_value, checked against that page. */
+  quote: string;
+  /** The one website evidence item the quote was found in. */
+  source_ids: string[];
+}
 /** A qualification criteria document a project can add to its library (server/criteria-templates.ts). */
 export interface CriteriaTemplate {
   id: string;
@@ -143,6 +160,8 @@ export interface Qualification {
    * need a retrieved source. Runs saved before categories existed do not have the field.
    */
   service_fit?: ServiceFit[];
+  /** Details the company's own website states differently from the record, one per field. */
+  conflicts?: DetailConflict[];
   /** The research pass that ran (or was reused) before this evaluation. */
   research?: import('./research').QualificationResearch;
 }

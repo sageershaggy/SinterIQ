@@ -158,6 +158,13 @@ const serviceFitSchema = z.object({
   reason: z.preprocess((value) => value ?? '', text(1000)),
   source_ids: z.preprocess((value) => value ?? [], z.array(requiredText(100)).max(12)),
 });
+const conflictSchema = z.object({
+  field: text(40),
+  record_value: requiredText(400),
+  found_value: requiredText(400),
+  quote: requiredText(800),
+  source_ids: z.preprocess((value) => value ?? [], z.array(requiredText(100)).max(12)),
+});
 export const qualificationSchema = z
   .object({
     // Advisory only: the server sets the final decision (validateQualification in server/ai.ts).
@@ -191,6 +198,7 @@ export const qualificationSchema = z
     ),
     // Newer still, and checked entry by entry in validateQualification (server/ai.ts).
     service_fit: lenientList(serviceFitSchema, 24),
+    conflicts: lenientList(conflictSchema, 8),
   })
   .strict();
 export const feedbackSchema = z

@@ -17,6 +17,7 @@ import { installResearchLog, recordResearchPass } from './research-log';
 import { installCompose } from './compose';
 import { installEmailFiles } from './email-files';
 import { installArchive } from './archive';
+import { installDetailConflicts } from './detail-conflicts';
 import { installProjectDeletion } from './project-delete';
 import { createQualificationJobs } from './qualification-jobs';
 import { fetchWebsite, checkedUrl } from './network';
@@ -412,6 +413,8 @@ export function createApp(options: {
     fetchPage: readWebsite,
   });
   leadResearch.install(app);
+  // "Use website value" for a detail the latest qualification found stated differently.
+  installDetailConflicts(app, { db, getProject });
   const trainingLibrary = createTrainingLibrary({ db, getProject });
   trainingLibrary.install(app);
   installEmailFiles(app, { db, getProject });
