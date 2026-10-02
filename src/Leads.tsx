@@ -6,6 +6,7 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
+  CircleStop,
   ClipboardCheck,
   Download,
   FileText,
@@ -49,6 +50,7 @@ import { EmailComposer } from './EmailComposer';
 import { EmailHistory } from './EmailHistory';
 import { ArchiveTools, ArchivedNotice, LeadArchiveButton } from './ArchiveControls';
 import { IncomingReplies } from './IncomingReplies';
+import { QualificationJob } from './QualificationJob';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
 import { FitBands, LeadHeader, fitBandsText, ruleOutcomeLabel } from './LeadInsight';
@@ -292,12 +294,19 @@ export default function Leads({
       if (mounted.current) setBusy('');
     }
   }
+  // The selection bar's Stop: the lead in progress finishes, the rest are not started.
+  const stopBatch = useRef(false),
+    [stopping, setStopping] = useState(false);
   async function bulkQualify() {
     setError('');
-    let completed = 0;
+    stopBatch.current = false;
+    setStopping(false);
+    let completed = 0,
+      started = 0;
     const failures: string[] = [];
     for (const [index, id] of selected.entries()) {
-      if (!mounted.current) break;
+      if (!mounted.current || stopBatch.current) break;
+      started = index + 1;
       setBusy('Qualifying ' + (index + 1) + ' of ' + selected.length + '…');
       try {
         await api(base + '/leads/' + id + '/qualify', {
@@ -324,10 +333,23 @@ export default function Leads({
     }
     if (mounted.current) {
       setBusy('');
+      setStopping(false);
       reload();
       setSelected([]);
       if (failures.length) setError(failures.join(' · '));
-      notify(completed + ' lead' + (completed === 1 ? '' : 's') + ' qualified.');
+      const left = selected.length - started;
+      notify(
+        stopBatch.current && left > 0
+          ? 'Stopped after ' +
+              started +
+              ' of ' +
+              selected.length +
+              ' — ' +
+              left +
+              (left === 1 ? ' lead was' : ' leads were') +
+              ' not qualified.'
+          : completed + ' lead' + (completed === 1 ? '' : 's') + ' qualified.',
+      );
     }
   }
   return (
@@ -379,6 +401,7 @@ export default function Leads({
           trainingVersion={ready ? project.active_version : null}
         />
         {error && <Alert>{error}</Alert>}
+        <QualificationJob project={project} refresh={refresh} notify={notify} onProgress={reload} />
         <section className="panel leads-panel">
           <div className="table-toolbar">
             <div className="search-input">
@@ -533,6 +556,19 @@ export default function Leads({
                   </>
                 )}
               </button>
+              {busy.startsWith('Qualifying') && (
+                <button
+                  className="button danger"
+                  disabled={stopping}
+                  onClick={() => {
+                    stopBatch.current = true;
+                    setStopping(true);
+                  }}
+                >
+                  <CircleStop size={15} />
+                  {stopping ? 'Stopping after this lead…' : 'Stop qualification'}
+                </button>
+              )}
               <button
                 className="button secondary"
                 disabled={!!busy}

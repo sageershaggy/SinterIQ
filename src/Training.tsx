@@ -28,6 +28,7 @@ import {
   UploadProblems,
 } from './TrainingInsight';
 import { CriteriaTemplatePicker } from './CriteriaTemplates';
+import { QualificationJob } from './QualificationJob';
 
 interface Version {
   version: number;
@@ -677,6 +678,8 @@ export default function Training({
                   Every qualification runs against this version. Edit the rules and save to prepare
                   the next one.
                 </p>
+                {/* Leads judged on an earlier version, and the job that brings them onto this one. */}
+                <QualificationJob project={project} notify={notify} variant="training" />
               </div>
             </div>
           ) : (
