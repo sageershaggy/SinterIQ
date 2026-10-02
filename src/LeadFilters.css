@@ -199,6 +199,9 @@
     auto-fill,
     minmax(min(100%, max(260px, calc((100% - 44px) / 3))), 1fr)
   );
+  /* Level on the controls' bottom edge, so a row holding the date range with its name above
+     still lines its controls up. */
+  align-items: end;
   gap: 8px 22px;
 }
 /* The name sits beside its control, not above it, to keep the bar short. */
@@ -216,17 +219,83 @@
   color: #3d4a3f;
 }
 .lead-filter-field > select,
-.lead-filter-field > input {
+.lead-filter-range > input {
   height: 32px;
   padding: 4px 8px;
   font-size: 12px;
   line-height: 1.2;
 }
+/* "Added [from] to [to]" in one cell. Where the cell is too narrow for both dates beside the
+   name, the name moves above them rather than the dates clipping. */
+.lead-filter-dates {
+  container: lead-filter-dates / inline-size;
+}
+.lead-filter-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.lead-filter-range > input {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 6px;
+}
+.lead-filter-range > label {
+  font-size: 11px;
+  color: var(--muted);
+}
+/* A date input needs about 118px before its text clips. */
+@container lead-filter-dates (max-width: 365px) {
+  .lead-filter-dates > .lead-filter-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+}
 .lead-filter-bar > footer {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+/* The Review queue's Show choice, at the start of the footer. */
+.lead-filter-bar > footer > .lead-filter-field {
+  flex: 0 1 340px;
+  margin-right: auto;
+}
+
+/* ---------- Sortable column headers ---------- */
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: -4px -6px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: nowrap;
+}
+.th-sort:hover {
+  background: #edf0e6;
+  color: #1f3326;
+}
+/* A tight outline: the table's scroller would clip the wider one buttons get elsewhere. */
+.th-sort:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 0;
+}
+.th-sort > svg {
+  flex-shrink: 0;
+  opacity: 0.45;
+}
+.th-sort.is-sorted {
+  color: var(--green);
+}
+.th-sort.is-sorted > svg {
+  opacity: 1;
 }
 
 /* ---------- Active filter chips ---------- */
@@ -440,6 +509,9 @@
   }
   .lead-filter-bar > footer > .button {
     flex: 1;
+  }
+  .lead-filter-bar > footer > .lead-filter-field {
+    flex-basis: 100%;
   }
   .lead-chips {
     padding: 0 14px 12px;

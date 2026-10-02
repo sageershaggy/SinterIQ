@@ -156,11 +156,25 @@ function narrowed(rows: Array<Record<string, unknown>>, query: URLSearchParams) 
   );
 }
 
+/** A rough echo of the server's name, industry and score orders, so the column headers sort. */
+function sorted(rows: Array<Record<string, unknown>>, sort: string) {
+  const [column, direction] = sort.split('_');
+  if (!['name', 'industry', 'score'].includes(column)) return rows;
+  const sign = direction === 'desc' ? -1 : 1;
+  // Unscored leads last in both directions, as on the server.
+  return [...rows].sort((a, b) =>
+    column === 'score'
+      ? Number(a.score === null) - Number(b.score === null) ||
+        sign * (Number(a.score) - Number(b.score))
+      : sign * String(a[column]).localeCompare(String(b[column])),
+  );
+}
+
 /** GET /projects/2/leads — honours page, so the pager can be walked. */
 export function leadsPage(route: string, base: Record<string, unknown>) {
   const query = new URLSearchParams(route.split('?')[1] || '');
   const pageSize = Number(query.get('page_size') || 30);
-  const leads = narrowed(rows(base), query);
+  const leads = sorted(narrowed(rows(base), query), query.get('sort') || 'updated');
   // Unfiltered, the list stands in for a 198-lead project so the pager can be walked.
   const total = leads.length === rows(base).length ? 198 : leads.length;
   const pages = Math.max(1, Math.ceil(total / pageSize));
