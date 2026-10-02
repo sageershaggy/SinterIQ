@@ -5,13 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../server/app';
-import { sendMail, type Send, type SmtpConfig } from '../server/email';
+import { RecipientRejected, sendMail, type Send, type SmtpConfig } from '../server/email';
 import { scheduleNextSend } from '../server/funnels';
 import { emailTemplates } from '../server/email-templates';
-import type { ReadInbox } from '../server/imap';
+import type { ReadInbox, ReceivedMail } from '../server/imap';
+import { recordBounce } from '../server/bounces';
+import { hash } from '../server/database';
+import { withOpenPixel } from '../server/funnel-opens';
 import nodemailer from 'nodemailer';
 import type { Lead, Project, TrainingSnapshot } from '../shared/types';
-import type { Enrollment, Funnel, FunnelStep } from '../shared/funnels';
+import type { Enrollment, Funnel, FunnelCounts, FunnelStep } from '../shared/funnels';
+import { emptyCounts, funnelCompleted } from '../shared/funnels';
 
 delete process.env.INNOVISTA_SETUP_TOKEN;
 const day = 86_400_000;
@@ -1383,3 +1387,408 @@ test('funnel steps accept a preferred send time and use it for the first due slo
     f.dispose();
   }
 });
+
+/** A funnel as the list reports it, with its counts and progress. */
+async function listed(f: Awaited<ReturnType<typeof fixture>>, funnel: Funnel) {
+  const response = await f.req('get', `/projects/${funnel.project_id}/funnels`);
+  assert.equal(response.status, 200, response.text);
+  return (response.body.funnels as Funnel[]).find((item) => item.id === funnel.id)!;
+}
+/** The open token in a sent message's image address. */
+const openToken = (html: unknown) => /\/e\/o\/([a-f0-9]{64})\.gif/.exec(String(html))?.[1];
+
+test('funnel counts follow each sequence once through sent, opened, replied, follow-up and bounced', async () => {
+  const sent: Parameters<Send>[1][] = [];
+  const f = await fixture(undefined, async (_config, message) => {
+    message.beforeSend?.();
+    // A permanent refusal at send time is a bounce.
+    if (message.to === 'gone@pumps.example') throw new RecipientRejected(message.to, 550);
+    sent.push(message);
+  });
+  try {
+    await f.mailbox();
+    const opener = await f.lead('opener@pumps.example');
+    const replier = await f.lead('replier@pumps.example');
+    const gone = await f.lead('gone@pumps.example');
+    const quiet = await f.lead('quiet@pumps.example');
+    const funnel = await f.funnel();
+    assert.deepEqual((await listed(f, funnel)).counts, emptyCounts);
+    assert.equal((await f.enroll(funnel, opener, replier, gone, quiet)).status, 201);
+    assert.equal((await f.status(funnel, 'ACTIVE')).status, 200);
+    const start = Date.now() + 100;
+    // One message a minute: the first message to each of the four, one of them refused.
+    for (let i = 0; i < 4; i++) await f.worker.tick(start + i * 60_000);
+    assert.deepEqual(
+      sent.map((message) => message.to),
+      ['opener@pumps.example', 'replier@pumps.example', 'quiet@pumps.example'],
+    );
+    // Opened twice is still one sequence opened.
+    const token = openToken(sent[0].html)!;
+    for (let i = 0; i < 2; i++) {
+      const image = await request(f.app)
+        .get('/e/o/' + token + '.gif')
+        .set('Host', f.host);
+      assert.equal(image.status, 200);
+    }
+    const replied = await f.req('post', `${f.base}/leads/${replier.id}/outreach-events`, {
+      outcome: 'REPLIED',
+      notes: 'They asked for a call next week.',
+    });
+    assert.equal(replied.status, 201, replied.text);
+    // The opener's follow-up is due first.
+    const due = (await f.queue(funnel)).find((row) => row.lead_id === opener.id)!.next_send_at;
+    await f.worker.tick(Math.max(due, start + 4 * 60_000));
+    assert.equal(sent.length, 4);
+    assert.equal(sent[3].to, 'opener@pumps.example');
+    assert.equal(sent[3].subject, 'Following up');
+    // In the funnel, nothing sent yet.
+    const late = await f.lead('late@pumps.example');
+    assert.equal((await f.enroll(funnel, late)).status, 201);
+    const report = await listed(f, funnel);
+    assert.deepEqual(report.counts, {
+      enrolled: 5,
+      sent: 3,
+      opened: 1,
+      replied: 1,
+      followed_up: 1,
+      bounced: 1,
+      open_rate: 1 / 3,
+      reply_rate: 1 / 3,
+    } satisfies FunnelCounts);
+    // Where each sequence is now stays alongside.
+    assert.equal(report.progress!.total, 5);
+    assert.equal(report.progress!.bounced, 1);
+    assert.equal(report.progress!.replied, 1);
+    assert.deepEqual(report.progress!.waiting, [1, 1, 1]);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a reply still counts on a funnel that keeps going, and so does a bounce reported after the last message', async () => {
+  const inbox = { uid_validity: '1', last_uid: 0, messages: [] as ReceivedMail[] };
+  const f = await fixture(undefined, undefined, async () => inbox);
+  try {
+    await f.mailbox();
+    await f.incoming();
+    const created = await f.req('post', `${f.base}/funnels`, {
+      name: 'Keeps going',
+      audience: 'Pump manufacturers',
+      stop_on_reply: false,
+      steps,
+    });
+    assert.equal(created.status, 201, created.text);
+    const keeps = created.body as Funnel;
+    const once = await f.funnel([steps[0]]);
+    const talker = await f.lead('talker@pumps.example');
+    const done = await f.lead('done@pumps.example');
+    assert.equal((await f.enroll(keeps, talker)).status, 201);
+    assert.equal((await f.enroll(once, done)).status, 201);
+    await f.status(keeps, 'ACTIVE');
+    await f.status(once, 'ACTIVE');
+    const start = Date.now() + 100;
+    await f.worker.tick(start);
+    await f.worker.tick(start + 60_000);
+    assert.equal(f.messages.length, 2);
+    inbox.last_uid = 1;
+    inbox.messages = [
+      {
+        uid: 1,
+        message_id: '<reply-1@pumps.example>',
+        references: [
+          f.messages.find((message) => message.to === 'talker@pumps.example')!.messageId!,
+        ],
+        from_email: 'talker@pumps.example',
+        from_name: 'Customer',
+        to_email: 'research@example.com',
+        subject: 'Re: Hello',
+        body: 'Thanks, tell me more.',
+        received_at: new Date(Date.now() + 1000).toISOString(),
+        attachment_count: 0,
+        notice: '',
+      },
+    ];
+    const polled = await f.poll();
+    assert.equal(polled.status, 200, polled.text);
+    assert.equal(polled.body.received, 1);
+    // The sequence keeps going, so its status says nothing; the matched reply does.
+    assert.equal((await f.queue(keeps))[0].status, 'QUEUED');
+    const keeping = await listed(f, keeps);
+    assert.equal(keeping.counts!.replied, 1);
+    assert.equal(keeping.counts!.reply_rate, 1);
+    assert.deepEqual(keeping.progress!.waiting, [0, 1, 0]);
+    // A one-message sequence is finished; a delivery report arriving afterwards has nothing
+    // left to stop, and the funnel still counts the bounce.
+    assert.equal((await f.queue(once))[0].status, 'COMPLETED');
+    recordBounce(f.db, {
+      recipient: 'done@pumps.example',
+      projectId: f.project.id,
+      leadId: done.id,
+      source: 'DSN',
+      status: '5.1.1',
+    });
+    assert.equal((await f.queue(once))[0].status, 'COMPLETED');
+    const finished = await listed(f, once);
+    assert.equal(finished.counts!.bounced, 1);
+    assert.equal(finished.counts!.sent, 1);
+    assert.ok(funnelCompleted(finished));
+    assert.ok(!funnelCompleted(keeping));
+  } finally {
+    f.dispose();
+  }
+});
+
+test('the open image answers every request alike, needs no session and counts only its own message', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const lead = await f.lead();
+    const funnel = await f.funnel();
+    await f.enroll(funnel, lead);
+    await f.status(funnel, 'ACTIVE');
+    await f.worker.tick(Date.now() + 100);
+    const other = await f.prepare('Valve Research');
+    await f.mailbox('owner@example.com', other);
+    const buyer = await f.lead('buyer@valves.example', other);
+    const otherFunnel = await f.funnel(steps, other);
+    await f.enroll(otherFunnel, buyer);
+    await f.status(otherFunnel, 'ACTIVE');
+    await f.worker.tick(Date.now() + 200);
+    assert.equal(f.messages.length, 2);
+    const token = openToken(f.messages[0].html)!;
+    const otherToken = openToken(f.messages[1].html)!;
+    assert.ok(token && otherToken && token !== otherToken);
+    // Only the token's hash is kept, and nothing about whoever loads the image.
+    const columns = (
+      f.db.prepare('SELECT name FROM pragma_table_info(?)').all('funnel_message_opens') as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name);
+    assert.deepEqual(columns, [
+      'token_hash',
+      'project_id',
+      'lead_id',
+      'enrollment_id',
+      'step',
+      'created_at',
+      'first_opened_at',
+      'open_count',
+    ]);
+    const row = (value: string) =>
+      f.db
+        .prepare(
+          'SELECT project_id,first_opened_at,open_count FROM funnel_message_opens WHERE token_hash=?',
+        )
+        .get(hash(value)) as
+        { project_id: number; first_opened_at: string | null; open_count: number } | undefined;
+    assert.equal(row(token)!.project_id, f.project.id);
+    assert.equal(row(otherToken)!.project_id, other.id);
+    assert.equal(row(token)!.open_count, 0);
+    // No cookie, no CSRF header: the recipient's mail app is the caller.
+    const image = (path: string) => request(f.app).get(path).set('Host', f.host);
+    const first = await image('/e/o/' + token + '.gif');
+    assert.equal(first.status, 200);
+    assert.equal(first.headers['content-type'], 'image/gif');
+    assert.match(first.headers['cache-control'], /no-store/);
+    assert.equal(first.headers['cross-origin-resource-policy'], 'cross-origin');
+    assert.equal(first.headers['set-cookie'], undefined);
+    assert.ok(Buffer.isBuffer(first.body) && first.body.subarray(0, 6).toString() === 'GIF89a');
+    const opened = row(token)!;
+    assert.ok(opened.first_opened_at);
+    assert.equal(opened.open_count, 1);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await image('/e/o/' + token + '.gif');
+    // The first open stays the first; the loads are counted.
+    assert.deepEqual(row(token), { ...opened, open_count: 2 });
+    assert.equal(row(otherToken)!.open_count, 0);
+    // Unknown, malformed, the stored hash used as a token, or a HEAD: the same answer, and
+    // nothing recorded.
+    const all = () =>
+      JSON.stringify(f.db.prepare('SELECT * FROM funnel_message_opens ORDER BY token_hash').all());
+    const before = all();
+    for (const path of [
+      '/e/o/' + 'a'.repeat(64) + '.gif',
+      '/e/o/' + token.toUpperCase() + '.gif',
+      '/e/o/' + token,
+      '/e/o/' + hash(token) + '.gif',
+      '/e/o/x.gif',
+    ]) {
+      const answer = await image(path);
+      assert.equal(answer.status, first.status, path);
+      assert.equal(answer.headers['content-type'], first.headers['content-type'], path);
+      assert.equal(answer.headers['cache-control'], first.headers['cache-control'], path);
+      assert.deepEqual(answer.body, first.body, path);
+    }
+    const head = await request(f.app)
+      .head('/e/o/' + token + '.gif')
+      .set('Host', f.host);
+    assert.equal(head.status, 200);
+    assert.equal(all(), before);
+    // The other project's token counts the other project's message, and only that.
+    await image('/e/o/' + otherToken + '.gif');
+    assert.equal(row(otherToken)!.open_count, 1);
+    assert.equal(row(token)!.open_count, 2);
+    assert.equal((await listed(f, funnel)).counts!.opened, 1);
+    assert.equal((await listed(f, otherFunnel)).counts!.opened, 1);
+    // Deleting the lead deletes what was recorded about it.
+    assert.equal((await f.req('delete', `${f.base}/leads/${lead.id}`)).status, 200);
+    assert.equal(row(token), undefined);
+    assert.ok(row(otherToken));
+  } finally {
+    f.dispose();
+  }
+});
+
+test('the open image is rate-limited per address and still answers the same way', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const lead = await f.lead();
+    const funnel = await f.funnel();
+    await f.enroll(funnel, lead);
+    await f.status(funnel, 'ACTIVE');
+    await f.worker.tick(Date.now() + 100);
+    const token = openToken(f.messages[0].html)!;
+    for (let i = 0; i < 125; i++) {
+      const answer = await request(f.app)
+        .get('/e/o/' + token + '.gif')
+        .set('Host', f.host);
+      assert.equal(answer.status, 200);
+      assert.equal(answer.headers['content-type'], 'image/gif');
+    }
+    const { open_count } = f.db
+      .prepare('SELECT open_count FROM funnel_message_opens WHERE token_hash=?')
+      .get(hash(token)) as { open_count: number };
+    assert.equal(open_count, 120);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('"Count opens" puts one image in the HTML part of funnel messages only, and can be switched', async () => {
+  const f = await fixture();
+  try {
+    await f.mailbox();
+    const counted = await f.funnel();
+    assert.equal(counted.track_opens, true);
+    const created = await f.req('post', `${f.base}/funnels`, {
+      name: 'Quiet introduction',
+      audience: 'Pump manufacturers',
+      track_opens: false,
+      steps,
+    });
+    assert.equal(created.status, 201, created.text);
+    const uncounted = created.body as Funnel;
+    assert.equal(uncounted.track_opens, false);
+    const a = await f.lead('a@pumps.example');
+    const b = await f.lead('b@pumps.example');
+    await f.enroll(counted, a);
+    await f.enroll(uncounted, b);
+    await f.status(counted, 'ACTIVE');
+    await f.status(uncounted, 'ACTIVE');
+    const start = Date.now() + 100;
+    await f.worker.tick(start);
+    await f.worker.tick(start + 60_000);
+    const toA = f.messages.find((message) => message.to === 'a@pumps.example')!;
+    const toB = f.messages.find((message) => message.to === 'b@pumps.example')!;
+    const html = String(toA.html);
+    assert.equal(html.match(/\/e\/o\//g)?.length, 1);
+    assert.match(
+      html,
+      /<img src="https:\/\/research\.example\.com\/e\/o\/[a-f0-9]{64}\.gif" width="1" height="1" alt=""/,
+    );
+    assert.ok(html.indexOf('/e/o/') < html.lastIndexOf('</body>'));
+    assert.doesNotMatch(String(toA.text), /\/e\/o\/|<img/);
+    assert.doesNotMatch(String(toB.html), /\/e\/o\//);
+    const tokens = () =>
+      (f.db.prepare('SELECT COUNT(*) n FROM funnel_message_opens').get() as { n: number }).n;
+    assert.equal(tokens(), 1);
+    // The switch works on a running funnel and changes only the messages still to come.
+    const latest = await listed(f, uncounted);
+    const switched = await f.req('patch', `${f.base}/funnels/${uncounted.id}`, {
+      track_opens: true,
+      revision: latest.revision,
+    });
+    assert.equal(switched.status, 200, switched.text);
+    assert.equal(switched.body.track_opens, true);
+    assert.equal(switched.body.status, 'ACTIVE');
+    const nothing = await f.req('patch', `${f.base}/funnels/${uncounted.id}`, {
+      revision: switched.body.revision,
+    });
+    assert.equal(nothing.status, 400);
+    const due = (await f.queue(uncounted))[0].next_send_at;
+    await f.worker.tick(due);
+    await f.worker.tick(due + 60_000);
+    const followUp = f.messages.filter((message) => message.to === 'b@pumps.example')[1];
+    assert.equal(followUp.subject, 'Following up');
+    assert.match(String(followUp.html), /\/e\/o\/[a-f0-9]{64}\.gif/);
+    assert.doesNotMatch(String(followUp.text), /\/e\/o\//);
+    // Individual mail never carries the image.
+    const c = await f.lead('c@pumps.example');
+    const single = await f.req('post', `${f.base}/leads/${c.id}/email`, {
+      to: 'c@pumps.example',
+      subject: 'A direct note',
+      body: 'A direct note to ask whether a short call would help.',
+    });
+    assert.equal(single.status, 201, single.text);
+    assert.equal(f.messages.at(-1)!.to, 'c@pumps.example');
+    assert.doesNotMatch(String(f.messages.at(-1)!.html), /\/e\/o\//);
+    // A message without an HTML part has nowhere to put one.
+    assert.equal(withOpenPixel('', 'https://research.example.com/e/o/x.gif'), '');
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a funnel records when it last changed: edits, start and pause, the open switch and new leads', async () => {
+  const f = await fixture();
+  const later = () => new Promise((resolve) => setTimeout(resolve, 5));
+  try {
+    await f.mailbox();
+    const funnel = await f.funnel();
+    assert.equal(funnel.updated_at, funnel.created_at);
+    await later();
+    const edited = await f.req('put', `${f.base}/funnels/${funnel.id}`, {
+      name: 'Renamed introduction',
+      audience: 'Pump manufacturers',
+      steps,
+      revision: funnel.revision,
+    });
+    assert.equal(edited.status, 200, edited.text);
+    assert.ok(edited.body.updated_at > funnel.updated_at);
+    await later();
+    const started = await f.status(funnel, 'ACTIVE');
+    assert.ok(started.body.updated_at > edited.body.updated_at);
+    await later();
+    const paused = await f.status(funnel, 'PAUSED');
+    assert.ok(paused.body.updated_at > started.body.updated_at);
+    await later();
+    const switched = await f.req('patch', `${f.base}/funnels/${funnel.id}`, {
+      track_opens: false,
+      revision: paused.body.revision,
+    });
+    assert.equal(switched.status, 200, switched.text);
+    assert.ok(switched.body.updated_at > paused.body.updated_at);
+    await later();
+    const lead = await f.lead();
+    assert.equal((await f.enroll(funnel, lead)).status, 201);
+    const enrolled = await listed(f, funnel);
+    assert.ok(enrolled.updated_at > switched.body.updated_at);
+    // A message going out is progress, not a change to the funnel.
+    await f.status(funnel, 'ACTIVE');
+    const running = await listed(f, funnel);
+    await f.worker.tick(Date.now() + 100);
+    assert.equal(f.messages.length, 1);
+    assert.equal((await listed(f, funnel)).updated_at, running.updated_at);
+    // An older database gains both columns: updated_at from created_at, and opens counted.
+    f.db.exec('ALTER TABLE funnels DROP COLUMN updated_at');
+    f.db.exec('ALTER TABLE funnels DROP COLUMN track_opens');
+    await f.restart();
+    const upgraded = await listed(f, funnel);
+    assert.equal(upgraded.updated_at, upgraded.created_at);
+    assert.equal(upgraded.track_opens, true);
+  } finally {
+    f.dispose();
+  }
+});
+
