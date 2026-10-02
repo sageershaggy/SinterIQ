@@ -182,7 +182,38 @@ export function RunFindings({ run }: { run: Run }) {
           <SourceLinks ids={opportunity.source_ids} evidence={run.evidence} />
         </section>
       )}
+      <ServiceFitList run={run} />
     </>
+  );
+}
+
+const fitLabels = { GOOD: 'Good fit', POSSIBLE: 'Possible fit', NONE: 'No need shown' } as const;
+/**
+ * How the lead fits each service the training names: the level, one line on why and the pages
+ * that show it, good fits first. Nothing shows for a training without categories or a run saved
+ * before they existed.
+ */
+export function ServiceFitList({ run }: { run: Run }) {
+  const fits = run.result.service_fit;
+  if (!fits?.length) return null;
+  const order = { GOOD: 0, POSSIBLE: 1, NONE: 2 } as const;
+  const sorted = [...fits].sort((a, b) => order[a.fit] - order[b.fit]);
+  return (
+    <section className="run-service-fit">
+      <h3>Service fit</h3>
+      <ul>
+        {sorted.map((item) => (
+          <li key={item.category} className={'is-' + item.fit.toLowerCase()}>
+            <span className={'service-chip is-' + item.fit.toLowerCase()}>{fitLabels[item.fit]}</span>
+            <div>
+              <strong>{item.category}</strong>
+              {item.reason && <p>{item.reason}</p>}
+              <SourceLinks ids={item.source_ids} evidence={run.evidence} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

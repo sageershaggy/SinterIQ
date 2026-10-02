@@ -388,6 +388,59 @@
   margin: 0 0 4px;
   font-style: italic;
 }
+/* "Website says: Brooklyn, NY" under a detail the latest analysis found stated differently
+   (ConflictNote in CompanyOverview.tsx): the badge's amber, so it reads as something to settle. */
+.fact-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 8px;
+  padding: 8px 11px;
+  border: 1px solid #f0e6c8;
+  border-radius: 7px;
+  background: #fffcf3;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b5320;
+}
+.company-card .fact-conflict > p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.fact-conflict > p > svg {
+  flex-shrink: 0;
+  color: #8a6a24;
+}
+.fact-conflict strong {
+  color: #4f3d16;
+  overflow-wrap: anywhere;
+}
+.fact-conflict details {
+  flex: 1 1 auto;
+}
+.fact-conflict summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #74561a;
+}
+.fact-conflict blockquote {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid #ecdcae;
+  background: #fff;
+  font-style: italic;
+  color: #56614f;
+}
+.fact-conflict > .button {
+  flex: 0 0 auto;
+}
 .company-notes {
   margin-top: 4px;
   font-size: 12px;
@@ -616,4 +669,54 @@
   margin: -4px 0 12px;
   font-size: 11px;
   color: #5b6655;
+}
+
+/* Service fit (ServiceFitList): one row per category, the level as a chip beside the name, the
+   reason and its sources below the name. The chip styles live with the lead list's cell. */
+.run-service-fit {
+  margin: 20px 0;
+}
+.run-service-fit h3 {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.run-service-fit ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-service-fit li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 10px;
+}
+.run-service-fit li > .service-chip {
+  flex: 0 0 auto;
+  min-width: 92px;
+  text-align: center;
+}
+.run-service-fit li > div {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.run-service-fit strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.company-card .run-service-fit p,
+.run-service-fit p {
+  margin: 2px 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #56614f;
+}
+.run-service-fit .evidence-tags {
+  margin-left: 0;
+}
+.run-service-fit li.is-none strong {
+  font-weight: 550;
+  color: #5b6458;
 }

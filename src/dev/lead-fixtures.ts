@@ -34,6 +34,12 @@ function rows(base: Record<string, unknown>) {
       contact_name: 'Dana Weber',
       contact_role: 'Head of Engineering',
       ...run('QUALIFIED', 92),
+      service_fit: [
+        { category: 'AI workflow automation', fit: 'GOOD' },
+        { category: 'Website development', fit: 'POSSIBLE' },
+        { category: 'Digital marketing and SEO', fit: 'POSSIBLE' },
+        { category: 'App development', fit: 'POSSIBLE' },
+      ],
       reviewed: true,
       assigned_to: 4,
       assigned_to_name: 'Dana Prakash',
@@ -50,6 +56,7 @@ function rows(base: Record<string, unknown>) {
       country: 'United Arab Emirates',
       city: 'Dubai',
       ...run('NEEDS_REVIEW', 64),
+      service_fit: [{ category: 'Website development', fit: 'GOOD' }],
       next_step: 'REVIEW_WITH_CLIENT',
     },
     {
@@ -67,6 +74,8 @@ function rows(base: Record<string, unknown>) {
       industry: 'Interior design',
       country: 'Oman',
       ...run('QUALIFIED', 83, { training_version: 9 }),
+      // From the superseded run: shown muted, and not matched by the Service fit filter.
+      service_fit: [{ category: 'Digital marketing and SEO', fit: 'GOOD' }],
       stale: true,
     },
     {
@@ -104,6 +113,7 @@ function rows(base: Record<string, unknown>) {
       country: 'United States',
       city: 'Kapolei',
       ...run('QUALIFIED', 74),
+      service_fit: [{ category: 'App development', fit: 'POSSIBLE' }],
       outreach_status: 'REPLIED',
       next_step: 'SEND_EMAIL',
     },
@@ -147,6 +157,11 @@ function narrowed(rows: Array<Record<string, unknown>>, query: URLSearchParams) 
             : !row.latest_run_id,
     industry: (row, value) => String(row.industry).toLowerCase() === value.toLowerCase(),
     country: (row, value) => String(row.country).toLowerCase() === value.toLowerCase(),
+    service_fit: (row, value) =>
+      !row.stale &&
+      ((row.service_fit || []) as Array<{ category: string }>).some(
+        (item) => item.category.toLowerCase() === value.toLowerCase(),
+      ),
   };
   return rows.filter((row) =>
     Object.entries(tests).every(([key, test]) => {
@@ -218,5 +233,11 @@ export const leadFacets = {
     { value: 'none', label: 'Unassigned', count: 189 },
     { value: '4', label: 'Dana Prakash', count: 8 },
     { value: '1', label: 'Workspace Administrator', count: 1 },
+  ],
+  service_fit: [
+    { value: 'Website development', count: 14 },
+    { value: 'AI workflow automation', count: 9 },
+    { value: 'Digital marketing and SEO', count: 6 },
+    { value: 'App development', count: 3 },
   ],
 };

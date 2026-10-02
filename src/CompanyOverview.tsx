@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
+  CircleAlert,
   Flag,
   Mail,
   MessageSquare,
@@ -10,14 +11,16 @@ import {
   Users,
 } from 'lucide-react';
 import type {
+  ConflictField,
   CriterionResult,
+  DetailConflict,
   Lead,
   ResearchOutcome,
   ResearchableField,
 } from '../shared/types';
 import type { FieldCitation, LeadContact, ResearchProfile } from '../shared/research';
 import type { LeadTab } from './navigation';
-import { api, date, label } from './api';
+import { api, date, json, label } from './api';
 import { Alert, Badge, ExternalLink, Spinner } from './ui';
 import { callOutcomeLabels } from '../shared/calls';
 import { crmEvents } from './LeadComments';
@@ -101,12 +104,15 @@ function Fact({
   citations,
   children,
   empty,
+  conflicts,
 }: {
   lead: Lead;
   fields: ResearchableField[];
   citations: FieldCitation[];
   children: ReactNode;
   empty: string;
+  /** What the website says instead, from the latest qualification. */
+  conflicts?: ReactNode;
 }) {
   const present = fields.some((field) => String(lead[field] ?? '').trim());
   if (!present) return <dd>{blank(empty)}</dd>;
@@ -114,7 +120,54 @@ function Fact({
     <dd>
       {children}
       <Origin citations={citations.filter((item) => fields.includes(item.field))} />
+      {conflicts}
     </dd>
+  );
+}
+/** What a conflict is called in a row that shows more than one field. */
+const conflictNames: Record<ConflictField, string> = {
+  city: 'city',
+  country: 'country',
+  industry: 'industry',
+  employee_count: 'company size',
+};
+/**
+ * The latest qualification found the company's own website stating this detail differently. The
+ * record keeps its value until someone chooses the website's; the page is linked and the sentence
+ * shows on hover and on "Show the sentence", so the choice is made against the evidence.
+ */
+function ConflictNote({
+  conflict,
+  url,
+  named,
+  busy,
+  onApply,
+}: {
+  conflict: DetailConflict;
+  url: string;
+  /** Say which field, where the row shows more than one (Location is city and country). */
+  named: boolean;
+  busy: boolean;
+  onApply: () => void;
+}) {
+  return (
+    <div className="fact-conflict">
+      <p title={'“' + conflict.quote + '”'}>
+        <CircleAlert size={14} aria-hidden="true" />
+        <span>
+          Website says{named ? ' (' + conflictNames[conflict.field] + ')' : ''}:{' '}
+          <strong>{conflict.found_value}</strong>
+        </span>
+        {url && <ExternalLink url={url} />}
+      </p>
+      <details>
+        <summary>Show the sentence</summary>
+        <blockquote>“{conflict.quote}”</blockquote>
+      </details>
+      <button type="button" className="button small secondary" disabled={busy} onClick={onApply}>
+        Use website value
+      </button>
+    </div>
   );
 }
 
@@ -316,7 +369,8 @@ export function CompanyOverview({
 }) {
   const [profile, setProfile] = useState<ResearchProfile | null>(null),
     [error, setError] = useState(''),
-    [erasing, setErasing] = useState(false);
+    [erasing, setErasing] = useState(false),
+    [applying, setApplying] = useState(false);
   // Reloaded whenever the record or a research result changes, so provenance never lags.
   useEffect(() => {
     let cancelled = false;
@@ -351,6 +405,49 @@ export function CompanyOverview({
   const citations = profile?.citations || [];
   const latest = lead.runs?.[0];
   const current = latest && !lead.stale ? latest : null;
+  // Conflicts from the latest run that still describe the record: a field someone has changed
+  // since, or a value already taken from the website, no longer has one.
+  const conflicts =
+    latest && latest.id === lead.latest_run_id
+      ? (latest.result.conflicts ?? []).filter(
+          (item) =>
+            String(lead[item.field] ?? '').trim().toLowerCase() ===
+            item.record_value.trim().toLowerCase(),
+        )
+      : [];
+  /** "Use website value": a recorded edit with its quote kept as the citation (POST .../conflicts/apply). */
+  async function applyConflict(conflict: DetailConflict) {
+    if (!latest) return;
+    setApplying(true);
+    setError('');
+    try {
+      await api(base + '/conflicts/apply', {
+        method: 'POST',
+        body: json({ run_id: latest.id, field: conflict.field, revision: lead.revision }),
+      });
+      notify?.('Saved. Requalify to use it.');
+      onChanged?.();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setApplying(false);
+    }
+  }
+  const conflictNotes = (fields: ConflictField[]) => {
+    const shown = conflicts.filter((item) => fields.includes(item.field));
+    return shown.length
+      ? shown.map((item) => (
+          <ConflictNote
+            key={item.field}
+            conflict={item}
+            url={latest?.evidence.find((entry) => item.source_ids.includes(entry.id))?.url || ''}
+            named={fields.length > 1}
+            busy={applying || research.busy || research.running}
+            onApply={() => void applyConflict(item)}
+          />
+        ))
+      : undefined;
+  };
   const tally = (items: CriterionResult[]) => ({
     meets: items.filter((item) => item.outcome === 'MATCH').length,
     not: items.filter((item) => item.outcome === 'NO_MATCH').length,
@@ -496,7 +593,13 @@ export function CompanyOverview({
               <ExternalLink url={lead.website} />
             </Fact>
             <dt>Industry</dt>
-            <Fact lead={lead} fields={['industry']} citations={citations} empty="Not found yet">
+            <Fact
+              lead={lead}
+              fields={['industry']}
+              citations={citations}
+              empty="Not found yet"
+              conflicts={conflictNotes(['industry'])}
+            >
               {lead.industry}
             </Fact>
             <dt>Location</dt>
@@ -505,6 +608,7 @@ export function CompanyOverview({
               fields={['city', 'country']}
               citations={citations}
               empty="Not found yet"
+              conflicts={conflictNotes(['city', 'country'])}
             >
               {[lead.city, lead.country].filter(Boolean).join(', ')}
             </Fact>
@@ -514,6 +618,7 @@ export function CompanyOverview({
               fields={['employee_count']}
               citations={citations}
               empty="Not found yet"
+              conflicts={conflictNotes(['employee_count'])}
             >
               {lead.employee_count}
             </Fact>
@@ -529,6 +634,8 @@ export function CompanyOverview({
           <p className="fine-print">
             “In the lead record” was typed or imported; “Found by research” was read from the
             company’s own website and shows the sentence it came from.
+            {conflicts.length > 0 &&
+              ' “Website says” is what the last analysis found the website stating instead; the record keeps its value until you choose the website’s.'}
           </p>
         </section>
         <section className="company-card">

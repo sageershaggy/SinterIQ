@@ -44,6 +44,21 @@ const rubric = {
     'The prospect is already an existing Innovista client, an active sales opportunity, or a contact already approached for the same campaign, unless the record represents a genuinely new opportunity.',
   ],
   questions: [],
+  categories: [
+    {
+      name: 'Website development',
+      description: 'An outdated, slow or missing website, or no way to book or buy online.',
+    },
+    {
+      name: 'AI workflow automation',
+      description: 'Enquiries, bookings or admin handled by hand that a workflow could take over.',
+    },
+    {
+      name: 'Digital marketing and SEO',
+      description: 'Weak search visibility, no campaigns or an inactive social presence.',
+    },
+    { name: 'App development', description: 'Customers or field staff who would use an app.' },
+  ],
 };
 
 const project = {
@@ -335,6 +350,8 @@ const researched = {
   country: 'United Arab Emirates',
   city: 'Dubai',
   industry: 'Water ride design and installation',
+  // Typed into the record; the website gives another headcount (the run's conflicts below).
+  employee_count: '20',
   contact_role: '',
   contact_email: 'dmaww@emirates.net.ae',
   notes: 'Imported from the GCC events list. Met at the leisure expo.',
@@ -347,6 +364,11 @@ const researched = {
   qualified_revision: 3,
   next_step: 'SEND_EMAIL',
   outreach_status: 'NOT_CONTACTED',
+  service_fit: [
+    { category: 'Website development', fit: 'GOOD' },
+    { category: 'AI workflow automation', fit: 'GOOD' },
+    { category: 'Digital marketing and SEO', fit: 'POSSIBLE' },
+  ],
   // A researched person already in a campaign (People at this company, emailFixtures.ts).
   campaigns: contactEnrollments,
   runs: [
@@ -375,7 +397,8 @@ const researched = {
           kind: 'website',
           title: 'amusement-whitewater.example.com/',
           url: site + '/',
-          content: 'Amusement Whitewater designs and installs water rides and splash parks.',
+          content:
+            'Amusement Whitewater designs and installs water rides and splash parks. Amusement Whitewater employs 45 people across design, fabrication and installation.',
           captured_at: ago(40),
         },
       ],
@@ -396,7 +419,7 @@ const researched = {
           outcome: index === 1 ? 'UNKNOWN' : 'MATCH',
           evidence:
             index === 1
-              ? 'The website does not state a headcount, and research could not confirm one.'
+              ? 'The record says 20 employees; the company’s website gives 45. Confirm which is current.'
               : 'The company website describes this directly.',
           source_ids: index === 1 ? [] : ['E2'],
         })),
@@ -406,7 +429,43 @@ const researched = {
           evidence: 'The website shows an operating company with current projects.',
           source_ids: ['E2'],
         })),
-        gaps: ['Company size is not published on the website.'],
+        service_fit: [
+          {
+            category: 'Website development',
+            fit: 'GOOD',
+            reason: 'The site has no booking or quote request, only a contact form.',
+            source_ids: ['E2'],
+          },
+          {
+            category: 'AI workflow automation',
+            fit: 'GOOD',
+            reason: 'Resort enquiries are answered by hand from a shared inbox.',
+            source_ids: ['E2'],
+          },
+          {
+            category: 'Digital marketing and SEO',
+            fit: 'POSSIBLE',
+            reason: 'Projects are listed, but there is no news or campaign page.',
+            source_ids: ['E2'],
+          },
+          {
+            category: 'App development',
+            fit: 'NONE',
+            reason: 'Nothing on the site points to customers or staff who would use an app.',
+            source_ids: [],
+          },
+        ],
+        conflicts: [
+          {
+            field: 'employee_count',
+            record_value: '20',
+            found_value: '45',
+            quote:
+              'Amusement Whitewater employs 45 people across design, fabrication and installation.',
+            source_ids: ['E2'],
+          },
+        ],
+        gaps: ['The record and the website give different company sizes (20 and 45).'],
         next_steps: ['Confirm the team size on the first call.'],
         outreach: {
           contact_name: '',

@@ -80,6 +80,8 @@ export interface DraftRules {
   summary: string;
   criteria: string[];
   exclusions: string[];
+  /** Service categories as the editor writes them, "Name: what a good fit looks like". */
+  categories?: string[];
 }
 const norm = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
 function listDiff(published: string[], draft: string[]) {
@@ -107,12 +109,20 @@ export function TrainingDiff({
 }) {
   const criteria = listDiff(published.criteria, draft.criteria);
   const exclusions = listDiff(published.exclusions, draft.exclusions);
+  const categories = listDiff(
+    (published.categories ?? []).map((item) =>
+      item.description ? item.name + ': ' + item.description : item.name,
+    ),
+    draft.categories ?? [],
+  );
   const summaryChanged = norm(published.summary) !== norm(draft.summary);
   const changes =
     criteria.added.length +
     criteria.removed.length +
     exclusions.added.length +
     exclusions.removed.length +
+    categories.added.length +
+    categories.removed.length +
     (summaryChanged ? 1 : 0);
   if (!changes) return null;
   const section = (title: string, diff: ReturnType<typeof listDiff>) =>
@@ -150,6 +160,7 @@ export function TrainingDiff({
       {summaryChanged && <p className="diff-note">The business context and ideal customer text changed.</p>}
       {section('Positive criteria', criteria)}
       {section('Exclusion rules', exclusions)}
+      {section('Service categories', categories)}
     </section>
   );
 }

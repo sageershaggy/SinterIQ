@@ -460,6 +460,50 @@
   color: #4a703d;
 }
 
+/* ---------- Service fit: two chips and "+N" ---------- */
+/* Narrow on purpose: the table already scrolls sideways on a phone, so this column adds as
+   little width as it can and lets a long category name end in an ellipsis. */
+.service-fit-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 96px;
+  max-width: 172px;
+}
+.service-fit-cell.is-stale {
+  opacity: 0.6;
+}
+.service-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid #4a703d;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* White on #4a703d is about 5.6:1. */
+.service-chip.is-good {
+  background: #4a703d;
+  color: #fff;
+}
+.service-chip.is-possible {
+  background: #fff;
+  border-color: #9fb58c;
+  color: #3f5f34;
+}
+.service-chip.is-none,
+.service-chip.is-more {
+  background: #f0f2ec;
+  border-color: #e0e4da;
+  color: #5b6458;
+}
+
 /* ---------- Assignment ---------- */
 .row-assign.is-assigned .assignee-avatar {
   width: 24px;

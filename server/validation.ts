@@ -27,12 +27,29 @@ export const projectSchema = z
     website: webUrl.default(''),
   })
   .strict();
+/** A service category's comparison form: its name, ignoring case and spacing. */
+export const categoryKey = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+export const serviceCategorySchema = z
+  .object({
+    name: requiredText(80),
+    description: text(600).default(''),
+  })
+  .strict();
 export const rubricSchema = z
   .object({
     summary: requiredText(6000),
     criteria: z.array(requiredText(800)).min(1).max(20),
     exclusions: z.array(requiredText(800)).max(20),
     questions: z.array(requiredText(800)).max(20).default([]),
+    // Added after rubrics were first stored and published: one without them offers none.
+    categories: z
+      .array(serviceCategorySchema)
+      .max(12)
+      .refine(
+        (list) => new Set(list.map((item) => categoryKey(item.name))).size === list.length,
+        'Each service category needs a different name.',
+      )
+      .default([]),
   })
   .strict();
 export const emailAddress = text(200).refine(
@@ -120,6 +137,34 @@ export const outreachSchema = z
   })
   .strict();
 const blankOpportunity = () => ({ summary: '', source_ids: [] as string[] });
+/**
+ * A list the model may leave out, write as null or fill with a few unreadable entries. Each entry
+ * that does not read is dropped on its own; it is never a reason to discard the evaluation.
+ */
+const lenientList = <T extends z.ZodType>(item: T, max: number) =>
+  z.preprocess(
+    (value) =>
+      Array.isArray(value)
+        ? value.filter((entry) => item.safeParse(entry).success).slice(0, max)
+        : [],
+    z.array(item).max(max),
+  );
+const serviceFitSchema = z.object({
+  category: requiredText(200),
+  fit: z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim().toUpperCase() : value),
+    z.enum(['GOOD', 'POSSIBLE', 'NONE']),
+  ),
+  reason: z.preprocess((value) => value ?? '', text(1000)),
+  source_ids: z.preprocess((value) => value ?? [], z.array(requiredText(100)).max(12)),
+});
+const conflictSchema = z.object({
+  field: text(40),
+  record_value: requiredText(400),
+  found_value: requiredText(400),
+  quote: requiredText(800),
+  source_ids: z.preprocess((value) => value ?? [], z.array(requiredText(100)).max(12)),
+});
 export const qualificationSchema = z
   .object({
     // Advisory only: the server sets the final decision (validateQualification in server/ai.ts).
@@ -151,6 +196,9 @@ export const qualificationSchema = z
         source_ids: z.array(requiredText(100)).max(12).default([]),
       }),
     ),
+    // Newer still, and checked entry by entry in validateQualification (server/ai.ts).
+    service_fit: lenientList(serviceFitSchema, 24),
+    conflicts: lenientList(conflictSchema, 8),
   })
   .strict();
 export const feedbackSchema = z

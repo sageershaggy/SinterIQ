@@ -64,9 +64,15 @@ import './LeadFilters.css';
  * it back to the person.
  */
 
-const noOptions: LeadFacetOptions = { industry: [], country: [], city: [], assignee: [] };
+const noOptions: LeadFacetOptions = {
+  industry: [],
+  country: [],
+  city: [],
+  assignee: [],
+  service_fit: [],
+};
 
-/** Values for the Industry, Location and Assigned-to facets. Refetched when the list reloads. */
+/** Values for the Industry, Location, Assigned-to and Service fit facets. Refetched on reload. */
 export function useLeadFacetOptions(base: string, version: number) {
   const [options, setOptions] = useState<LeadFacetOptions>(noOptions);
   useEffect(() => {
@@ -129,6 +135,7 @@ const facetTitles: Record<ListFacet, string> = {
   lead_status: 'Lead status',
   email_status: 'Email status',
   research: 'Research status',
+  service_fit: 'Service fit',
 };
 function valueLabel(facet: ListFacet, value: string, options: LeadFacetOptions) {
   if (facet === 'assignee')
@@ -138,6 +145,7 @@ function valueLabel(facet: ListFacet, value: string, options: LeadFacetOptions) 
       (value === UNASSIGNED ? 'Unassigned' : 'Account #' + value)
     );
   if (facet === 'industry' || facet === 'country' || facet === 'city') return value || blankLabel;
+  if (facet === 'service_fit') return value;
   return (fixed[facet] as Option[]).find((option) => option.value === value)?.label || label(value);
 }
 function toggle<T extends string>(list: T[], value: T) {
@@ -320,7 +328,8 @@ export function LeadFilterBar({
         close();
       }}
     >
-      {/* Nine cells: three full rows of three on a desktop. */}
+      {/* Nine cells, three full rows of three on a desktop; a tenth when the training names
+          service categories, so a project without them never shows an empty choice. */}
       <div className="lead-filter-grid">
         {select('qualification', 'All', fixed.qualification)}
         {select('score', 'Any score', fixed.score)}
@@ -330,6 +339,17 @@ export function LeadFilterBar({
         {select('assignee', 'All', people)}
         {select('industry', 'All industries', dynamic('industry'))}
         {select('country', 'All countries', dynamic('country'))}
+        {(options.service_fit.length > 0 || draft.service_fit.length > 0) &&
+          select(
+            'service_fit',
+            'Any service',
+            options.service_fit.map((option) => ({
+              value: option.value,
+              label: option.value,
+              hint: 'Rated a good or possible fit on the current training',
+              count: option.count,
+            })),
+          )}
         {/* One cell for the range, "Added [from] to [to]"; each date keeps its full name. */}
         <div className="lead-filter-dates">
           <div className="lead-filter-field">
@@ -718,6 +738,50 @@ export function FitQualification({ lead }: { lead: Lead }) {
         {lead.reviewed && <ShieldCheck size={11} aria-hidden="true" />}
         <span>{meta}</span>
       </small>
+    </div>
+  );
+}
+
+const fitWords = { GOOD: 'good fit', POSSIBLE: 'possible fit' } as const;
+/**
+ * The services the lead's latest result rates a good fit (solid) or a possible fit (outline): two
+ * chips, then "+N" whose title lists the rest. A superseded result is muted, like its score.
+ */
+export function ServiceFitCell({ lead }: { lead: Lead }) {
+  const fits = lead.service_fit || [];
+  if (!fits.length)
+    return (
+      <span className="muted" title="No service rated a good or possible fit">
+        <span aria-hidden="true">—</span>
+        <span className="visually-hidden">No service fit</span>
+      </span>
+    );
+  const rest = fits.slice(2);
+  const earlier = lead.stale ? ' (from an earlier run)' : '';
+  return (
+    <div className={'service-fit-cell' + (lead.stale ? ' is-stale' : '')}>
+      {fits.slice(0, 2).map((item) => (
+        <span
+          key={item.category}
+          className={'service-chip is-' + item.fit.toLowerCase()}
+          title={item.category + ': ' + fitWords[item.fit] + earlier}
+        >
+          {item.category}
+          <span className="visually-hidden">: {fitWords[item.fit]}</span>
+        </span>
+      ))}
+      {rest.length > 0 && (
+        <span
+          className="service-chip is-more"
+          title={rest.map((item) => item.category + ': ' + fitWords[item.fit]).join('\n') + earlier}
+        >
+          +{rest.length}
+          <span className="visually-hidden">
+            {' '}
+            more: {rest.map((item) => item.category + ', ' + fitWords[item.fit]).join('; ')}
+          </span>
+        </span>
+      )}
     </div>
   );
 }
