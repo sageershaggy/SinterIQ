@@ -22,9 +22,11 @@ Configure Gemini or a public HTTPS OpenAI-compatible provider in **Workspace set
 1. As an administrator, open **Workspace settings → Workspace administration → Create research project** and enter its business website and research objective.
 2. **Build the training library** using PDF, DOCX, Markdown, text, written notes and captured public website pages. Open a source to inspect the extracted text or download the original document.
 3. **Analyze training** to generate a proposed rubric. Review the business context, positive criteria, exclusions and open questions. Save the draft, resolve open questions and choose **Approve & publish**.
-4. **Add or import leads** into that project. CSV, TSV, JSON and XLSX support company, website, location, industry, contact and notes fields. Import up to 5,000 rows / 4 MB; only the name is required. Duplicate matching stays within the project; choose whether to skip or update matches. Invalid rows and unusable websites are reported.
+4. **Add or import leads** into that project. CSV, TSV, JSON and XLSX support company, website, location, industry, contact and notes fields. Import up to 5,000 rows / 4 MB; only the name is required. The file is checked before anything is saved: invalid rows and unusable websites are reported, and companies already in the project are matched (within the project only) so you can skip or update them. Optionally quick-screen the rows first (see below), then import the groups you choose.
 5. **Qualify leads** individually or in batches of up to 20. The app captures the lead website and up to two relevant internal links, evaluates every training rule, and stores the evidence and result.
 6. **Review the reasoning** and source excerpts. Record a human decision with written reasoning. Export the project's qualification results as CSV when needed.
+
+**Quick screen on import.** When the project's current training is published and an AI provider is configured, **Quick-screen rows against the training before importing** is on by default. It is a cheap skim of each row's own data (name, website address, industry, location, size, contact role and notes) against the published rules, 40 rows per request with progress and a **Stop** button; it opens no websites and leaves the contact's name, email and phone out. Rows land in **Passes**, **Not enough information**, **Rejected** (each with a one-line reason) and **Already in this project** (never sent to the AI). Passes are imported by default; tick **Not enough information**, **Not screened** (rows a stop left behind) or **Also import rejected rows** to include them. Rejected rows are never stored: **Download rejected rows (CSV)** returns them with their original columns, the verdict and the reason, so they can be fixed and uploaded in the next batch. The screen is advisory; **Qualify imported leads** then starts the detailed, evidence-backed qualification on exactly the new leads. Screening has its own limit of 150 requests per 15 minutes per person, one full 5,000-row file, so it never uses up the qualification budget. API callers can still import a file in one step with `POST /api/projects/:projectId/leads/import`.
 
 Fit scores are computed from the proportion of positive criteria that match. Confirmed exclusions set the fit score to zero. Low-confidence, missing-evidence and uncertain results go to review. Changing training or lead context marks earlier results for requalification; previous analyses and human reviews remain available.
 
@@ -153,6 +155,7 @@ A CI workflow runs checks and the dependency audit on pushes and pull requests. 
 | `server/database.ts`                         | Schema, transactional legacy migration and audit events           |
 | `server/bootstrap.ts`                        | One-time starter website capture                                  |
 | `server/ai.ts`                               | Provider requests, training analysis and qualification validation |
+| `server/lead-import.ts` / `import-screen.ts` | Lead import checks and write, preview and the quick screen        |
 | `server/network.ts`                          | Safe public website access and source-link discovery              |
 | `server/documents.ts` / `document-worker.ts` | Isolated document extraction                                      |
 | `server/secrets.ts`                          | Encrypted provider-key storage                                    |
@@ -160,6 +163,7 @@ A CI workflow runs checks and the dependency audit on pushes and pull requests. 
 | `src/App.tsx`                                | Project library, project overview and navigation                  |
 | `src/Training.tsx`                           | Sources, training analysis, rubric editor and versions            |
 | `src/Leads.tsx`                              | Lead research, import/export, evidence and review                 |
+| `src/LeadImport.tsx`                         | Import dialog: preview, quick screen, chosen groups               |
 | `src/Settings.tsx`                           | Provider, account and team settings                               |
 | `tests/`                                     | Regression tests and disposable browser fixture                   |
 | `docs/legacy/`                               | Archived documentation for the old CRM                            |
