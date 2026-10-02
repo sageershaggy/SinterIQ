@@ -1317,16 +1317,20 @@ export function createApp(options: {
     });
     res.json(outcome);
   });
-  app.post('/api/projects/:projectId/leads/:leadId/qualify', expensiveLimit, async (req, res) => {
-    const project = getProject(db, positiveId(req.params.projectId), req.user);
-    const before = getLead(db, project, positiveId(req.params.leadId));
+  /**
+   * One lead's qualification: research what the record is missing, read the company's own site,
+   * evaluate against the published training and store the run. The single-lead endpoint and the
+   * project-wide qualification job both come through here, so they can never judge differently.
+   */
+  async function qualifyLead(project: Project, leadId: number, actor: string) {
+    const before = getLead(db, project, leadId);
     if (!project.active_version || project.revision !== project.trained_revision)
       throw new HttpError(409, 'Publish the current project training before qualifying leads.');
     const version = db
       .prepare('SELECT snapshot_json FROM training_versions WHERE project_id=? AND version=?')
       .get(project.id, project.active_version) as { snapshot_json: string };
     const snapshot = JSON.parse(version.snapshot_json) as TrainingSnapshot;
-    const result = await single('lead:' + before.id, async () => {
+    return single('lead:' + before.id, async () => {
       const config = getAiConfig(db, secrets);
       if (!config.api_key && !options.generate)
         throw new HttpError(409, 'Configure an AI provider in Settings first.');
@@ -1335,7 +1339,7 @@ export function createApp(options: {
       const { research, facts } = await leadResearch.beforeQualification({
         project,
         lead: before,
-        actor: req.user.name,
+        actor,
         config,
       });
       const lead = getLead(db, project, before.id);
@@ -1435,7 +1439,7 @@ export function createApp(options: {
               config.provider,
               config.model,
               now(),
-              req.user.name,
+              actor,
             ).lastInsertRowid,
         );
         // A run that found no contact must not erase one that is already on the record: the
@@ -1463,7 +1467,7 @@ export function createApp(options: {
         audit(
           db,
           project.id,
-          req.user.name,
+          actor,
           'lead.qualified',
           lead.name + ': ' + qualified.decision + ' against training v' + project.active_version,
         );
@@ -1477,7 +1481,10 @@ export function createApp(options: {
         return { run_id: id, result: qualified };
       })();
     });
-    res.json(result);
+  }
+  app.post('/api/projects/:projectId/leads/:leadId/qualify', expensiveLimit, async (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    res.json(await qualifyLead(project, positiveId(req.params.leadId), req.user.name));
   });
   app.post('/api/projects/:projectId/leads/:leadId/review', (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
