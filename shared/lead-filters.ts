@@ -24,15 +24,33 @@ export const qualificationStates = [
   'REQUALIFY',
 ] as const;
 export type QualificationState = (typeof qualificationStates)[number];
-export const qualificationLabels: Record<QualificationState, string> = {
+/**
+ * "AI qualified" is not a state of its own: it is every lead an AI run has looked at, whatever
+ * it decided — everything but Raw leads. The facet offers it beside the states and ORs it with
+ * any of them; the counts and the table's badge only ever use the partition above.
+ */
+export const AI_QUALIFIED = 'AI_QUALIFIED';
+export type QualificationFilter = QualificationState | typeof AI_QUALIFIED;
+/** The AI qualification facet's values, in the order the filter bar lists them. */
+export const qualificationFilters = [
+  'RAW',
+  AI_QUALIFIED,
+  'QUALIFIED',
+  'NEEDS_REVIEW',
+  'NOT_QUALIFIED',
+  'REQUALIFY',
+] as const satisfies readonly QualificationFilter[];
+export const qualificationLabels: Record<QualificationFilter, string> = {
   RAW: 'Raw leads',
+  AI_QUALIFIED: 'AI qualified',
   QUALIFIED: 'Qualified',
   NEEDS_REVIEW: 'Needs review',
   NOT_QUALIFIED: 'Not qualified',
   REQUALIFY: 'Requalification needed',
 };
-export const qualificationHints: Record<QualificationState, string> = {
+export const qualificationHints: Record<QualificationFilter, string> = {
   RAW: 'No AI research run yet',
+  AI_QUALIFIED: 'Analysed by AI, whatever the result',
   QUALIFIED: 'Qualified on the current training',
   NEEDS_REVIEW: 'Open questions for a person to settle',
   NOT_QUALIFIED: 'Not a target on the current training',
@@ -199,7 +217,7 @@ export const ASSIGNED_TO_ANYONE = 'any';
 
 /** The facet half of a lead query, as the browser holds it. */
 export interface LeadFacets {
-  qualification: QualificationState[];
+  qualification: QualificationFilter[];
   score: FitScoreBand[];
   next_step: NextStepFilter[];
   call: CallStatus[];

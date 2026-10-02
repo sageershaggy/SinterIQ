@@ -126,7 +126,8 @@ function narrowed(rows: Array<Record<string, unknown>>, query: URLSearchParams) 
             ? 'NOT_QUALIFIED'
             : 'NEEDS_REVIEW';
   const tests: Record<string, (row: Record<string, unknown>, value: string) => boolean> = {
-    qualification: (row, value) => state(row) === value,
+    qualification: (row, value) =>
+      value === 'AI_QUALIFIED' ? Boolean(row.latest_run_id) : state(row) === value,
     next_step: (row, value) => row.next_step === value,
     assignee: (row, value) =>
       value === 'me'

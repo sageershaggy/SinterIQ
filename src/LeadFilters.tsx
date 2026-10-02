@@ -15,6 +15,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import {
+  AI_QUALIFIED,
   ASSIGNED_TO_ANYONE,
   ASSIGNED_TO_ME,
   UNASSIGNED,
@@ -35,9 +36,9 @@ import {
   nextStepFilters,
   nextStepHints,
   nextStepLabels,
+  qualificationFilters,
   qualificationHints,
   qualificationLabels,
-  qualificationStates,
   researchStatusHints,
   researchStatusLabels,
   researchStatuses,
@@ -85,7 +86,7 @@ const assigneeWords: Option[] = [
   { value: ASSIGNED_TO_ANYONE, label: 'Anyone (assigned)', hint: 'Assigned to any person' },
 ];
 const fixed = {
-  qualification: qualificationStates.map((value) => ({
+  qualification: qualificationFilters.map((value) => ({
     value,
     label: qualificationLabels[value],
     hint: qualificationHints[value],
@@ -694,5 +695,7 @@ export function countView(facets: LeadFacets, plain: boolean): 'total' | Qualifi
   if (!plain) return null;
   const count = activeFacetCount(facets);
   if (!count) return 'total';
-  return count === 1 && facets.qualification.length === 1 ? facets.qualification[0] : null;
+  const [only] = facets.qualification;
+  // "AI qualified" has no card: it spans four of them.
+  return count === 1 && facets.qualification.length === 1 && only !== AI_QUALIFIED ? only : null;
 }
