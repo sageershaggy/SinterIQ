@@ -21,7 +21,7 @@ import { api, date, label } from './api';
 import { Alert, Badge, ExternalLink, Spinner } from './ui';
 import { callOutcomeLabels } from '../shared/calls';
 import { crmEvents } from './LeadComments';
-import { ActivityLog, ContactsCard, type LogEvent } from './LeadInsight';
+import { ActivityLog, ContactsCard, RunFindings, type LogEvent } from './LeadInsight';
 
 /** What this record calls each field a research pass can fill. */
 const researchableLabels: Record<ResearchableField, string> = {
@@ -547,6 +547,7 @@ export function CompanyOverview({
                 {lead.stale ? 'Previous result · ' : ''}Training v{latest.training_version} ·{' '}
                 {date(latest.created_at)}
               </small>
+              <RunFindings run={latest} />
               {researchedFirst && (
                 <p className="research-before">
                   <Search size={14} />

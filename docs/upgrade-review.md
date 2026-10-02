@@ -18,9 +18,9 @@ Training is a project knowledge workflow: sources are analyzed into proposed rul
 
 ## Qualification decisions
 
-The provider must evaluate every positive criterion and exclusion in the same order as the approved rubric. Every non-unknown finding needs source references that exist in the captured evidence. Invalid JSON, incomplete assessments and invented source IDs fail without changing the lead.
+The provider must evaluate every positive criterion and exclusion in the same order as the approved rubric. Every non-unknown finding needs source references that exist in the captured evidence, and a met rule needs one retrieved from the web. Invalid JSON and incomplete assessments fail without changing the lead; a source ID still invented after the single repair retry is dropped, and its claim becomes unknown with a visible gap.
 
-The server computes the fit score as the percentage of positive criteria that match. A supported exclusion forces a score of zero. Automated qualification requires at least 70% fit, at least 70% confidence, no unknown exclusions or reported gaps, readable public website evidence, and website support for matched rules. Missing website evidence, low confidence or unsupported findings route to human review. A supported exclusion with sufficient evidence can yield `NOT_A_TARGET`.
+The server computes the fit score as the percentage of positive criteria that match. A supported exclusion forces a score of zero and `NOT_A_TARGET`. Otherwise a research or verification blocker (an unreadable website on record, a specific identity problem the model reports, or an unverified exclusion at 50% or more) yields `NEEDS_REVIEW`; without one, 50% or more is `QUALIFIED` and less is `NOT_A_TARGET`. Missing website evidence only lowers the score and stays visible as a gap; confidence is reported, not used to decide.
 
 Confidence remains a model estimate, not a calibrated probability. Source-reference validation checks that a cited source was actually supplied; it does not prove that the source's statements are true or that every inference is correct. Human review is retained for that purpose. Reviews preserve the original AI result and require written reasoning.
 

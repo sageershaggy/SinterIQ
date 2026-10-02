@@ -483,7 +483,7 @@ test('project scope prevents cross-project reads, source downloads, updates, qua
     f.dispose();
   }
 });
-test('malformed, invented-source and incomplete-rule AI results cannot change leads', async () => {
+test('malformed and incomplete-rule AI results cannot change leads; an invented source loses only its claim', async () => {
   let mode = 'invalid';
   const f = fixture(async (...args) => {
     if (mode === 'invalid') return { decision: 'QUALIFIED', score: 100 };
@@ -500,22 +500,28 @@ test('malformed, invented-source and incomplete-rule AI results cannot change le
       name: 'Validation Lead',
       website: 'https://example.com',
     });
-    for (mode of ['invalid', 'source', 'rule']) {
-      assert.equal(
-        (await f.post('/projects/' + project.id + '/leads/' + created.body.id + '/qualify', {}))
-          .status,
-        502,
-      );
-      const lead = (await f.agent.get('/api/projects/' + project.id + '/leads/' + created.body.id))
-        .body;
+    const base = '/projects/' + project.id + '/leads/' + created.body.id;
+    for (mode of ['invalid', 'rule']) {
+      assert.equal((await f.post(base + '/qualify', {})).status, 502);
+      const lead = (await f.agent.get('/api' + base)).body;
       assert.equal(lead.status, 'UNREVIEWED');
       assert.equal(lead.runs.length, 0);
     }
+    // A source that was never supplied, even after the retry, is dropped with its claim.
+    mode = 'source';
+    const response = await f.post(base + '/qualify', {});
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const result = response.body.result as Qualification;
+    assert.equal(result.criteria[0].outcome, 'UNKNOWN');
+    assert.ok(
+      result.gaps.some((gap) => gap.startsWith('The AI cited a source that was not supplied for:')),
+    );
+    assert.equal((await f.agent.get('/api' + base)).body.runs.length, 1);
   } finally {
     f.dispose();
   }
 });
-test('low confidence and missing public website evidence route to review', async () => {
+test('low confidence and a missing website lower the score; they do not route to review', async () => {
   const f = fixture(async (...args) => {
     const result = (await generated(...args)) as Qualification;
     if (!result.criteria) return result; // a research prompt, answered by the stub
@@ -535,10 +541,14 @@ test('low confidence and missing public website evidence route to review', async
       {},
     );
     assert.equal(response.status, 200);
-    assert.equal(response.body.result.decision, 'NEEDS_REVIEW');
-    assert.ok(
-      response.body.result.gaps.some((g: string) => g.includes('No readable public website')),
-    );
+    const result = response.body.result as Qualification;
+    // The record alone proves no rule, so nothing is met: Not a target, with the reasons shown.
+    assert.equal(result.decision, 'NOT_A_TARGET');
+    assert.equal(result.score, 0);
+    assert.equal(result.confidence, 50);
+    assert.deepEqual(result.blockers, []);
+    assert.ok(result.gaps.some((g) => g.startsWith('No public website evidence was available')));
+    assert.ok(result.gaps.some((g) => g.startsWith('No retrieved source for:')));
   } finally {
     f.dispose();
   }

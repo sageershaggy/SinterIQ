@@ -119,8 +119,10 @@ export const outreachSchema = z
     call_script: text(6000).default(''),
   })
   .strict();
+const blankOpportunity = () => ({ summary: '', source_ids: [] as string[] });
 export const qualificationSchema = z
   .object({
+    // Advisory only: the server sets the final decision (validateQualification in server/ai.ts).
     decision: decisionSchema,
     score: z.number().int().min(0).max(100),
     confidence: z.number().int().min(0).max(100),
@@ -136,6 +138,19 @@ export const qualificationSchema = z
       why_qualified: '',
       call_script: '',
     })),
+    // Added after the first answers were shaped, so a model that leaves either out, or writes
+    // null, has simply reported none: that is no reason to discard a complete evaluation.
+    blocker: z.preprocess((value) => value ?? '', text(2000)),
+    opportunity: z.preprocess(
+      (value) =>
+        typeof value === 'string'
+          ? { ...blankOpportunity(), summary: value }
+          : (value ?? blankOpportunity()),
+      z.object({
+        summary: text(2000).default(''),
+        source_ids: z.array(requiredText(100)).max(12).default([]),
+      }),
+    ),
   })
   .strict();
 export const feedbackSchema = z

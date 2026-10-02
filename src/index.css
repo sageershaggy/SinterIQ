@@ -3442,10 +3442,12 @@ th:last-child {
 }
 .evidence-tags {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
   margin-left: 27px;
 }
 .evidence-tags > span,
+.evidence-tags > a,
 .evidence-id {
   display: inline-block;
   background: #f0f5e7;
@@ -3454,6 +3456,40 @@ th:last-child {
   padding: 2px 5px;
   color: #677355;
   font-size: 8px;
+}
+/* A cited id that opens the page it came from. */
+.evidence-tags > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #315b37;
+}
+.evidence-tags > a:hover {
+  text-decoration: underline;
+}
+/* What a run found beyond the rules (RunFindings in LeadInsight.tsx). */
+.run-blockers p {
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 0;
+}
+.run-opportunity {
+  border-left: 2px solid #9db881;
+  padding: 2px 0 2px 18px;
+  margin: 20px 0;
+}
+.run-opportunity h3 {
+  font-size: 12px;
+  margin: 0 0 6px;
+}
+.run-opportunity p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #647a4e;
+  margin: 0 0 8px;
+}
+.run-opportunity .evidence-tags {
+  margin-left: 0;
 }
 .gaps-box {
   background: #fbf8ee;

@@ -72,7 +72,12 @@ function fixture() {
       score: state.decision === 'QUALIFIED' ? 91 : 62,
       confidence: 80,
       summary: 'The company manufactures chemical process pumps with its own engineering desk.',
-      // The server's own decision is conservative: an unknown rule holds a lead in review.
+      // The server decides: a lead is held in review only by a specific verification problem,
+      // never by an unknown rule or a gap.
+      blocker:
+        state.decision === 'NEEDS_REVIEW'
+          ? 'Two companies share this name and the evidence does not settle which one this is.'
+          : '',
       criteria: snapshot.rubric.criteria.map((criterion, index) => ({
         criterion,
         outcome: index === 0 || state.decision === 'QUALIFIED' ? 'MATCH' : 'UNKNOWN',

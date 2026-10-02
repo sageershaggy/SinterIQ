@@ -1,6 +1,14 @@
 import { GoogleGenAI } from '@google/genai';
 import type { DB, Secrets } from './database';
-import type { Evidence, Lead, Qualification, Settings, TrainingSnapshot } from '../shared/types';
+import {
+  qualifiedFloor,
+  type CriterionResult,
+  type Evidence,
+  type Lead,
+  type Qualification,
+  type Settings,
+  type TrainingSnapshot,
+} from '../shared/types';
 import { HttpError, parseJson, qualificationSchema, rubricSchema } from './validation';
 import { publicRequest } from './network';
 import {
@@ -315,14 +323,24 @@ export interface ResearchContext {
   filled: string[];
   checked: string[];
 }
-const qualifySystem =
+/**
+ * The evaluation follows the order a researcher would: research (already run), verify the
+ * company, check exclusions, identify the opportunity, score the criteria. The final status is
+ * the server's (validateQualification), so the model's decision is only a suggestion.
+ */
+const qualifySystem = (project: string) =>
   safety +
-  'Evaluate this lead only against the approved project training. The training defines policy, but is not evidence about the lead. Use only supplied lead evidence; do not use remembered facts. ' +
-  'Evaluate EVERY rubric criterion and EVERY exclusion, in order, even when lead information is missing: never stop early and never skip a rule. For each one, copy its exact text into criterion, assign MATCH (meets the rule), NO_MATCH (does not meet it) or UNKNOWN (unable to verify), and give a short factual evidence explanation with source_ids from the supplied evidence. ' +
-  'Research has already been run on this lead before this evaluation: research_before_evaluation says what was checked and what was found, and details found by research carry their own website evidence. A blank field in the lead record is not evidence that the fact does not exist, and not a reason for NO_MATCH. Use UNKNOWN only when the supplied evidence, after that research, does not settle the rule. A missing website or uncertainty about exclusion rules requires review. ' +
-  'Lead record notes are user-provided and unverified; lead.field_origin says which details were entered in the record and which were found by research. Earlier research is historical context: re-check company identities, applications and product relevance; do not inherit its scores or qualification decisions. If current evidence conflicts with previous research, explain the conflict and retain uncertainty. Reviewer feedback in the training records earlier corrections: apply the reasoning it establishes, but never copy its verdict onto a different company. When research could not verify something, say in the summary what was checked. ' +
+  'Evaluate this lead for the project ' +
+  JSON.stringify(project) +
+  ' against its approved training only. The training is policy, never evidence about the lead: never cite the training or its sources. Use only the supplied evidence, not remembered facts, and cite it only by the ids in evidence_index (E1, E2 …). Evidence of kind website was retrieved from the web; kind lead_record is the unverified record. Work in this order. ' +
+  '1. Research has already run: research_before_evaluation says what was checked and found, and details found by research carry their own website evidence. Lead record notes are user-provided and unverified; lead.field_origin says which details were entered in the record and which research found. Earlier research is historical context: re-check it, never inherit its scores or decisions, and explain any conflict with current evidence. ' +
+  '2. Verify: does the evidence describe the company in the record? Write blocker, one sentence, only for a specific problem: the evidence describes a different company than the record; several companies share the name and the evidence does not settle which one this is; the site is parked or for sale, or the company has closed; or the evidence contradicts itself on who the company is. Otherwise leave blocker empty. A blank field, a missing website or thin evidence is NOT a blocker: it only lowers the score. ' +
+  '3. Check exclusions: an exclusion is MATCH only when retrieved evidence shows EVERY part of its condition. A category alone (nonprofit, charity, government, public body, association) never matches an exclusion that also requires something else, such as "with no approved commercial opportunity": judge that part with step 4. When the evidence does not settle every part, the exclusion is UNKNOWN, not MATCH. ' +
+  '4. Identify the opportunity: in one or two sentences, what the project’s offering, as the training describes it, could do for this company, with source_ids naming the website evidence that shows the need. Leave summary and source_ids empty when no opportunity is evidenced. ' +
+  '5. Score the criteria: evaluate EVERY criterion and EVERY exclusion, in order, even when information is missing; never stop early or skip a rule. Copy each rule’s exact text into criterion, assign MATCH (meets it), NO_MATCH (does not meet it) or UNKNOWN (the evidence, after research, does not settle it), and give a short factual explanation with source_ids. A blank field is not evidence and not a reason for NO_MATCH. A MATCH needs website evidence; the lead record alone proves nothing. ' +
+  '6. The final status is set from the score and these checks, so decision is only your suggestion. Reviewer feedback in the training records earlier corrections: apply the reasoning it establishes, but never copy its verdict onto a different company. When research could not verify something, say in the summary what was checked. ' +
   'Also fill outreach. contact_name and contact_role: only a named business role holder that the supplied website evidence itself publishes (for example an engineering or purchasing contact on an imprint or team page), with contact_source_ids naming that website evidence. Never guess, infer from email patterns, or carry a name over from earlier research; leave both empty when the website does not publish one. why_qualified: two or three sentences citing the matched rules. call_script: a short factual call opener a researcher can read aloud, grounded only in the evidence — no invented references, discounts, urgency or claims about the company. Leave why_qualified and call_script empty when the lead is not a target. ' +
-  'Return {"decision":"QUALIFIED"|"NOT_A_TARGET"|"NEEDS_REVIEW","score":integer 0–100,"confidence":integer 0–100,"summary":string,"criteria":[{"criterion":string,"outcome":"MATCH"|"NO_MATCH"|"UNKNOWN","evidence":string,"source_ids":string[]}],"exclusions":[same structure],"gaps":string[],"next_steps":string[],"outreach":{"contact_name":string,"contact_role":string,"contact_source_ids":string[],"why_qualified":string,"call_script":string}}. Return concise decision reasoning, not speculative purchasing predictions.';
+  'Return {"decision":"QUALIFIED"|"NOT_A_TARGET"|"NEEDS_REVIEW","score":integer 0–100,"confidence":integer 0–100,"summary":string,"blocker":string,"opportunity":{"summary":string,"source_ids":string[]},"criteria":[{"criterion":string,"outcome":"MATCH"|"NO_MATCH"|"UNKNOWN","evidence":string,"source_ids":string[]}],"exclusions":[same structure],"gaps":string[],"next_steps":string[],"outreach":{"contact_name":string,"contact_role":string,"contact_source_ids":string[],"why_qualified":string,"call_script":string}}. Return concise decision reasoning, not speculative purchasing predictions.';
 export async function qualify(
   config: AiConfig,
   snapshot: TrainingSnapshot,
@@ -333,8 +351,11 @@ export async function qualify(
     research?: ResearchContext;
     /** Which record details were typed or imported, and which research found. */
     origin?: Record<string, 'record' | 'research'>;
+    /** Pages of the lead's own website that could not be read for this evaluation. */
+    unreadable?: string[];
   } = {},
 ): Promise<Qualification> {
+  const system = qualifySystem(snapshot.project.name);
   const input = {
     approved_training: snapshot,
     lead: {
@@ -347,16 +368,23 @@ export async function qualify(
       field_origin: context.origin || {},
     },
     research_before_evaluation: context.research || null,
+    // The citable ids, listed before the evidence itself. Inside it each id sits ahead of up to
+    // 15,000 characters of page text, and the training sources (numbered, titled, some of kind
+    // website) read like evidence too: without a list, answers cited sources never supplied.
+    evidence_index: evidence.map(({ id, kind, title, url }) => ({ id, kind, title, url })),
     evidence,
   };
-  let result = await call(config, qualifySystem, input);
+  let result = await call(config, system, input);
   // Two recoverable faults get one more chance, told exactly what was wrong: rules left out,
   // and evidence ids cited that were never supplied. Both are the model misreading the task
   // rather than a bad answer worth keeping, and both are far likelier on the leads that carry
   // little evidence — a lead with no website may supply no ids at all to cite.
   //
   // One combined repair pass, not one per fault: the cost stays at a single extra call, and an
-  // answer with both problems is fixed in one go instead of failing on the second.
+  // answer with both problems is fixed in one go instead of failing on the second. A citation
+  // that only writes a supplied id differently ("[E2]", the page URL) is not a fault and costs
+  // no call. After the repair, rules still missing save nothing; a citation still invented is
+  // dropped and its claim goes unverified (validateQualification), so the run is kept.
   const missing = missingRules(result, snapshot);
   const invented = invalidCitations(result, evidence);
   if (missing.length || invented.length) {
@@ -374,7 +402,7 @@ export async function qualify(
     );
     result = await call(
       config,
-      qualifySystem +
+      system +
         ' Your previous answer ' +
         faults.join(' and ') +
         '.' +
@@ -394,7 +422,23 @@ export async function qualify(
       },
     );
   }
-  return validateQualification(result, snapshot, evidence);
+  // A website on record that could not be read at all is a research blocker, not a low score:
+  // nobody has been able to look at the company yet. Any other website evidence (research
+  // findings for the same site) means someone has.
+  const unread =
+    !!lead.website &&
+    !!context.unreadable?.length &&
+    !evidence.some((item) => item.kind === 'website');
+  return validateQualification(result, snapshot, evidence, {
+    name: lead.name,
+    blockers: unread
+      ? [
+          'The website on record (' +
+            lead.website +
+            ') could not be read, so the company could not be researched.',
+        ]
+      : [],
+  });
 }
 /** Comparison form for rule text: numbering, quotes, case and spacing are not the rule. */
 const ruleKey = (value: string) =>
@@ -437,21 +481,73 @@ function alignRules<T extends { criterion: string }>(expected: string[], given: 
     missing: expected.filter((_, i) => !aligned[i]),
   };
 }
+/** A link reduced to what identifies the page: no scheme, "www.", trailing slash or case. */
+function pageKey(value: string) {
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : 'https://' + value);
+    return (
+      url.hostname.replace(/^www\./, '') +
+      url.pathname.replace(/\/+$/, '') +
+      url.search
+    ).toLowerCase();
+  } catch {
+    return '';
+  }
+}
 /**
- * Evidence ids an answer cites that were never supplied. An unreadable answer reports none.
+ * Reads a citation back to the supplied evidence ids it means, or none when it names nothing
+ * that was supplied. Models write the same citation many ways — "e2", "[E2]", "E2:", "Source
+ * E2", the page's own URL or its exact title — and none of those is an invented source, so only
+ * what matches no supplied item counts as one. Several items can share a URL (a fetched page
+ * and the research findings for that site): the page is the more specific source, and
+ * qualifyLead supplies pages first, so the first item with a URL wins.
+ */
+export function citationReader(evidence: Evidence[]) {
+  const ids = new Map(evidence.map((item) => [item.id.toUpperCase(), item.id]));
+  const pages = new Map<string, string>();
+  const titles = new Map<string, string>();
+  for (const item of evidence) {
+    const page = item.url ? pageKey(item.url) : '';
+    if (page && !pages.has(page)) pages.set(page, item.id);
+    const title = item.title.trim().toLowerCase();
+    if (title && !titles.has(title)) titles.set(title, item.id);
+  }
+  const one = (value: string) => {
+    const bare = value.match(
+      /^[[(]?\s*(?:(?:source|evidence)\s*(?:id)?\s*[:#-]?\s*)?([a-z]\d+)\s*[\]):.,;]*$/i,
+    );
+    return (
+      ids.get((bare?.[1] ?? value).toUpperCase()) ||
+      (/^(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)+(?:[/?#]\S*)?$/i.test(value)
+        ? pages.get(pageKey(value))
+        : undefined) ||
+      titles.get(value.toLowerCase())
+    );
+  };
+  return (cited: string): string[] => {
+    const value = cited.trim();
+    const whole = one(value);
+    if (whole) return [whole];
+    // "E2, E3" in one entry is two citations; whichever of them was supplied still counts.
+    return value.split(/\s*(?:[,;&]|\band\b)\s*/i).flatMap((part) => (part ? one(part) || [] : []));
+  };
+}
+/**
+ * Evidence ids an answer cites that were never supplied, however they are written. An
+ * unreadable answer reports none.
  *
- * Only criteria and exclusions count: outreach.contact_source_ids is repaired further down
- * (the contact is dropped with a gap note) rather than rejected, so an uncited contact must
- * not cost a retry.
+ * Only criteria and exclusions count: outreach.contact_source_ids and opportunity.source_ids are
+ * repaired further down (the contact or opportunity is dropped with a gap note) rather than
+ * retried, so an uncited one must not cost a call.
  */
 export function invalidCitations(raw: unknown, evidence: Evidence[]) {
   const parsed = qualificationSchema.safeParse(raw);
   if (!parsed.success) return [];
-  const supplied = new Set(evidence.map((e) => e.id));
+  const cite = citationReader(evidence);
   const invented = new Set<string>();
   for (const kind of ['criteria', 'exclusions'] as const)
     for (const item of parsed.data[kind])
-      for (const id of item.source_ids) if (!supplied.has(id)) invented.add(id);
+      for (const id of item.source_ids) if (!cite(id).length) invented.add(id);
   return [...invented];
 }
 /** The approved rules a raw model answer leaves out. An unreadable answer reports none. */
@@ -463,16 +559,71 @@ export function missingRules(raw: unknown, snapshot: TrainingSnapshot) {
     ...alignRules(snapshot.rubric.exclusions, parsed.data.exclusions).missing,
   ];
 }
+/**
+ * Words that only say information is missing or thin. The prompt tells the model that is not a
+ * blocker; one that reports it anyway ("Insufficient information to verify the company", "No
+ * website found") is ignored instead of parking the lead in review. Deliberately narrow: a
+ * blocker is generic only when EVERY word, once the company's own name and any web address are
+ * taken out, is on this list, so any concrete detail — another company, a parked domain, a
+ * closure, a contradiction — keeps it.
+ */
+const genericBlockerWords = new Set(
+  (
+    'a an the this that these those it its is are was were be been being has have had there ' +
+    'their of to for on in at about from with by and or as any all yet what whether how does do ' +
+    'no not none nothing cannot could would can unable only one very too few little limited lack ' +
+    'lacks lacking missing insufficient sufficient enough incomplete thin sparse minimal vague ' +
+    'unclear unknown unavailable available absent blank empty more further additional possible ' +
+    'information info data evidence details detail facts fact website websites site web page ' +
+    'pages online presence public publicly source sources record records field fields research ' +
+    'company lead business organization organisation industry sector location address country ' +
+    'city size employee employees headcount contact contacts description profile products ' +
+    'services linkedin google search results listing found find verify verified verification ' +
+    'determine determined assess assessed confirm confirmed establish established identify ' +
+    'identified provided provide supplied read checked evaluate evaluated make decision ' +
+    'qualification qualify fit known blocker blockers'
+  ).split(' '),
+);
+/** The model's blocker when it names a specific problem, or '' when it only says data is missing. */
+export function specificBlocker(blocker: string, companyName = '') {
+  const name = companyName.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const words = blocker
+    .toLowerCase()
+    .replace(/(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)+\S*/g, ' ')
+    .split(/[^\p{L}]+/u)
+    .filter((word) => word.length > 1 && !name.includes(word));
+  return words.some((word) => !genericBlockerWords.has(word)) ? blocker.trim() : '';
+}
+/**
+ * Checks the model's answer and sets the final status; the model's own decision is advisory.
+ * In order: an exclusion met with a retrieved source is Not a target at score 0; otherwise any
+ * research or verification blocker is Needs review (the score stays visible); otherwise the
+ * score alone decides, Qualified from qualifiedFloor and Not a target below it. Missing
+ * information lowers the score and stays visible as a gap; on its own it never causes review.
+ */
 export function validateQualification(
   raw: unknown,
   snapshot: TrainingSnapshot,
   evidence: Evidence[],
+  found: {
+    /** The company's name, so a blocker that only names it is still read as generic. */
+    name?: string;
+    /** Research blockers the server found itself, such as a website that could not be read. */
+    blockers?: string[];
+  } = {},
 ): Qualification {
   const parsed = qualificationSchema.safeParse(raw);
   if (!parsed.success)
     throw new HttpError(502, 'The AI returned an incomplete qualification. No result was saved.');
-  const result = parsed.data;
-  const ids = new Set(evidence.map((e) => e.id));
+  const { blocker, ...answer } = parsed.data;
+  const result: Qualification = answer;
+  const cite = citationReader(evidence);
+  const retrieved = new Set(evidence.filter((e) => e.kind === 'website').map((e) => e.id));
+  /** The supplied ids a list of citations means, and whether any of it named nothing supplied. */
+  const read = (cited: string[]) => {
+    const ids = cited.map(cite);
+    return { ids: [...new Set(ids.flat())], invented: ids.some((item) => !item.length) };
+  };
   for (const kind of ['criteria', 'exclusions'] as const) {
     const { aligned, missing } = alignRules(snapshot.rubric[kind], result[kind]);
     if (missing.length)
@@ -482,58 +633,75 @@ export function validateQualification(
           (missing.length === 1 ? 'missing rule' : missing.length + ' missing rules') +
           '. No result was saved. Please retry.',
       );
-    result[kind] = aligned as typeof result[typeof kind];
+    result[kind] = aligned as CriterionResult[];
     for (const item of result[kind]) {
-      if (item.source_ids.some((id) => !ids.has(id)))
-        throw new HttpError(
-          502,
-          'The AI cited evidence that was not supplied. No result was saved.',
-        );
-      if (item.outcome !== 'UNKNOWN' && item.source_ids.length === 0) {
+      const { ids, invented } = read(item.source_ids);
+      item.source_ids = ids;
+      if (item.outcome === 'UNKNOWN') continue;
+      // A claim counts only with a source that was supplied, and a met rule (criterion or
+      // exclusion) only with one retrieved from the web: the record alone proves nothing.
+      if (!ids.length) {
         item.outcome = 'UNKNOWN';
-        result.gaps.push('No supporting source for: ' + item.criterion);
+        result.gaps.push(
+          invented
+            ? 'The AI cited a source that was not supplied for: ' +
+                item.criterion +
+                '; it was not counted.'
+            : 'No supporting source for: ' + item.criterion,
+        );
+      } else if (item.outcome === 'MATCH' && !ids.some((id) => retrieved.has(id))) {
+        item.outcome = 'UNKNOWN';
+        result.gaps.push(
+          'No retrieved source for: ' +
+            item.criterion +
+            ' (only the unverified lead record was cited)',
+        );
       }
     }
   }
   const matched = result.criteria.filter((c) => c.outcome === 'MATCH').length;
   result.score = Math.round((matched / snapshot.rubric.criteria.length) * 100);
-  const exclusion = result.exclusions.find((c) => c.outcome === 'MATCH');
-  const uncertain = result.exclusions.some((c) => c.outcome === 'UNKNOWN');
-  const hasWebsite = evidence.some((e) => e.kind === 'website');
-  const allMatchedClaimsHaveWebsite = [...result.criteria, ...result.exclusions]
-    .filter((c) => c.outcome === 'MATCH')
-    .every((c) =>
-      c.source_ids.some((id) => evidence.some((e) => e.id === id && e.kind === 'website')),
-    );
-  const suggested = result.decision;
-  result.decision =
-    result.confidence < 70 || !hasWebsite || !allMatchedClaimsHaveWebsite
+  // Any exclusion still met here cites a page read from the web.
+  const excluded = result.exclusions.some((c) => c.outcome === 'MATCH');
+  const blockers = [...(found.blockers || [])];
+  const reported = specificBlocker(blocker, found.name);
+  if (reported) blockers.push(reported);
+  // Below the floor an unverified exclusion changes nothing. At or above it the lead cannot be
+  // called Qualified while something that might exclude it is unchecked.
+  if (!excluded && result.score >= qualifiedFloor)
+    for (const item of result.exclusions)
+      if (item.outcome === 'UNKNOWN')
+        blockers.push('Could not verify the exclusion: ' + item.criterion);
+  result.blockers = blockers;
+  result.decision = excluded
+    ? 'NOT_A_TARGET'
+    : blockers.length
       ? 'NEEDS_REVIEW'
-      : exclusion
-        ? 'NOT_A_TARGET'
-        : result.score >= 70 && !uncertain && !result.gaps.length
-          ? 'QUALIFIED'
-          : 'NEEDS_REVIEW';
-  if (exclusion) result.score = 0;
-  if (!hasWebsite)
-    result.gaps.push(
-      'No readable public website evidence was available. Verify the lead manually.',
-    );
-  if (!allMatchedClaimsHaveWebsite)
-    result.gaps.push('Some matched rules rely only on unverified lead notes.');
-  if (suggested !== result.decision)
-    result.gaps.push('The decision was adjusted by the evidence and confidence checks.');
+      : result.score >= qualifiedFloor
+        ? 'QUALIFIED'
+        : 'NOT_A_TARGET';
+  if (excluded) result.score = 0;
+  if (!retrieved.size)
+    result.gaps.push('No public website evidence was available, so no rule could be shown as met.');
+  // The opportunity is a claim about the company like any other, so it needs a retrieved source.
+  const opportunity = read(result.opportunity?.source_ids || []).ids;
+  if (result.opportunity?.summary && opportunity.some((id) => retrieved.has(id)))
+    result.opportunity.source_ids = opportunity;
+  else {
+    if (result.opportunity?.summary)
+      result.gaps.push('An opportunity was proposed without a retrieved source and was not kept.');
+    result.opportunity = { summary: '', source_ids: [] };
+  }
   // A contact is personal data, so it is kept only when the company's own site published it.
-  const contactCited = result.outreach.contact_source_ids.some((id) =>
-    evidence.some((e) => e.id === id && e.kind === 'website'),
-  );
+  const contact = read(result.outreach.contact_source_ids).ids;
+  const contactCited = contact.some((id) => retrieved.has(id));
   if (!contactCited || !result.outreach.contact_name) {
     if (result.outreach.contact_name && !contactCited)
       result.gaps.push('A contact name was proposed without website evidence and was discarded.');
     result.outreach.contact_name = '';
     result.outreach.contact_role = '';
     result.outreach.contact_source_ids = [];
-  }
+  } else result.outreach.contact_source_ids = contact;
   if (result.decision === 'NOT_A_TARGET') {
     result.outreach.why_qualified = '';
     result.outreach.call_script = '';

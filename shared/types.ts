@@ -2,6 +2,11 @@ export type Decision = 'QUALIFIED' | 'NOT_A_TARGET' | 'NEEDS_REVIEW';
 /** Outreach readiness derived from the server-computed fit score. */
 export type NextStep = 'CALL_READY' | 'SEND_EMAIL' | 'REVIEW_WITH_CLIENT' | 'NONE';
 export const nextStepBands = { call: 80, email: 70, review: 50 } as const;
+/**
+ * The fit score from which a lead with no exclusion and no research blocker is Qualified; below
+ * it the lead is Not a target. Missing information lowers the score, it never causes a review.
+ */
+export const qualifiedFloor = 50;
 export function nextStepFor(decision: Decision | 'UNREVIEWED', score: number | null): NextStep {
   if (decision === 'NOT_A_TARGET' || decision === 'UNREVIEWED' || score === null) return 'NONE';
   // An unresolved decision is a review regardless of how well it scored.
@@ -105,6 +110,13 @@ export interface Qualification {
   gaps: string[];
   next_steps: string[];
   outreach: Outreach;
+  /**
+   * Why the lead needs review: a research or verification problem, one sentence each. Missing
+   * information is never one. Runs saved before blockers existed do not have the field.
+   */
+  blockers?: string[];
+  /** What the project's offering could do for this company, kept only with a retrieved source. */
+  opportunity?: { summary: string; source_ids: string[] };
   /** The research pass that ran (or was reused) before this evaluation. */
   research?: import('./research').QualificationResearch;
 }
