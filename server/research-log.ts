@@ -31,6 +31,10 @@ function systemNotes(notes: string[]) {
  * Records a finished website research pass — including one that found nothing, because
  * "checked three domains and none named the company" is research that was done — and tells the
  * project team it completed. Called once per pass, after any values were applied.
+ *
+ * Research only gathers facts; the score comes from qualification. So a manual pass on a lead
+ * with no current qualification says the lead is ready for it, rather than leaving "nothing new
+ * found" to read like a verdict. A pass that qualification ran itself is followed by the result.
  */
 export function recordResearchPass(
   db: DB,
@@ -39,6 +43,7 @@ export function recordResearchPass(
   actor: string,
   outcome: ResearchOutcome,
   applied: string[],
+  origin: 'manual' | 'qualification' = 'manual',
 ) {
   db.prepare(
     `INSERT INTO research_log_passes
@@ -58,6 +63,15 @@ export function recordResearchPass(
     lead.id,
     projectId,
   );
+  // The same test as a lead's stale flag (serializeLead in server/app.ts).
+  const current = db
+    .prepare(
+      `SELECT 1 FROM leads l JOIN projects p ON p.id=l.project_id
+      WHERE l.id=? AND l.project_id=? AND l.latest_run_id IS NOT NULL
+      AND l.training_version IS p.active_version AND l.qualified_revision=l.revision
+      AND p.trained_revision IS p.revision`,
+    )
+    .get(lead.id, projectId);
   notifyLead(
     db,
     projectId,
@@ -67,7 +81,8 @@ export function recordResearchPass(
       ': research completed — ' +
       (applied.length
         ? 'filled ' + applied.map((field) => fieldLabel(field).toLowerCase()).join(', ')
-        : 'nothing new found'),
+        : 'nothing new found') +
+      (origin === 'manual' && !current ? ' · ready for qualification' : ''),
   );
 }
 
