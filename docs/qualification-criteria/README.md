@@ -22,10 +22,12 @@ upload the new version; each upload becomes a new source and each Train AI run a
 - Every criterion is evaluated for every lead as **Meets**, **Does not meet** or **Unable to verify**,
   with the evidence quoted. Unable to verify is only allowed after the research pass has looked.
 - **Meets** counts only with a source retrieved from the web (a page of the company's own site or
-  what research found there). A rule that only the lead list supports is Unable to verify, so a
-  criterion that depends on imported data is reported but does not add to the score.
-- An exclusion that matches with a retrieved source makes the lead Not a target, whatever else it
-  scores. An exclusion matches only when every part of it is shown: a nonprofit is not excluded by
+  what research found there) or with **your lead list**: the extra columns imported with the lead,
+  such as the event or the funding round, cited as "Your lead list". The list can show exactly the
+  facts it states; it is the team's data, not checked on the web. The lead record's own fields and
+  notes never count: a rule only they support is Unable to verify.
+- An exclusion that matches with a retrieved source or your lead list makes the lead Not a target,
+  whatever else it scores. An exclusion matches only when every part of it is shown: a nonprofit is not excluded by
   "non-commercial organization with no approved commercial opportunity" unless the evidence also
   shows there is no opportunity for the offering.
 - Before judging a lead, the system researches its missing details (website, industry, location) from
@@ -36,7 +38,7 @@ upload the new version; each upload becomes a new source and each Train AI run a
 - A criteria document usually describes one service category. With several in the library, Train AI
   proposes a category for each offer ("AI app development: …", "Marketing support: …"), and every
   lead is rated a good fit, possible fit or no need shown for each one, beside the fit score. Like a
-  met criterion, a good or possible fit needs a source retrieved from the web.
+  met criterion, a good or possible fit needs a source retrieved from the web or your lead list.
 
 ## What the fit score means
 
@@ -73,8 +75,10 @@ web, LinkedIn, funding databases or event sites. So:
 - Evidence that usually sits on a careers or news page (open roles, a funding announcement) is only
   found when the home or about page mentions it. Otherwise put it in the lead list.
 - Evidence that lives elsewhere (an event's exhibitor list, a funding database) should come in with
-  the lead list: import the exhibitor list or the funding export as the leads, with the event or the
-  round in a column. The evaluation reads it, but the lead list is not a retrieved source: a rule
-  only it supports is Unable to verify and does not add to the score.
+  the lead list: import the exhibitor list or the funding export as the leads, and put the event or
+  the round in its own column. It is kept with the lead and can be cited as "Your lead list", so a
+  rule about exactly that fact (taking part in the event, having raised the round) can be met and
+  adds to the score. A column whose header names a person or a way to reach one, and any value
+  holding an email address or phone number, is left out; up to 25 columns are kept per lead.
 
 Each document says which of its criteria depend on imported data.

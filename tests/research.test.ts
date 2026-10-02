@@ -889,6 +889,211 @@ test('an opportunity is kept only with a retrieved source', () => {
   assert.equal(older.decision, 'QUALIFIED');
 });
 
+// --- The team's own lead list as a source ------------------------------------------------
+
+const listItem: Evidence = {
+  id: 'E3',
+  kind: 'provided_list',
+  title: 'Your lead list (provided data)',
+  url: '',
+  content: 'Event: Hannover Messe 2026\nShowing: live pump test bench',
+  captured_at: '2026-10-01T00:00:00.000Z',
+};
+const judgeWithList = (raw: unknown, evidence = [recordItem, pageItem, listItem]) =>
+  validateQualification(raw, fiveRules, evidence, {
+    name: 'Status Pumps',
+    record: { city: 'Berlin' },
+  });
+
+test('a rule met from the team’s own lead list counts and scores; the record alone still does not', () => {
+  const raw = answer(2);
+  raw.criteria[3] = {
+    ...raw.criteria[3],
+    outcome: 'MATCH',
+    evidence: 'The lead list says it shows a live pump test bench at Hannover Messe 2026.',
+    // By its title, the list is still the list.
+    source_ids: ['Your lead list (provided data)'],
+  };
+  raw.criteria[4] = {
+    ...raw.criteria[4],
+    outcome: 'MATCH',
+    evidence: 'The record notes say so.',
+    source_ids: ['E1'],
+  };
+  const result = judgeWithList(raw);
+  assert.deepEqual(
+    result.criteria.map((item) => [item.outcome, item.source_ids]),
+    [
+      ['MATCH', ['E2']],
+      ['MATCH', ['E2']],
+      ['UNKNOWN', []],
+      ['MATCH', ['E3']],
+      ['UNKNOWN', ['E1']],
+    ],
+  );
+  assert.ok(
+    result.gaps.includes(
+      'No retrieved source for: Sells to the chemical industry (only the unverified lead record was cited)',
+    ),
+    JSON.stringify(result.gaps),
+  );
+  assert.equal(result.score, 60);
+  assert.equal(result.decision, 'QUALIFIED');
+
+  // An exclusion the list shows is met like one a page shows: Not a target at 0.
+  const excluded = answer(5);
+  excluded.exclusions[0] = {
+    ...excluded.exclusions[0],
+    outcome: 'MATCH',
+    evidence: 'The lead list files it under ball bearings.',
+    source_ids: ['E3'],
+  };
+  const out = judgeWithList(excluded);
+  assert.equal(out.exclusions[0].outcome, 'MATCH');
+  assert.equal(out.decision, 'NOT_A_TARGET');
+  assert.equal(out.score, 0);
+
+  // With no website read at all the list still counts for what it states, and the gap says so.
+  const listOnly = answer(0);
+  listOnly.criteria[3] = { ...listOnly.criteria[3], outcome: 'MATCH', source_ids: ['E2'] };
+  const thin = judgeWithList(listOnly, [recordItem, { ...listItem, id: 'E2' }]);
+  assert.equal(thin.criteria[3].outcome, 'MATCH');
+  assert.equal(thin.score, 20);
+  assert.ok(
+    thin.gaps.includes(
+      'No public website evidence was available, so only your lead list could show a rule as met.',
+    ),
+    JSON.stringify(thin.gaps),
+  );
+});
+
+test('the lead list can show the opportunity, but never a contact or a conflicting detail', () => {
+  const summary = 'They exhibit at Hannover Messe, where the offering is launched.';
+  const result = judgeWithList(
+    answer(3, {
+      opportunity: { summary, source_ids: ['E3'] },
+      outreach: {
+        contact_name: 'Jana Weber',
+        contact_role: 'Head of Purchasing',
+        contact_source_ids: ['E3'],
+        why_qualified: 'Builds pumps.',
+        call_script: 'Ask about the fair.',
+      },
+      conflicts: [
+        {
+          field: 'city',
+          record_value: 'Berlin',
+          found_value: 'Hannover',
+          quote: 'Event: Hannover Messe 2026',
+          source_ids: ['E3'],
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(result.opportunity, { summary, source_ids: ['E3'] });
+  // A contact is kept only from the company's own site, and a conflict only from its pages.
+  assert.equal(result.outreach.contact_name, '');
+  assert.deepEqual(result.outreach.contact_source_ids, []);
+  assert.ok(
+    result.gaps.includes('A contact name was proposed without website evidence and was discarded.'),
+  );
+  assert.deepEqual(result.conflicts, []);
+});
+
+test('the lead list’s own columns reach qualification as a source of their own', async () => {
+  const home = 'https://fair-pumps.example.com';
+  const unread = 'https://unread-fair-pumps.example.com';
+  const f = fixture(
+    {
+      qualify: (input) => {
+        const result = complete(input);
+        const evidence = (input as unknown as { evidence: Evidence[] }).evidence;
+        const list = evidence.find((item) => item.kind === 'provided_list');
+        if (list)
+          result.criteria[1] = {
+            ...result.criteria[1],
+            evidence: 'The lead list names its engineering stand at Hannover Messe.',
+            source_ids: [list.id],
+          };
+        return result;
+      },
+    },
+    { 'https://example.org': trainingSite, [home]: 'Fair Pumps manufactures pumps.' },
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id + '/leads';
+    const imported = await f.post(base + '/import/rows', {
+      leads: [
+        {
+          name: 'Fair Pumps',
+          website: home,
+          list_data: { Event: 'Hannover Messe 2026', Stand: 'Engineering hall 3' },
+        },
+        {
+          name: 'Unread Fair Pumps',
+          website: unread,
+          industry: 'Pumps',
+          list_data: { Event: 'Hannover Messe 2026' },
+        },
+      ],
+    });
+    assert.equal(imported.status, 200, JSON.stringify(imported.body));
+    const [fairId, unreadId] = imported.body.created_ids as number[];
+
+    const qualified = await f.post(base + '/' + fairId + '/qualify');
+    assert.equal(qualified.status, 200, JSON.stringify(qualified.body));
+    const input = f.calls.qualify[0] as {
+      evidence: Evidence[];
+      evidence_index: Array<{ id: string; kind: string }>;
+    };
+    assert.deepEqual(
+      input.evidence_index.map((item) => item.id + ':' + item.kind),
+      ['E1:lead_record', 'E2:provided_list', 'E3:website'],
+    );
+    // The record item stays what it was; the list is its own item, labelled as the team's data.
+    assert.ok(!input.evidence[0].content.includes('Hannover'));
+    assert.deepEqual(
+      { ...input.evidence[1], captured_at: '' },
+      {
+        id: 'E2',
+        kind: 'provided_list',
+        title: 'Your lead list (provided data)',
+        url: '',
+        content: 'Event: Hannover Messe 2026\nStand: Engineering hall 3',
+        captured_at: '',
+      },
+    );
+    assert.match(f.calls.systems.at(-1)!, /Kind provided_list is data the team imported/);
+    const result = qualified.body.result as Qualification;
+    assert.deepEqual(
+      result.criteria.map((item) => [item.outcome, item.source_ids]),
+      [
+        ['MATCH', ['E3']],
+        ['MATCH', ['E2']],
+      ],
+    );
+    assert.equal(result.score, 100);
+    assert.equal(result.decision, 'QUALIFIED');
+
+    // An unreadable website is still a blocker: the list says nothing about the site.
+    const blocked = await f.post(base + '/' + unreadId + '/qualify');
+    assert.equal(blocked.status, 200, JSON.stringify(blocked.body));
+    const held = blocked.body.result as Qualification;
+    assert.equal(held.criteria[1].outcome, 'MATCH');
+    assert.equal(held.score, 50);
+    assert.equal(held.decision, 'NEEDS_REVIEW');
+    assert.deepEqual(held.blockers, [
+      'The website on record (' +
+        unread +
+        ') could not be read, so the company could not be researched.',
+    ]);
+  } finally {
+    f.dispose();
+  }
+});
+
 // --- People on the company's own website -------------------------------------------------
 
 test('a contact is kept only with a sentence from the company site that names them', async () => {

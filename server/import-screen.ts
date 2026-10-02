@@ -16,7 +16,8 @@ const screenSystem = [
   'Never invent facts. Explain each verdict briefly; do not return private internal chain-of-thought.',
   'You quick-screen the rows of an uploaded lead list against the approved project training before they are imported.',
   'This is a cheap first pass on the row data alone: the rows that are kept get a detailed, evidence-backed qualification later, so do not try to settle everything here.',
-  'Judge each row ONLY by what that row itself says: its name, website address, industry, location, employee count, contact role and notes.',
+  'Judge each row ONLY by what that row itself says: its name, website address, industry, location, employee count, contact role, notes and list_data.',
+  'list_data holds the other columns of the uploader’s own list, label to value — for example the event a company exhibits at or the funding round it raised. It is the uploader’s data about that row: read it like the rest of the row.',
   'Do not use remembered or outside knowledge about a company, its name or its website, and do not look anything up.',
   'A company name or a domain is not proof of what a company does unless it says so in plain words.',
   'Choose one verdict per row.',
@@ -34,6 +35,8 @@ const screenSystem = [
 
 /** Notes can run to pages; the screen needs the gist, and the cost is per character. */
 const noteLimit = 600;
+/** The same reasoning for each list data value, which may run to 300 characters. */
+const listValueLimit = 120;
 
 export interface ScreenResult {
   verdict: ScreenOutcome;
@@ -43,9 +46,12 @@ export interface ScreenResult {
 
 /**
  * The fields the screen may read. The contact's name, email and phone stay out: they are
- * personal data and say nothing about whether the company fits.
+ * personal data and say nothing about whether the company fits. The list's other columns come
+ * along, already cleaned of personal details when the file was read (listData in server/import.ts).
  */
 function screenRow(lead: ImportLead, id: number) {
+  const cut = (value: string, limit: number) =>
+    value.length > limit ? value.slice(0, limit) + '…' : value;
   return {
     id,
     name: lead.name,
@@ -55,7 +61,13 @@ function screenRow(lead: ImportLead, id: number) {
     city: lead.city,
     employee_count: lead.employee_count,
     contact_role: lead.contact_role,
-    notes: lead.notes.length > noteLimit ? lead.notes.slice(0, noteLimit) + '…' : lead.notes,
+    notes: cut(lead.notes, noteLimit),
+    list_data: Object.fromEntries(
+      Object.entries(lead.list_data ?? {}).map(([label, value]) => [
+        label,
+        cut(value, listValueLimit),
+      ]),
+    ),
   };
 }
 

@@ -3467,6 +3467,12 @@ th:last-child {
 .evidence-tags > a:hover {
   text-decoration: underline;
 }
+/* The team's own list data: a source, but not a page, so it is tinted apart from the web ones. */
+.evidence-tags > span.is-list {
+  background: #fbf6e6;
+  border-color: #ecdcae;
+  color: #6d5f2c;
+}
 /* What a run found beyond the rules (RunFindings in LeadInsight.tsx). */
 .run-blockers p {
   font-size: 11px;

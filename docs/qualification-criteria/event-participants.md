@@ -50,8 +50,10 @@ A lead matching any of these is Not a target, whatever else it scores.
 ## Evidence the system can check
 
 Criterion 1 and 2 depend on the imported list: import the event's exhibitor, sponsor or speaker list
-as the leads, with columns for the event name and the participation role. The research pass cannot
-read the event's website. Criteria 3 to 5 can be verified from the company's own website.
+as the leads, and put the event name and the participation role each in its own column. They are
+kept with the lead and can be cited as "Your lead list", so criteria 1 and 2 can be met from them.
+The research pass cannot read the event's website. Criteria 3 to 5 can be verified from the
+company's own website.
 
 ## What the fit score means here
 

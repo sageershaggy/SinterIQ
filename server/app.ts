@@ -75,7 +75,7 @@ import {
   text,
   webUrl,
 } from './validation';
-import { readImportRows, mapImportRows } from './import';
+import { readImportRows, mapImportRows, storedListData } from './import';
 import {
   checkImportLead,
   importLeads,
@@ -191,6 +191,7 @@ function serializeLead(row: Lead, project: Project): Lead {
     // A superseded result must not keep advertising an outreach step.
     next_step: stale ? 'NONE' : nextStepFor(row.status, row.score),
     service_fit: storedServiceFit(row.service_fit),
+    list_data: storedListData(row.list_data),
   };
 }
 /** leads.service_fit as stored (server/service-fit-schema.ts); anything unreadable is none. */
@@ -1242,6 +1243,18 @@ export function createApp(options: {
           content: JSON.stringify({ name: lead.name, ...found.recordOnly, notes: lead.notes }),
         },
       ];
+      // The imported list's other columns are a source of their own: the team's data, citable
+      // for exactly what they state (an event, a funding round) but never checked on the web.
+      const listed = Object.entries(lead.list_data ?? {});
+      if (listed.length)
+        evidence.push({
+          id: 'E' + (evidence.length + 1),
+          kind: 'provided_list',
+          title: 'Your lead list (provided data)',
+          url: '',
+          captured_at: now(),
+          content: listed.map(([label, value]) => label + ': ' + value).join('\n'),
+        });
       const fetchFailures: string[] = [];
       if (lead.website) {
         const urls = [lead.website];

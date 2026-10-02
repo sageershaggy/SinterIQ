@@ -34,12 +34,16 @@ const blank: ImportLead = {
 };
 const rows = Array.from({ length: 120 }, (_, i) => {
   const industry = industries[i % industries.length];
+  // The file's other columns, kept with each lead as list data (the LinkedIn one is not).
+  const listData: Record<string, string> = { Event: 'GCC Leisure Expo 2026' };
+  if (i % 2) listData.Stand = 'Hall ' + ((i % 4) + 1);
   const lead = {
     ...blank,
     name: 'Harness Company ' + (i + 1) + (industry ? ' ' + industry.split(' ')[0] : ''),
     website: i % 5 === 2 ? '' : 'https://company-' + (i + 1) + '.example',
     industry,
     employee_count: i % 3 ? String(10 + i) : '',
+    list_data: listData,
   };
   return {
     row: i + 2,
@@ -49,6 +53,8 @@ const rows = Array.from({ length: 120 }, (_, i) => {
       lead.website,
       lead.industry,
       lead.employee_count,
+      lead.list_data.Event,
+      lead.list_data.Stand ?? '',
       i % 4 ? '' : '=HYPERLINK("x")',
     ],
     duplicate: i === 7 || i === 30 ? { id: 900 + i, name: lead.name + ' LLC' } : null,
@@ -56,7 +62,15 @@ const rows = Array.from({ length: 120 }, (_, i) => {
 });
 const preview: ImportPreview = {
   total: 123,
-  columns: ['company_name', 'company_website', 'industry', 'company_size', 'linkedin'],
+  columns: [
+    'company_name',
+    'company_website',
+    'industry',
+    'company_size',
+    'event',
+    'stand',
+    'linkedin',
+  ],
   rows,
   problems: [
     {

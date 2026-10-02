@@ -1565,7 +1565,7 @@ function LeadDetail({
                   <p className="rule-legend">
                     Every approved rule is evaluated as Meets, Does not meet or Unable to verify.
                     Unable to verify is used only after research could not settle it, and Meets
-                    needs a web source.
+                    needs a web source or your lead list.
                   </p>
                   <Criteria items={run.result.criteria} kind="criterion" evidence={run.evidence} />
                   <h3>Exclusion checks</h3>

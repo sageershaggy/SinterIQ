@@ -1,6 +1,8 @@
 import { parse } from 'csv-parse/sync';
 import yauzl from 'yauzl';
 import { HttpError } from './validation';
+import { personalDetail } from './enrich';
+import type { ListData } from '../shared/lead-import';
 
 export const importLimits = { rows: 5000, bytes: 4_000_000 };
 export const supportedImports = ['.csv', '.tsv', '.txt', '.json', '.xlsx'] as const;
@@ -36,6 +38,88 @@ function pick(row: Record<string, string>, field: string) {
 }
 /** A multi-value cell ("a@x.com,b@x.com") contributes only its first entry. */
 const firstOf = (value: string) => value.split(/[,;|]/)[0].trim();
+
+/** Every header an alias reads. Those columns are lead fields, so never list data. */
+const aliasHeaders = new Set(Object.values(columnAliases).flat());
+/** How much of a list's other columns one lead keeps (leads.list_data). */
+export const listDataLimits = { columns: 25, label: 60, value: 300, total: 4000 };
+/**
+ * Headers that name a person or a way to reach one. Such a column is left out whatever it holds:
+ * list data is about the company, and a contact is only ever kept from the company's own site.
+ */
+const personalHeader =
+  /(?:^|_)(?:e_?mails?|mail|phones?|mobile|cell|tel|telephone|fax|whatsapp|linkedin|twitter|facebook|instagram|xing|(?:first|last|full|given|family|sur|fore)_?name|persons?|people|contacts?|attendees?|speakers?|owners?|founders?|ceo|salutation|gender|birthday|birth_?date|dob)(?:_|$)/;
+/**
+ * Dates and amounts are not contact details, though their digits can run as long as a phone
+ * number's ("2026-03-15", "€12.500.000"), so they are set aside before personalDetail looks.
+ */
+const datesAndAmounts = new RegExp(
+  [
+    String.raw`\b(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b`,
+    String.raw`\b(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|[12]\d|3[01])[-/.](?:19|20)?\d{2}\b`,
+    String.raw`(?:[$€£¥]|\b(?:usd|eur|gbp|chf|aed|sar)\b)\s?\d[\d.,]*`,
+    String.raw`\d[\d.,]*\s?(?:[$€£¥]|(?:usd|eur|gbp|chf|aed|sar|million|mio|mn|bn|m|k)\b)`,
+  ].join('|'),
+  'gi',
+);
+/** An email address, a phone-like run of digits or a personal profile link. */
+const personalValue = (value: string) =>
+  personalDetail.test(value.replace(datesAndAmounts, ' ')) || /linkedin\.com\/in\//i.test(value);
+/** A normalized header as people read it: "funding_round" → "Funding round". */
+function columnLabel(key: string) {
+  const words = key.replace(/_/g, ' ');
+  return (words.charAt(0).toUpperCase() + words.slice(1)).slice(0, listDataLimits.label);
+}
+/**
+ * The list data a row keeps: each non-empty column that is not a lead field, under a readable
+ * label. Labels come from the normalized header rather than the file's own spelling, so the same
+ * column merges into the same entry whether the list arrives as CSV, JSON or Excel, and however
+ * its export capitalised it. This is the one rule whichever route the data comes through — a file
+ * read here, or rows the import dialog sends back — so nothing personal and nothing past the
+ * limits is ever stored: a column whose header names a person or a way to reach one is left out,
+ * and so is any value holding an email address, a phone-like number or a profile link.
+ */
+export function listData(entries: Record<string, unknown>): ListData {
+  const kept: ListData = {};
+  // The stored JSON's length: braces, then each entry's quoted label and value, colon and comma.
+  let size = 2;
+  for (const [header, raw] of Object.entries(entries)) {
+    if (Object.keys(kept).length >= listDataLimits.columns) break;
+    const key = normalizeHeader(header);
+    if (!key || aliasHeaders.has(key) || personalHeader.test(key)) continue;
+    if (typeof raw !== 'string' && typeof raw !== 'number') continue;
+    const value = String(raw)
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!value || personalValue(value)) continue;
+    const label = columnLabel(key);
+    if (Object.hasOwn(kept, label)) continue;
+    const text =
+      value.length > listDataLimits.value
+        ? value.slice(0, listDataLimits.value - 1).trimEnd() + '…'
+        : value;
+    const added = JSON.stringify(label).length + JSON.stringify(text).length + 2;
+    if (size + added > listDataLimits.total) continue;
+    kept[label] = text;
+    size += added;
+  }
+  return kept;
+}
+/** leads.list_data as stored (server/list-data-schema.ts); anything unreadable is none. */
+export function storedListData(value: unknown): ListData {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
 
 function decodeUtf8(buffer: Buffer, what: string) {
   try {
@@ -283,12 +367,14 @@ export interface RowProblem {
 }
 /**
  * Maps and validates rows. Invalid rows become reported problems instead of failing the
- * whole file, so one bad row in a large export cannot block every good one.
+ * whole file, so one bad row in a large export cannot block every good one. The columns no
+ * alias reads travel with each row as its list_data (listData) instead of being dropped: an
+ * exhibitor list's event or a funding export's round is often the very fact a rule asks about.
  */
 export function mapImportRows<T>(
   rows: Record<string, string>[],
   validate: (
-    candidate: Record<string, string>,
+    candidate: Record<string, unknown>,
   ) => { ok: true; value: T; warning?: string } | { ok: false; reason: string },
 ) {
   const leads: T[] = [];
@@ -312,6 +398,7 @@ export function mapImportRows<T>(
       contact_email: firstOf(pick(row, 'contact_email')),
       contact_phone: firstOf(pick(row, 'contact_phone')),
       notes: pick(row, 'notes'),
+      list_data: listData(row),
     };
     // Header row is line 1, so the first data row is line 2.
     const line = index + 2;

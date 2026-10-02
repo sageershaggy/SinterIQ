@@ -49,9 +49,11 @@ A lead matching any of these is Not a target, whatever else it scores.
 
 Criteria 1 to 3 are verifiable from the website only when the home or about page mentions the round;
 research does not read news or press pages on its own. In practice, import the funding export as
-the leads, with columns for the round date, amount, series and stated use of funds, and the
-criteria use it as provided data. Criteria 4 and 6 can be verified from the company's own website;
-criterion 5 when the home or about page mentions the growth.
+the leads, and put the round date, amount, series and stated use of funds each in its own column.
+They are kept with the lead and can be cited as "Your lead list", so criteria 1 to 3 can be met from
+them. Write amounts with separators or a currency (`$12,500,000`, `12.5M`): a bare long number reads
+like a phone number and is left out. Criteria 4 and 6 can be verified from the company's own
+website; criterion 5 when the home or about page mentions the growth.
 
 ## What the fit score means here
 

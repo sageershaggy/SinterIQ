@@ -13,7 +13,14 @@ export const screenBatchSize = 40;
 /** The reason given for a row the screen did not answer. */
 export const notScreened = 'Not screened';
 
-/** One company as the importer validated it: the same fields the lead form saves. */
+/**
+ * The columns of an uploaded list that are not lead fields — an event, a booth, a funding round —
+ * as label → value. Kept with the lead as the team's own data, never checked on the web, and
+ * cleaned of personal details on the server whichever route it arrives through.
+ */
+export type ListData = Record<string, string>;
+
+/** One company as the importer validated it: the fields the lead form saves, and the list data. */
 export interface ImportLead {
   name: string;
   website: string;
@@ -26,6 +33,8 @@ export interface ImportLead {
   contact_email: string;
   contact_phone: string;
   notes: string;
+  /** Import only: the lead form never sends it, so an edit can never wipe it. */
+  list_data?: ListData;
 }
 /** A row that cannot be imported, or that imports with something dropped. */
 export interface ImportProblem {
