@@ -670,7 +670,10 @@ test('an import keeps the list’s other columns as list data, never a personal 
     assert.ok(Object.keys(packed).length >= 12, JSON.stringify(Object.keys(packed)));
 
     // The one-shot file import keeps the same columns.
-    const oneShot = await f.upload(base + '/import', 'name,event,email\nSolo Pumps,Achema 2027,a@solo.example\n');
+    const oneShot = await f.upload(
+      base + '/import',
+      'name,event,email\nSolo Pumps,Achema 2027,a@solo.example\n',
+    );
     assert.equal(oneShot.status, 200, JSON.stringify(oneShot.body));
     assert.deepEqual(stored('Solo Pumps'), { Event: 'Achema 2027' });
     // A lead added by hand has none.

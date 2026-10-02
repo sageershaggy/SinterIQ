@@ -1085,7 +1085,9 @@ test('the lead list’s own columns reach qualification as a source of their own
     assert.equal(held.score, 50);
     assert.equal(held.decision, 'NEEDS_REVIEW');
     assert.deepEqual(held.blockers, [
-      'The website on record (' + unread + ') could not be read, so the company could not be researched.',
+      'The website on record (' +
+        unread +
+        ') could not be read, so the company could not be researched.',
     ]);
   } finally {
     f.dispose();

@@ -456,7 +456,7 @@
 }
 /* The imported list's other columns: the team's data, set apart from the researched facts. */
 .company-list-data {
-  margin-top: 14px;
+  margin: 14px 0 12px;
   padding: 12px 14px;
   border-left: 3px solid #ecdcae;
   background: #fdfaf0;

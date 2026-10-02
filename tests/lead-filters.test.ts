@@ -889,7 +889,13 @@ test('"Qualified by AI" is the AI’s own current verdict, whatever a reviewer d
     const project = await readyProject(f);
     const base = '/projects/' + project.id + '/leads';
     const ids: Record<string, number> = {};
-    for (const name of ['Said Pumps', 'Overruled Pumps', 'Bearings Works', 'Edited Pumps', 'Raw Pumps']) {
+    for (const name of [
+      'Said Pumps',
+      'Overruled Pumps',
+      'Bearings Works',
+      'Edited Pumps',
+      'Raw Pumps',
+    ]) {
       const created = await f.post(base, {
         name,
         website: 'https://' + name.toLowerCase().replace(' ', '-') + '.example.com',

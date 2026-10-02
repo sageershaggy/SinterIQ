@@ -37,9 +37,7 @@ export const AI_QUALIFIED = 'AI_QUALIFIED';
  */
 export const AI_SAID_QUALIFIED = 'AI_SAID_QUALIFIED';
 export type QualificationFilter =
-  | QualificationState
-  | typeof AI_QUALIFIED
-  | typeof AI_SAID_QUALIFIED;
+  QualificationState | typeof AI_QUALIFIED | typeof AI_SAID_QUALIFIED;
 /** The AI qualification facet's values, in the order the filter bar lists them. */
 export const qualificationFilters = [
   'RAW',
