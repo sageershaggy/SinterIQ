@@ -23,10 +23,12 @@ Configure Gemini or a public HTTPS OpenAI-compatible provider in **Workspace set
 2. **Build the training library** using PDF, DOCX, Markdown, text, written notes and captured public website pages. Open a source to inspect the extracted text or download the original document.
 3. **Analyze training** to generate a proposed rubric. Review the business context, positive criteria, exclusions and open questions. Save the draft, resolve open questions and choose **Approve & publish**.
 4. **Add or import leads** into that project. CSV, TSV, JSON and XLSX support company, website, location, industry, contact and notes fields. Import up to 5,000 rows / 4 MB; only the name is required. Duplicate matching stays within the project; choose whether to skip or update matches. Invalid rows and unusable websites are reported.
-5. **Qualify leads** individually or in batches of up to 20. The app captures the lead website and up to two relevant internal links, evaluates every training rule, and stores the evidence and result.
+5. **Qualify leads** individually or in batches of up to 20; **Stop qualification** beside the batch progress finishes the lead in progress and leaves the rest. The app captures the lead website and up to two relevant internal links, evaluates every training rule, and stores the evidence and result. **Research missing details** carries on into qualification when the lead has no current result, reusing that research rather than repeating it.
 6. **Review the reasoning** and source excerpts. Record a human decision with written reasoning. Export the project's qualification results as CSV when needed.
 
 Fit scores are computed from the proportion of positive criteria that match. Confirmed exclusions set the fit score to zero. Low-confidence, missing-evidence and uncertain results go to review. Changing training or lead context marks earlier results for requalification; previous analyses and human reviews remain available.
+
+While some leads carry results from earlier training, Lead research and the Training page say how many and offer **Requalify N leads** to administrators. The job runs on the server, one lead at a time, on the live training version: the leads needing requalification, those plus leads never analysed, or every lead in the project (for after the rules themselves change). Everyone on the project sees its progress; the person who started it or an administrator can **Stop qualification** at any time. It skips leads that are already current, stops by itself if the training changes, and posts a summary of qualified, not-a-target and needs-review results to the project updates. A restart resumes it. Project members can also queue an explicit list of their leads (`POST /api/projects/:projectId/qualification-jobs` with `scope: "ids"`), up to 500.
 
 Training here means approved project context and qualification rules supplied to the AI, not model fine-tuning. No fabricated demo results are used in the live app. Calling assignments, append-only call logs and email outreach accompany qualification; commissions, orders and CRM pipelines remain outside the product.
 
@@ -153,6 +155,7 @@ A CI workflow runs checks and the dependency audit on pushes and pull requests. 
 | `server/database.ts`                         | Schema, transactional legacy migration and audit events           |
 | `server/bootstrap.ts`                        | One-time starter website capture                                  |
 | `server/ai.ts`                               | Provider requests, training analysis and qualification validation |
+| `server/qualification-jobs.ts`               | Server-side requalification jobs, one lead at a time per project  |
 | `server/network.ts`                          | Safe public website access and source-link discovery              |
 | `server/documents.ts` / `document-worker.ts` | Isolated document extraction                                      |
 | `server/secrets.ts`                          | Encrypted provider-key storage                                    |
