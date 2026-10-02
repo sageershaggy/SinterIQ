@@ -1,6 +1,7 @@
 /**
  * Where a notification points. A lead notification opens that lead; a project notification is
- * about the project as a whole — training published, a new training draft, an import.
+ * about the project as a whole — training published, a new training draft, an import, a
+ * qualification job that finished or stopped.
  */
 export type NotificationScope = 'lead' | 'project';
 
@@ -9,6 +10,7 @@ export const projectNotificationKinds = [
   'training_published',
   'training_draft',
   'leads_imported',
+  'qualification_job',
 ] as const;
 export type ProjectNotificationKind = (typeof projectNotificationKinds)[number];
 
