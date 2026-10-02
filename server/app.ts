@@ -72,6 +72,15 @@ import {
   webUrl,
 } from './validation';
 import { readImportRows, mapImportRows } from './import';
+import {
+  checkImportLead,
+  importLeads,
+  importRowsPath,
+  insertLead,
+  installLeadImport,
+  requireImportable,
+} from './lead-import';
+import { csvCell } from '../shared/csv';
 import { criteriaTemplate, listCriteriaTemplates } from './criteria-templates';
 import {
   assertAddress,
@@ -259,75 +268,11 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, vi
   where += facetWhere(project, input, params, { viewerId });
   return { where, params };
 }
-const fieldLabels: Record<string, string> = {
-  name: 'Company name',
-  website: 'Website',
-  country: 'Country',
-  city: 'City',
-  industry: 'Industry',
-  employee_count: 'Employees',
-  contact_name: 'Contact name',
-  contact_role: 'Job title',
-  contact_email: 'Contact email',
-  contact_phone: 'Contact phone',
-  notes: 'Notes',
-};
-/** Turns a validator issue into something a person reading a spreadsheet can act on. */
-function friendlyIssue(path: string, message: string) {
-  const label = fieldLabels[path] || 'This row';
-  if (/expected string to have >=1|too small/i.test(message)) return label + ' is empty.';
-  if (/at most|too big|>=?d+ characters/i.test(message)) return label + ' is too long.';
-  if (/email/i.test(message)) return label + ' is not a valid email address.';
-  if (/phone/i.test(message)) return label + ' is not a valid phone number.';
-  if (/http/i.test(message)) return label + ' must be a complete http(s) address.';
-  return label + ': ' + message;
-}
 function getLead(db: DB, project: Project, id: number) {
   const row = db.prepare('SELECT * FROM leads WHERE id=? AND project_id=?').get(id, project.id) as
     Lead | undefined;
   if (!row) throw new HttpError(404, 'Lead not found in this project.');
   return serializeLead(row, project);
-}
-function insertLead(db: DB, projectId: number, lead: z.infer<typeof leadSchema>) {
-  const nKey = nameKey(lead.name),
-    wKey = websiteKey(lead.website);
-  // Two indexed probes rather than one OR across two columns: SQLite cannot use either of
-  // leads_project_name / leads_project_website for the OR, so it scanned the whole project
-  // once per imported row — 5,000 rows against 1,200 existing leads is six million rows of
-  // scanning inside a single transaction.
-  const byKey = (column: string, value: string) =>
-    value
-      ? (db
-          .prepare('SELECT id,name FROM leads WHERE project_id=? AND ' + column + '=? LIMIT 1')
-          .get(projectId, value) as { id: number; name: string } | undefined)
-      : undefined;
-  const duplicate = byKey('name_key', nKey) || byKey('website_key', wKey);
-  if (duplicate) return { duplicate };
-  const id = Number(
-    db
-      .prepare(
-        'INSERT INTO leads (project_id,name,name_key,website,website_key,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      )
-      .run(
-        projectId,
-        lead.name,
-        nKey,
-        lead.website,
-        wKey,
-        lead.country,
-        lead.city,
-        lead.industry,
-        lead.employee_count,
-        lead.contact_name,
-        lead.contact_role,
-        lead.contact_email,
-        lead.contact_phone,
-        lead.notes,
-        now(),
-        now(),
-      ).lastInsertRowid,
-  );
-  return { id };
 }
 
 export function createApp(options: {
@@ -421,7 +366,9 @@ export function createApp(options: {
       message: { error: 'Too many requests. Retry shortly.' },
     }),
   );
-  app.use(express.json({ limit: '1mb' }));
+  // Chosen import rows can be far above 1 MB; that route parses its own body after sign-in.
+  const parseJson = express.json({ limit: '1mb' });
+  app.use((req, res, next) => (importRowsPath.test(req.path) ? next() : parseJson(req, res, next)));
   installUnsubscribe(app, db);
   installAuth(app, db, production);
   installWorkspace(app, db, getProject);
@@ -946,6 +893,17 @@ export function createApp(options: {
     notifyLead(db, project.id, result.id!, 'created', input.name + ' was added.');
     res.status(201).json(getLead(db, project, result.id!));
   });
+  // Preview, quick screen and chosen-row import (server/lead-import.ts). The one-shot file
+  // import below stays for API callers and writes through the same importLeads.
+  installLeadImport(app, {
+    db,
+    secrets,
+    getProject,
+    generate: callAi,
+    aiReady: () => Boolean(options.generate || getAiConfig(db, secrets).api_key),
+    upload: upload.single('file'),
+    fileLimit,
+  });
   app.post(
     '/api/projects/:projectId/leads/import',
     fileLimit,
@@ -956,120 +914,21 @@ export function createApp(options: {
       // 'update' refreshes the leads that already exist instead of skipping them.
       const onDuplicate = req.body.on_duplicate === 'update' ? 'update' : 'skip';
       const rows = await readImportRows(req.file.originalname, req.file.buffer);
-      // Reasons name the field in plain words — never a raw validator message.
-      const { leads, problems, warnings } = mapImportRows(rows, (candidate) => {
-        // An unusable website must not cost us the company. Blank it, keep the lead, and
-        // say so — the researcher can add the real address and qualify it afterwards.
-        let warning = '';
-        if (candidate.website) {
-          const supplied = candidate.website;
-          let usable = false;
-          try {
-            usable = checkedUrl(supplied).hostname.includes('.');
-          } catch {
-            usable = false;
-          }
-          if (!usable) {
-            candidate.website = '';
-            warning =
-              'Imported without a website: "' +
-              supplied.slice(0, 120) +
-              '" is not a usable public address. Add the real website, then qualify the lead.';
-          }
-        }
-        const parsed = leadSchema.safeParse(candidate);
-        if (!parsed.success) {
-          const issue = parsed.error.issues[0];
-          return { ok: false, reason: friendlyIssue(String(issue.path[0] ?? ''), issue.message) };
-        }
-        return { ok: true, value: parsed.data, warning };
-      });
-      if (!leads.length)
-        throw new HttpError(
-          400,
-          'Nothing in that file could be imported as a company lead. This importer creates companies, so each row needs a Company Name (or Name) value. ' +
-            (problems.length
-              ? 'First problem — row ' + problems[0].row + ': ' + problems[0].reason
-              : ''),
-        );
-      const results = db.transaction(() => {
-        let created = 0,
-          updated = 0;
-        const duplicates: string[] = [];
-        for (const lead of leads) {
-          const result = insertLead(db, project.id, lead);
-          if (!result.duplicate) {
-            created++;
-            continue;
-          }
-          if (onDuplicate !== 'update') {
-            duplicates.push(lead.name);
-            continue;
-          }
-          // Only fill in values the CSV actually carries, so a sparse row never blanks a lead.
-          const current = db
-            .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
-            .get(result.duplicate.id, project.id) as Lead;
-          const merged = {
-            website: lead.website || current.website,
-            country: lead.country || current.country,
-            industry: lead.industry || current.industry,
-            notes: lead.notes || current.notes,
-          };
-          const changedFields =
-            merged.website !== current.website ||
-            merged.country !== current.country ||
-            merged.industry !== current.industry ||
-            merged.notes !== current.notes;
-          if (!changedFields) {
-            duplicates.push(lead.name);
-            continue;
-          }
-          db.prepare(
-            'UPDATE leads SET website=?,website_key=?,country=?,industry=?,notes=?,revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
-          ).run(
-            merged.website,
-            websiteKey(merged.website),
-            merged.country,
-            merged.industry,
-            merged.notes,
-            now(),
-            result.duplicate.id,
-            project.id,
-          );
-          updated++;
-        }
-        audit(
-          db,
-          project.id,
-          req.user.name,
-          'leads.imported',
-          created +
-            ' created; ' +
-            updated +
-            ' updated; ' +
-            duplicates.length +
-            ' unchanged duplicates skipped; ' +
-            warnings.length +
-            ' imported without a usable website; ' +
-            problems.length +
-            ' rows could not be read.',
-        );
-        if (created || updated)
-          notifyProject(
-            db,
-            project.id,
-            'leads_imported',
-            `Leads imported: ${created} new, ${updated} updated`,
-          );
-        return {
-          updated,
-          total: rows.length,
-          created,
-          skipped: duplicates.length,
-          duplicates,
-        };
-      })();
+      const { leads, problems, warnings } = mapImportRows(rows, checkImportLead);
+      requireImportable(leads.length, problems);
+      const results = {
+        total: rows.length,
+        ...importLeads(db, {
+          project,
+          actor: req.user.name,
+          leads,
+          onDuplicate,
+          notes: [
+            warnings.length + ' imported without a usable website',
+            problems.length + ' rows could not be read',
+          ],
+        }),
+      };
       // Rows that could not be read are reported, never silently dropped.
       res.json({
         ...results,
@@ -1093,11 +952,8 @@ export function createApp(options: {
           leadOrder(input.sort),
       )
       .all(...params) as Lead[];
-    const cell = (value: unknown) => {
-      let v = String(value ?? '');
-      if (/^[\s]*[=+@-]|^[\t\r\n]/.test(v)) v = "'" + v;
-      return '"' + v.replace(/"/g, '""') + '"';
-    };
+    // Formulas are neutralized by the one rule the import dialog's download uses too.
+    const cell = csvCell;
     const csv = [
       [
         'name',

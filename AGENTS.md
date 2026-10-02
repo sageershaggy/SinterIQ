@@ -61,6 +61,7 @@ This is a project-based training, lead research and qualification workspace. Sin
 - Never overwrite qualification history or the original AI result during human review.
 - Training edits, lead edits and concurrent reviews must not be silently overwritten by in-flight analyses.
 - Import validation is atomic. Duplicate matching is confined to a project. CSV exports neutralize spreadsheet formulas.
+- The import quick screen (server/import-screen.ts, server/lead-import.ts) is advisory and reads row data only: the row's own fields minus the contact's name, email and phone, against the published rubric — no source documents, no website fetching, no remembered facts. Every row is answered PASS, REJECT or UNCLEAR (rows left out after one retry that names them are "Not screened"), and a row already in the project never reaches the AI. Nothing is stored until the person chooses what to import; rejected rows are never stored (only their count reaches the audit log), and a passed row is not a qualified lead: the detailed, evidence-backed qualification is still required. Chosen rows go through importLeads, the same checks and transaction as the file import.
 - Do not log raw provider errors, keys, complete prompts or uploaded document contents.
 
 ## Data and migration

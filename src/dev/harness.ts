@@ -16,6 +16,7 @@ import type { CallOutcome } from '../../shared/types';
 import { shellRoutes } from './shell-fixtures';
 import { contactEnrollments, emailRoutes, emailWrites } from './emailFixtures';
 import { settingsRoutes, settingsWrites } from './settingsFixtures';
+import { importWrite } from './importFixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -717,8 +718,10 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       { status: 200, headers },
     );
   }
+  const imported = await importWrite(method, route, init);
+  if (imported) return imported;
   if (method !== 'GET') {
-    const write = [...settingsWrites, ...emailWrites].find(([verb, pattern]) => verb === method && pattern.test(route));
+    const write =[...settingsWrites, ...emailWrites].find(([verb, pattern]) => verb === method && pattern.test(route));
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
     return new Response(JSON.stringify(write ? write[2](body) : {}), { status: 200, headers });
   }

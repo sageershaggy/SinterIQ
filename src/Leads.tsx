@@ -4,10 +4,8 @@ import {
   ArrowRight,
   ArrowUpRight,
   BookOpen,
-  CheckCircle2,
   ChevronLeft,
   ClipboardCheck,
-  Download,
   FileText,
   Globe,
   History,
@@ -68,6 +66,7 @@ import {
   useLeadFacetOptions,
 } from './LeadFilters';
 import { AssignForCalling, AssignRowButton } from './LeadAssign';
+import { ImportModal } from './LeadImport';
 import {
   emptyFacets,
   facetParams,
@@ -863,6 +862,22 @@ export default function Leads({
               reload();
               notify(message);
             }}
+            onQualify={async (ids) => {
+              // The project-wide qualification job runs the detailed, evidence-backed pass.
+              await api(base + '/qualification-jobs', {
+                method: 'POST',
+                body: json({ scope: 'ids', lead_ids: ids }),
+              });
+              setImporting(false);
+              reload();
+              notify(
+                'Detailed qualification started for ' +
+                  ids.length +
+                  ' lead' +
+                  (ids.length === 1 ? '' : 's') +
+                  '.',
+              );
+            }}
           />
         )}
       </div>
@@ -1014,185 +1029,6 @@ function LeadForm({
           </button>
         </div>
       </form>
-    </Modal>
-  );
-}
-function ImportModal({
-  projectId,
-  onClose,
-  onImported,
-}: {
-  projectId: number;
-  onClose: () => void;
-  onImported: (text: string) => void;
-}) {
-  const [file, setFile] = useState<File | null>(null),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  const [onDuplicate, setOnDuplicate] = useState<'skip' | 'update'>('skip');
-  const [result, setResult] = useState<{
-    created: number;
-    updated: number;
-    skipped: number;
-    duplicates: string[];
-    invalid: number;
-    problems: Array<{ row: number; name: string; reason: string }>;
-    warned: number;
-    warnings: Array<{ row: number; name: string; reason: string }>;
-  } | null>(null);
-  return (
-    <Modal title="Import research leads" onClose={onClose}>
-      <div className="form-stack">
-        <p className="muted">
-          Import up to 5,000 leads from CSV, TSV, plain text, JSON or Excel (.xlsx). A lead already
-          in this project is matched on company name or website domain.
-        </p>
-        <div className="csv-example">
-          <strong>CSV column headers</strong>
-          <code>
-            name,website,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes
-          </code>
-          <small>
-            Only the company name is required. Common export headings are recognised too — Company
-            Name, Company Website, Company Size, Full Name, Job Title, Emails, Phone Numbers,
-            Locality. A row with no company name is reported and skipped, because a lead is a
-            company.
-          </small>
-        </div>
-        <a className="text-button" href="/branding/leads-template.csv" download>
-          <Download size={15} />
-          Download CSV template
-        </a>
-        <label className="upload-zone">
-          <Upload size={27} />
-          <strong>{file?.name || 'Choose a CSV file'}</strong>
-          <small>CSV · TSV · TXT · JSON · XLSX — up to 4 MB, 5,000 rows</small>
-          <input
-            type="file"
-            accept=".csv,.tsv,.txt,.json,.xlsx,text/csv,application/json"
-            disabled={busy}
-            onChange={(e) => {
-              setFile(e.target.files?.[0] || null);
-              setResult(null);
-            }}
-          />
-        </label>
-        <label>
-          When a lead is already in this project
-          <select
-            value={onDuplicate}
-            disabled={busy}
-            onChange={(e) => setOnDuplicate(e.target.value as 'skip' | 'update')}
-          >
-            <option value="skip">Skip it and keep what is already there</option>
-            <option value="update">Update it with the details in this file</option>
-          </select>
-          <small>
-            Updating fills blank fields and refreshes changed ones, then marks the lead for
-            requalification. It never blanks a value the CSV leaves empty.
-          </small>
-        </label>
-        {error && <Alert>{error}</Alert>}
-        {result && (
-          <div className="import-result">
-            <CheckCircle2 size={19} />
-            <strong>
-              {result.created} created · {result.updated} updated · {result.skipped} unchanged
-              {result.invalid > 0 ? ' · ' + result.invalid + ' skipped' : ''}
-            </strong>
-            {result.warned > 0 && (
-              <details>
-                <summary>{result.warned} imported without a usable website</summary>
-                <ul>
-                  {result.warnings.map((warning, i) => (
-                    <li key={i}>
-                      <strong>Row {warning.row}</strong>
-                      {warning.name ? ' · ' + warning.name : ''} — {warning.reason}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {result.invalid > 0 && (
-              <details>
-                <summary>
-                  {result.invalid} row{result.invalid === 1 ? '' : 's'} could not be imported
-                </summary>
-                <ul>
-                  {result.problems.map((problem, i) => (
-                    <li key={i}>
-                      <strong>Row {problem.row}</strong>
-                      {problem.name === '(no company)' ? '' : ' · ' + problem.name} —{' '}
-                      {problem.reason}
-                    </li>
-                  ))}
-                  {result.invalid > result.problems.length && (
-                    <li>…and {result.invalid - result.problems.length} more.</li>
-                  )}
-                </ul>
-              </details>
-            )}
-            {result.duplicates.length > 0 && (
-              <details>
-                <summary>Companies left unchanged</summary>
-                <ul>
-                  {result.duplicates.map((name, i) => (
-                    <li key={i}>{name}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-          </div>
-        )}
-        <div className="form-actions">
-          <button className="button secondary" onClick={onClose}>
-            {result ? 'Done' : 'Cancel'}
-          </button>
-          <button
-            className="button primary"
-            disabled={busy || !file || !!result}
-            onClick={async () => {
-              setBusy(true);
-              setError('');
-              try {
-                const data = new FormData();
-                data.set('file', file!);
-                data.set('on_duplicate', onDuplicate);
-                const result = await api<{
-                  created: number;
-                  updated: number;
-                  skipped: number;
-                  duplicates: string[];
-                  invalid: number;
-                  problems: Array<{ row: number; name: string; reason: string }>;
-                  warned: number;
-                  warnings: Array<{ row: number; name: string; reason: string }>;
-                }>('/projects/' + projectId + '/leads/import', {
-                  method: 'POST',
-                  body: data,
-                });
-                setResult(result);
-                onImported(
-                  result.created +
-                    ' created, ' +
-                    result.updated +
-                    ' updated, ' +
-                    result.skipped +
-                    ' unchanged' +
-                    (result.invalid ? ', ' + result.invalid + ' skipped' : '') +
-                    '.',
-                );
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {busy ? <Spinner text="Importing…" /> : 'Import leads'}
-          </button>
-        </div>
-      </div>
     </Modal>
   );
 }

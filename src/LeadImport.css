@@ -1,0 +1,247 @@
+/* The import dialog: file, quick screen, the groups to choose from, and the next step. */
+.lead-import {
+  min-width: 0;
+}
+.lead-import details > summary {
+  padding: 2px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4c6a3d;
+}
+.lead-import details + details {
+  border-top: 0;
+}
+.import-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf3;
+  color: #5d6a58;
+}
+.import-file > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.import-file strong {
+  font-size: 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.import-file small {
+  font-size: 11px;
+}
+/* A text-styled "choose another file": the input stays focusable but out of sight. */
+.import-file-change {
+  position: relative;
+  flex-direction: row;
+  cursor: pointer;
+}
+.import-file-change input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.import-file-change:focus-within {
+  text-decoration: underline;
+}
+.import-problems {
+  font-size: 11px;
+  color: #6f7660;
+}
+.import-problems ul,
+.import-rows {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Hundreds of rows scroll inside the group instead of pushing the buttons off the screen. */
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.import-screen-option {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #dbe9c9;
+  border-radius: 8px;
+  background: #f4f7ed;
+  cursor: pointer;
+}
+.import-screen-option input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.import-screen-option input:disabled + span {
+  opacity: 0.75;
+}
+.import-screen-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.import-screen-option strong {
+  font-size: 12px;
+  color: var(--ink);
+}
+.import-screen-option small {
+  font-weight: 400;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6c7659;
+}
+.import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.import-progress-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.import-progress-line strong {
+  flex: 1;
+  min-width: 0;
+}
+.import-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--pale);
+  overflow: hidden;
+}
+.import-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: #567845;
+  transition: width 0.3s ease;
+}
+.import-progress small {
+  font-size: 11px;
+  color: #6f7660;
+}
+.import-screen-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0;
+  color: var(--ink);
+}
+.import-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  min-width: 0;
+}
+.import-group.is-pass,
+.import-group.is-ready {
+  border-left-color: #8bb06f;
+}
+.import-group.is-unclear {
+  border-left-color: #d8b864;
+}
+.import-group.is-rejected {
+  border-left-color: #c98276;
+}
+.import-group.is-duplicate {
+  border-left-color: #b9c2b1;
+}
+.import-group-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink);
+}
+label.import-group-head {
+  cursor: pointer;
+}
+.import-group-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: #5d6a58;
+}
+.import-group > small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #717668;
+}
+.import-also {
+  font-weight: 550;
+  gap: 8px;
+}
+.import-rows li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-top: 1px solid #f0f2ec;
+  font-size: 11px;
+  color: var(--ink);
+}
+.import-rows li:first-child {
+  border-top: 0;
+}
+.import-row-reason {
+  color: #59644f;
+}
+.import-rows small {
+  font-size: 10px;
+  color: #7a8273;
+}
+.import-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 14px;
+  border: 1px solid #dbe9c9;
+  border-radius: 8px;
+  background: #f4f7ed;
+  color: #4a703d;
+}
+.import-next > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 200px;
+}
+.import-next strong {
+  font-size: 12px;
+  color: var(--ink);
+}
+.import-next small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6c7659;
+}
+.import-result > strong {
+  overflow-wrap: anywhere;
+}
