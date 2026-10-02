@@ -1,22 +1,25 @@
 /* Lead list: counts row, filter bar, active-filter chips, pager, column headers, merged
    fit/qualification cell and the assignment controls that replaced the "Assigned to" column. */
 
-/* ---------- Counts above the table ---------- */
+/* ---------- Counts above the table: one card per qualification state ---------- */
+/* Sized by the space the page gives it, not the window: the sidebar narrows that space. */
 .lead-counts-row {
   margin: 20px 0 22px;
+  container: lead-counts / inline-size;
 }
+/* Six in a row when there is room, three by two below that, two by three on a phone. */
 .lead-counts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
 }
 .lead-count {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  align-items: stretch;
+  gap: 6px;
   min-width: 0;
-  padding: 14px 16px 13px;
+  padding: 13px 14px 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: #fff;
@@ -35,67 +38,98 @@
   outline: 2px solid var(--green);
   outline-offset: 2px;
 }
-.lead-count[aria-pressed='true'] {
-  border-color: var(--green);
-  background: #f7faf2;
-  box-shadow: inset 0 0 0 1px var(--green);
-}
 .lead-count-label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #4d5a4d;
+}
+/* The number and its icon share a line, so the label above gets the card's whole width. */
+.lead-count-value {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  font-weight: 550;
-  color: #5d6a58;
+  justify-content: space-between;
+  gap: 8px;
 }
-.lead-count-label svg {
-  flex-shrink: 0;
-  color: #7a8672;
-}
-.lead-count-raw .lead-count-label svg {
-  color: #b09a52;
-}
-.lead-count-qualified .lead-count-label svg {
-  color: #5b8a45;
-}
-.lead-count-not_qualified .lead-count-label svg {
-  color: #b0564d;
-}
-.lead-count > strong {
+.lead-count-value > strong {
+  min-width: 0;
   font-size: 26px;
-  font-weight: 550;
+  font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.6px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+.lead-count-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #f0f2ec;
+  color: #7a8672;
+}
+.lead-count-raw .lead-count-icon {
+  background: #f8f3e3;
+  color: #a08640;
+}
+.lead-count-qualified .lead-count-icon {
+  background: #edf4e5;
+  color: #4a703d;
+}
+.lead-count-not_qualified .lead-count-icon {
+  background: #fbefec;
+  color: #a25952;
+}
 .lead-count > small {
   font-size: 10px;
+  line-height: 1.35;
   color: var(--muted);
 }
-.lead-counts-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 18px;
-  margin-top: 10px;
-  font-size: 11px;
+/* Needs review and Requalification needed wait on a person: the badge's amber while they hold
+   any lead, quiet at nought. */
+.lead-count.needs-attention {
+  border-color: #ecdcae;
+  background: #fffcf3;
 }
-.lead-counts-meta .text-button {
-  font-size: 11px;
-  font-weight: 550;
-  padding: 2px 0;
+.lead-count.needs-attention:hover {
+  border-color: #d8c07c;
 }
-.lead-counts-meta .text-button[aria-pressed='true'] {
-  text-decoration: underline;
+.lead-count.needs-attention .lead-count-icon {
+  background: #fbf1d6;
+  color: #8a6a24;
 }
-.lead-counts-meta .training-version {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  font-size: 10px;
-  color: #63754d;
+.lead-count.needs-attention .lead-count-value > strong {
+  color: #74561a;
+}
+/* After the attention tone, so the card being shown always reads as chosen. */
+.lead-count[aria-pressed='true'] {
+  border-color: var(--green);
+  background: #f7faf2;
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+/* Below this a card is too narrow for "Requalification needed" on one line. */
+@container lead-counts (max-width: 960px) {
+  .lead-counts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container lead-counts (max-width: 500px) {
+  .lead-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .lead-count {
+    padding: 11px 12px;
+  }
+  .lead-count-value > strong {
+    font-size: 22px;
+  }
+  .lead-count-icon {
+    width: 26px;
+    height: 26px;
+  }
 }
 
 /* ---------- Filters button ---------- */
@@ -393,21 +427,7 @@
   background: #fff;
 }
 
-@media (max-width: 1000px) {
-  .lead-counts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 @media (max-width: 560px) {
-  .lead-counts {
-    gap: 8px;
-  }
-  .lead-count {
-    padding: 11px 12px;
-  }
-  .lead-count > strong {
-    font-size: 22px;
-  }
   .lead-filters {
     margin-left: 0;
   }

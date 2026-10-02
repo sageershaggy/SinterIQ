@@ -6,13 +6,14 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  CircleAlert,
   CircleDashed,
+  RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   Users,
   X,
   XCircle,
-  BookOpen,
 } from 'lucide-react';
 import {
   AI_QUALIFIED,
@@ -455,8 +456,10 @@ export function LeadFilterChips({
 }
 
 /**
- * The counts above the table: the whole project, whatever the list is filtered by. Each one is
- * also the quickest way to that set of leads.
+ * The counts above the table: the whole project, whatever the list is filtered by. Every
+ * qualification state has a card of its own, shown even at nought, and each card is also the
+ * quickest way to that set of leads. The two that wait on a person turn warmer while they hold
+ * any.
  */
 export function LeadCounts({
   summary,
@@ -477,6 +480,8 @@ export function LeadCounts({
     detail: string;
     count: number | undefined;
     icon: ReactNode;
+    /** Leads here wait on a person: a review to record, or a run to repeat. */
+    attention?: boolean;
   }> = [
     {
       key: 'total',
@@ -495,9 +500,26 @@ export function LeadCounts({
     {
       key: 'QUALIFIED',
       label: 'Qualified',
-      detail: 'On the current training',
+      // The published training the counts are measured against.
+      detail: trainingVersion ? 'On training v' + trainingVersion : 'On the current training',
       count: summary?.qualified,
       icon: <CheckCircle2 size={16} />,
+    },
+    {
+      key: 'NEEDS_REVIEW',
+      label: 'Needs review',
+      detail: 'Open questions to settle',
+      count: summary?.needs_review,
+      icon: <CircleAlert size={16} />,
+      attention: true,
+    },
+    {
+      key: 'REQUALIFY',
+      label: 'Requalification needed',
+      detail: 'Training or lead changed',
+      count: summary?.requalify,
+      icon: <RefreshCw size={16} />,
+      attention: true,
     },
     {
       key: 'NOT_QUALIFIED',
@@ -507,16 +529,6 @@ export function LeadCounts({
       icon: <XCircle size={16} />,
     },
   ];
-  const others: Array<{ key: QualificationState; count: number; text: string }> = summary
-    ? ([
-        { key: 'NEEDS_REVIEW', count: summary.needs_review, text: 'need review' },
-        { key: 'REQUALIFY', count: summary.requalify, text: 'need requalification' },
-      ].filter((item) => item.count > 0) as Array<{
-        key: QualificationState;
-        count: number;
-        text: string;
-      }>)
-    : [];
   return (
     <div className="lead-counts-row">
       <div className="lead-counts" role="group" aria-label="Lead counts">
@@ -524,43 +536,28 @@ export function LeadCounts({
           <button
             key={tile.key}
             type="button"
-            className={'lead-count lead-count-' + tile.key.toLowerCase()}
+            className={
+              'lead-count lead-count-' +
+              tile.key.toLowerCase() +
+              (tile.attention && tile.count ? ' needs-attention' : '')
+            }
             aria-pressed={active === tile.key}
             title={
               tile.key === 'total' ? 'Show all leads' : 'Show only ' + tile.label.toLowerCase()
             }
             onClick={() => onPick(tile.key === 'total' ? null : tile.key)}
           >
-            <span className="lead-count-label">
-              {tile.icon}
-              {tile.label}
+            <span className="lead-count-label">{tile.label}</span>
+            <span className="lead-count-value">
+              <strong>{value(tile.count)}</strong>
+              <span className="lead-count-icon" aria-hidden="true">
+                {tile.icon}
+              </span>
             </span>
-            <strong>{value(tile.count)}</strong>
             <small>{tile.detail}</small>
           </button>
         ))}
       </div>
-      {(others.length > 0 || trainingVersion) && (
-        <div className="lead-counts-meta">
-          {others.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className="text-button"
-              aria-pressed={active === item.key}
-              onClick={() => onPick(item.key)}
-            >
-              {item.count.toLocaleString()} {item.text}
-            </button>
-          ))}
-          {trainingVersion && (
-            <span className="training-version">
-              <BookOpen size={14} />
-              Training v{trainingVersion}
-            </span>
-          )}
-        </div>
-      )}
     </div>
   );
 }
