@@ -52,7 +52,7 @@ export const qualificationHints: Record<QualificationFilter, string> = {
   RAW: 'No AI research run yet',
   AI_QUALIFIED: 'Analysed by AI, whatever the result',
   QUALIFIED: 'Qualified on the current training',
-  NEEDS_REVIEW: 'Open questions for a person to settle',
+  NEEDS_REVIEW: 'Research or verification could not finish; a person decides',
   NOT_QUALIFIED: 'Not a target on the current training',
   REQUALIFY: 'Training or the lead changed since the last run',
 };

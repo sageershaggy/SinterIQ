@@ -70,6 +70,16 @@ const { app, db } = createApp({
         evidence: 'The test source says bearings are purchased from suppliers.',
         source_ids: ['E2'],
       })),
+      // The first category is clearly evidenced, the second only hinted at, the last not at all.
+      service_fit: (approved_training.rubric.categories || []).map((category, index) => ({
+        category: category.name,
+        fit: index === 0 ? 'GOOD' : index === 1 ? 'POSSIBLE' : 'NONE',
+        reason:
+          index === 2
+            ? 'Nothing on the page mentions replacement parts.'
+            : 'The source describes pumps in corrosive chemical environments.',
+        source_ids: index === 2 ? [] : ['E2'],
+      })),
       gaps: [],
       next_steps: ['Confirm application requirements with the company.'],
     };
@@ -140,6 +150,11 @@ const server = app.listen(3100, '127.0.0.1', async () => {
         criteria: ['Manufactures industrial pumps', 'Has engineering authority'],
         exclusions: ['Manufactures bearings as its primary product'],
         questions: [],
+        categories: [
+          { name: 'Pump retrofits', description: 'Runs pumps in corrosive or hot service.' },
+          { name: 'Engineering support', description: 'Has its own engineering team to work with.' },
+          { name: 'Spare parts', description: 'Buys replacement components regularly.' },
+        ],
       },
     },
     'PUT',

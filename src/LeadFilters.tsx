@@ -511,7 +511,7 @@ export function LeadCounts({
     {
       key: 'NEEDS_REVIEW',
       label: 'Needs review',
-      detail: 'Open questions to settle',
+      detail: 'Blocked: research or verification',
       count: summary?.needs_review,
       icon: <CircleAlert size={16} />,
       attention: true,
