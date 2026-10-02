@@ -4,6 +4,7 @@ import type { DB } from './database';
 import { HttpError, positiveId, text } from './validation';
 import { pipelineStatusSql } from './crm';
 import {
+  AI_QUALIFIED,
   ASSIGNED_TO_ANYONE,
   ASSIGNED_TO_ME,
   UNASSIGNED,
@@ -16,7 +17,7 @@ import {
   leadSortValues,
   leadStatuses,
   nextStepFilters,
-  qualificationStates,
+  qualificationFilters,
   researchStatuses,
   type LeadFacetOptions,
   type LeadSort,
@@ -48,7 +49,7 @@ const day = z
   }, 'That date does not exist.');
 
 export const leadFacetShape = {
-  qualification: many(z.enum(qualificationStates)),
+  qualification: many(z.enum(qualificationFilters)),
   score: many(z.enum(fitScoreValues)),
   next_step: many(z.enum(nextStepFilters)),
   call: many(z.enum(callStatuses)),
@@ -116,6 +117,8 @@ export function callStatusSql() {
     " ELSE 'COMPLETED' END)"
   );
 }
+/** Analysed by AI at least once, whatever it decided: every qualification state but RAW. */
+export const analysedSql = 'l.latest_run_id IS NOT NULL';
 /** Lead status: the manual CRM status, New until someone moves it (server/crm.ts). */
 export const leadStatusSql = pipelineStatusSql;
 /** Email status: the outreach status the mail and funnel code maintains. */
@@ -198,13 +201,21 @@ export function facetWhere(
 ) {
   const nowMs = context.nowMs ?? Date.now();
   let where = '';
-  const oneOf = (expression: string, values: readonly Param[]) => {
+  const inList = (expression: string, values: readonly Param[]) => {
     params.push(...values);
-    return ' AND ' + expression + ' IN (' + values.map(() => '?').join(',') + ')';
+    return expression + ' IN (' + values.map(() => '?').join(',') + ')';
   };
+  const oneOf = (expression: string, values: readonly Param[]) =>
+    ' AND ' + inList(expression, values);
   const anyOf = (parts: string[]) => (parts.length ? ' AND (' + parts.join(' OR ') + ')' : '');
-  if (input.qualification.length)
-    where += oneOf(qualificationStateSql(project), input.qualification);
+  if (input.qualification.length) {
+    // "AI qualified" is every lead a run has looked at, ORed with any state chosen beside it.
+    const states = input.qualification.filter((value) => value !== AI_QUALIFIED);
+    where += anyOf([
+      ...(input.qualification.includes(AI_QUALIFIED) ? [analysedSql] : []),
+      ...(states.length ? [inList(qualificationStateSql(project), states)] : []),
+    ]);
+  }
   if (input.score.length)
     where += anyOf(
       fitScoreBands

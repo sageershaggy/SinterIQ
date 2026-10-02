@@ -2484,7 +2484,8 @@ test('the block editor renders email-safe HTML, merges the subject, and names a 
  * visible control, shipped twice and read as "not clickable". So nothing in the toolbar is a
  * select, and every select in the bar is itself the visible bordered control, named by a label
  * beside it, with no restyled appearance. If the filters are redesigned on purpose, update this
- * test in the same commit.
+ * test in the same commit. Owner feedback 4 did: Next step, Research status, City and the sort
+ * left the bar, the sort moved to the column headers, and the two dates share one cell.
  */
 test('the lead filters are one Filters button and a bar of plain labelled selects', () => {
   const source = fs.readFileSync(new URL('../src/Leads.tsx', import.meta.url), 'utf8');
@@ -2502,10 +2503,15 @@ test('the lead filters are one Filters button and a bar of plain labelled select
     filters.indexOf('export type Chip'),
   );
   const controls = bar.match(/<(select|input)\b/g) ?? [];
-  assert.ok((bar.match(/\{select\('/g) ?? []).length >= 10, 'the bar lost its facet selects');
-  // Each control is the element a <label htmlFor> names: first attribute, its field id.
-  assert.equal((bar.match(/<(select|input)\s+id=\{fieldId\}/g) ?? []).length, controls.length);
+  assert.ok((bar.match(/\{select\('/g) ?? []).length >= 8, 'the bar lost its facet selects');
+  // Each control is the element a <label htmlFor> names: first attribute, its id.
+  const ids = [...bar.matchAll(/<(?:select|input)\s+id=\{([^}]+)\}/g)].map((match) => match[1]);
+  assert.equal(ids.length, controls.length);
   assert.match(bar, /<label htmlFor=\{id \+ '-' \+ key\}>/);
+  for (const id of ids.filter((id) => id !== 'fieldId'))
+    assert.ok(bar.includes('<label htmlFor={' + id + '}>'), id + ' has no label');
+  assert.ok(!bar.includes("'sort'"), 'the sort is back in the bar; it lives on the headers');
+  assert.match(source, /<SortHeader column="name"/, 'the table headers no longer sort');
   const css = fs.readFileSync(new URL('../src/LeadFilters.css', import.meta.url), 'utf8');
   assert.ok(!/appearance\s*:/.test(css), 'the filter selects must keep their native appearance');
 });

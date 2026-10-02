@@ -63,6 +63,7 @@ import {
   LeadFilterChips,
   LeadFiltersButton,
   Pager,
+  SortHeader,
   countView,
   useLeadFacetOptions,
 } from './LeadFilters';
@@ -599,10 +600,21 @@ export default function Leads({
                         }
                       />
                     </th>
-                    <th>Company</th>
+                    <SortHeader column="name" facets={facets} onChange={changeFacets}>
+                      Company
+                    </SortHeader>
                     <th>Contact</th>
-                    <th>Industry / location</th>
-                    <th title={fitBandsText}>Fit score · qualification</th>
+                    <SortHeader column="industry" facets={facets} onChange={changeFacets}>
+                      Industry / location
+                    </SortHeader>
+                    <SortHeader
+                      column="score"
+                      facets={facets}
+                      onChange={changeFacets}
+                      title={fitBandsText}
+                    >
+                      Fit score · qualification
+                    </SortHeader>
                     <th>
                       <span className="visually-hidden">Open</span>
                     </th>

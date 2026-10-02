@@ -9,7 +9,14 @@ import { createApp } from '../server/app';
 import { addedRange, leadFacetShape } from '../server/lead-filters';
 import { HttpError } from '../server/validation';
 import { type Generate } from '../server/ai';
-import { facetParams, emptyFacets, type LeadFacetOptions } from '../shared/lead-filters';
+import {
+  AI_QUALIFIED,
+  facetParams,
+  emptyFacets,
+  qualificationFilters,
+  qualificationStates,
+  type LeadFacetOptions,
+} from '../shared/lead-filters';
 import type { Lead, Project, TrainingSnapshot } from '../shared/types';
 
 process.env.GEMINI_API_KEY = '';
@@ -347,6 +354,20 @@ test('every Filters facet narrows the lead list on the server', async () => {
       'Beta Law',
       'Delta Trading',
       'Eta Raw Researched',
+    ]);
+    // "AI qualified" is every analysed lead whatever the result, ORed with any state beside it.
+    const analysed = ['Alpha Pumps', 'Beta Law', 'Epsilon Works', 'Gamma Legal', 'Zeta Stale'];
+    assert.deepEqual(await names('qualification=AI_QUALIFIED'), analysed);
+    assert.deepEqual(await names('qualification=AI_QUALIFIED&qualification=RAW'), all);
+    assert.deepEqual(await names('qualification=AI_QUALIFIED&qualification=QUALIFIED'), analysed);
+    // Its parameters stay in placeholder order beside the other facets'.
+    assert.deepEqual(await names('qualification=RAW&qualification=AI_QUALIFIED&country=UAE'), [
+      'Eta Raw Researched',
+      'Zeta Stale',
+    ]);
+    assert.deepEqual(await names('qualification=AI_QUALIFIED&score=80_100&search=a'), [
+      'Alpha Pumps',
+      'Zeta Stale',
     ]);
     const stale = (await list('qualification=REQUALIFY')).body.leads as Lead[];
     assert.ok(stale.every((lead) => lead.stale));
@@ -699,6 +720,8 @@ test('the CSV export selects exactly the rows the list shows, in the same order'
       'assignee=any&research=NO_WEBSITE',
       'research=NO_WEBSITE&research=RESEARCHED&sort=name_desc',
       'next_step=REVIEW_WITH_CLIENT&sort=score_desc',
+      'qualification=AI_QUALIFIED&sort=industry_desc',
+      'qualification=AI_QUALIFIED&qualification=RAW&country=UAE',
     ];
     for (const query of queries) {
       const shown = ((await list(query)).body.leads as Lead[]).map((lead) => lead.name);
@@ -721,6 +744,19 @@ test('the CSV export selects exactly the rows the list shows, in the same order'
     const shown = ((await list(params)).body.leads as Lead[]).map((lead) => lead.name);
     assert.deepEqual(shown, ['Beta Law', 'Gamma Legal']);
     assert.deepEqual(await exportNames(params), shown);
+    // The same holds for "AI qualified", which is not one of the partition's states.
+    const analysed = new URLSearchParams(
+      facetParams({ ...emptyFacets, qualification: ['AI_QUALIFIED'], sort: 'score_asc' }, 0),
+    ).toString();
+    const analysedShown = ((await list(analysed)).body.leads as Lead[]).map((lead) => lead.name);
+    assert.deepEqual(analysedShown, [
+      'Epsilon Works',
+      'Gamma Legal',
+      'Beta Law',
+      'Zeta Stale',
+      'Alpha Pumps',
+    ]);
+    assert.deepEqual(await exportNames(analysed), analysedShown);
     // A bad facet is refused by the export too, not answered with everything.
     assert.equal((await f.agent.get('/api' + base + '/export?score=100')).status, 400);
   } finally {
@@ -789,6 +825,15 @@ test('the counts above the table cover the whole project and each one is a worki
       ['REQUALIFY', 'requalify'],
     ] as const)
       assert.equal((await list('qualification=' + state)).body.total, expected[key], state);
+    // "AI qualified" is offered beside the partition, not inside it: the counts keep their five
+    // states, and it finds exactly the leads outside Raw.
+    assert.deepEqual(
+      qualificationFilters.filter((value) => value !== AI_QUALIFIED),
+      [...qualificationStates],
+    );
+    const analysed = await list('qualification=AI_QUALIFIED');
+    assert.deepEqual(analysed.body.summary, expected);
+    assert.equal(analysed.body.total, expected.total - expected.raw);
   } finally {
     f.dispose();
   }
