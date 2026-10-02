@@ -26,7 +26,7 @@ Configure Gemini or a public HTTPS OpenAI-compatible provider in **Workspace set
 5. **Qualify leads** individually or in batches of up to 20. The app captures the lead website and up to two relevant internal links, evaluates every training rule, and stores the evidence and result.
 6. **Review the reasoning** and source excerpts. Record a human decision with written reasoning. Export the project's qualification results as CSV when needed.
 
-Fit scores are computed from the proportion of positive criteria that match. Confirmed exclusions set the fit score to zero. Low-confidence, missing-evidence and uncertain results go to review. Changing training or lead context marks earlier results for requalification; previous analyses and human reviews remain available.
+Fit scores are computed from the proportion of positive criteria that match with a retrieved web source. Confirmed exclusions set the fit score to zero. A score of 50–100 is Qualified and 0–49 Not a target; missing information lowers the score rather than sending a lead to review. Needs review is kept for research or verification blockers — a website that could not be read, evidence about another company, or an unverified exclusion on a lead scoring 50 or more — and the lead page lists them. Changing training or lead context marks earlier results for requalification; previous analyses and human reviews remain available.
 
 Training here means approved project context and qualification rules supplied to the AI, not model fine-tuning. No fabricated demo results are used in the live app. Calling assignments, append-only call logs and email outreach accompany qualification; commissions, orders and CRM pipelines remain outside the product.
 

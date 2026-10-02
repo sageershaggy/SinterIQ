@@ -21,7 +21,13 @@ upload the new version; each upload becomes a new source and each Train AI run a
 
 - Every criterion is evaluated for every lead as **Meets**, **Does not meet** or **Unable to verify**,
   with the evidence quoted. Unable to verify is only allowed after the research pass has looked.
-- An exclusion that matches makes the lead Not a target, whatever else it scores.
+- **Meets** counts only with a source retrieved from the web (a page of the company's own site or
+  what research found there). A rule that only the lead list supports is Unable to verify, so a
+  criterion that depends on imported data is reported but does not add to the score.
+- An exclusion that matches with a retrieved source makes the lead Not a target, whatever else it
+  scores. An exclusion matches only when every part of it is shown: a nonprofit is not excluded by
+  "non-commercial organization with no approved commercial opportunity" unless the evidence also
+  shows there is no opportunity for the offering.
 - Before judging a lead, the system researches its missing details (website, industry, location) from
   the company name, the email domain and the company's own website, and keeps a citation for every
   fact it adds.
@@ -30,7 +36,19 @@ upload the new version; each upload becomes a new source and each Train AI run a
 
 ## What the fit score means
 
-The fit score (0 to 100) says how strongly the evidence matches the criteria.
+The fit score (0 to 100) is the share of the criteria the evidence shows the company meets.
+
+The status follows from it:
+
+- **50 to 100 — Qualified.**
+- **0 to 49 — Not a target.** Missing information (no website, unknown industry or location) lowers
+  the score; it does not send a lead to review.
+- **Needs review** only when research or verification is blocked: the website on record could not be
+  read, the evidence describes another company or a name several companies share, the site is
+  parked or the company closed, or a lead scoring 50 or more has an exclusion that could not be
+  checked. The lead page lists the reason under "Why it needs review".
+
+Within Qualified, the score also sets the outreach step:
 
 - **80 to 100 — call-ready.** Most criteria are met with evidence and no exclusion applies. These go
   to the high-quality campaign and are worth a call.
@@ -52,6 +70,7 @@ web, LinkedIn, funding databases or event sites. So:
   found when the home or about page mentions it. Otherwise put it in the lead list.
 - Evidence that lives elsewhere (an event's exhibitor list, a funding database) should come in with
   the lead list: import the exhibitor list or the funding export as the leads, with the event or the
-  round in a column, and the criteria can use it as provided data.
+  round in a column. The evaluation reads it, but the lead list is not a retrieved source: a rule
+  only it supports is Unable to verify and does not add to the score.
 
 Each document says which of its criteria depend on imported data.
