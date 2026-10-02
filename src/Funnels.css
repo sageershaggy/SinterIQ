@@ -57,6 +57,12 @@
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+.funnel-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
 .funnel-tags {
   display: flex;
   flex-wrap: wrap;
@@ -121,6 +127,75 @@
   background: #fafbf7;
   font-size: 11px;
   color: #4d5a4d;
+}
+/* Enrolled → Sent → Opened → Replied → Follow-up → Bounced: one line that wraps on a phone. */
+.funnel-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: #4d5a4d;
+}
+.funnel-counts li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+.funnel-counts strong {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.funnel-counts-arrow {
+  margin-right: 1px;
+  color: #a3ad9b;
+}
+.funnel-counts .stage-replied strong {
+  color: var(--green);
+}
+.funnel-counts .stage-bounced strong {
+  color: #944b35;
+}
+.funnel-counts li.is-zero strong {
+  color: #9aa394;
+}
+.funnel-rates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.funnel-rates strong {
+  color: var(--ink);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.funnel-open-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+label.funnel-open-switch {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.funnel-open-setting small {
+  font-size: 11px;
+  color: var(--muted);
 }
 .funnel-progress ol {
   display: flex;
@@ -201,8 +276,127 @@ label.funnel-attach {
   width: 22px;
   height: 22px;
 }
+/* The funnel list's toolbar: search, the Filters button and the sort order. */
+.funnel-toolbar-wrap {
+  margin-bottom: 14px;
+}
+.funnel-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.funnel-search {
+  flex: 1 1 260px;
+  /* A label is column-flex here; keep the icon beside the box. */
+  flex-direction: row;
+  max-width: 420px;
+  min-height: 39px;
+  background: #fff;
+}
+.funnel-filters-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 39px;
+  padding: 0 12px;
+  border: 1px solid #dfe4d9;
+  border-radius: 7px;
+  background: #fff;
+  color: #4d5a4d;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.funnel-filters-button:hover {
+  border-color: #b5c3aa;
+}
+.funnel-filters-button.is-active,
+.funnel-filters-button[aria-expanded='true'] {
+  border-color: #9fb58c;
+  background: #f5f8ef;
+  color: var(--green);
+}
+.funnel-filters-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--green);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 650;
+}
+.funnel-filters-caret {
+  opacity: 0.6;
+  transition: transform 0.15s ease;
+}
+.funnel-filters-caret.is-open {
+  transform: rotate(180deg);
+}
+label.funnel-sort {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.funnel-sort select {
+  width: auto;
+  min-height: 39px;
+  padding: 8px 10px;
+}
+.funnel-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 12px 16px;
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcf8;
+}
+.funnel-filter-panel select,
+.funnel-filter-panel input {
+  padding: 8px 10px;
+}
+.funnel-results {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.funnel-results .text-button {
+  padding: 0;
+}
 @media (max-width: 760px) {
   .funnel-summary-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .funnel-summary {
+    padding: 16px;
+  }
+  .funnel-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .funnel-filters-button {
+    flex: 1;
+    justify-content: center;
+  }
+  label.funnel-sort {
+    flex: 1;
+    margin-left: 0;
+  }
+  .funnel-sort select {
+    flex: 1;
+    min-width: 0;
   }
 }

@@ -30,8 +30,9 @@ import {
   sanitizeEmailHtml,
   textToHtml,
 } from '../shared/email-html';
-import { suggestCampaign } from '../shared/funnels';
-import type { Funnel, FunnelProgress, FunnelStep } from '../shared/funnels';
+import { discardOpenToken, issueOpenToken, withOpenPixel } from './funnel-opens';
+import { emptyCounts, suggestCampaign } from '../shared/funnels';
+import type { Funnel, FunnelCounts, FunnelProgress, FunnelStep } from '../shared/funnels';
 import type { CampaignOption } from '../shared/email';
 import type { LeadContact } from '../shared/research';
 import type { Lead, Project, User } from '../shared/types';
@@ -157,6 +158,8 @@ export const funnelSchema = z
     audience: text(500).default(''),
     /** A matched incoming reply stops the rest of the sequence. On unless someone turns it off. */
     stop_on_reply: z.boolean().default(true),
+    /** "Count opens": each message's HTML carries a 1×1 image (server/funnel-opens.ts). */
+    track_opens: z.boolean().default(true),
     /** Which fit scores this campaign is for; the composer pre-selects by it. */
     fit_band: z.enum(['ANY', 'HIGH', 'EMAIL']).default('ANY'),
     steps: z
@@ -195,9 +198,10 @@ export const funnelSchema = z
     (f) => f.steps.slice(1).every((s) => s.delay_days >= 1),
     'Follow-ups must be at least one day apart.',
   );
-type StoredFunnel = Omit<Funnel, 'steps' | 'stop_on_reply'> & {
+type StoredFunnel = Omit<Funnel, 'steps' | 'stop_on_reply' | 'track_opens'> & {
   steps_json: string;
   stop_on_reply: number;
+  track_opens: number;
 };
 interface Job {
   id: number;
@@ -221,9 +225,10 @@ const selectFunnel = `SELECT f.*,
   (SELECT COUNT(*) FROM funnel_enrollments e WHERE e.funnel_id=f.id AND e.project_id=f.project_id AND e.status IN ('QUEUED','SENDING')) queued_count,
   (SELECT COUNT(*) FROM funnel_enrollments e WHERE e.funnel_id=f.id AND e.project_id=f.project_id AND e.status='CONVERTED') converted_count
   FROM funnels f`;
-const serialize = ({ steps_json, stop_on_reply, ...row }: StoredFunnel): Funnel => ({
+const serialize = ({ steps_json, stop_on_reply, track_opens, ...row }: StoredFunnel): Funnel => ({
   ...row,
   stop_on_reply: Boolean(stop_on_reply),
+  track_opens: Boolean(track_opens),
   steps: JSON.parse(steps_json),
 });
 /** The body a step shows in the rich-text editor, whichever way it was written. */
@@ -293,6 +298,84 @@ export function createFunnels(options: {
       byFunnel.set(row.funnel_id, entry);
     }
     return byFunnel;
+  }
+  /**
+   * How many of each funnel's sequences reached each stage, decided once per enrollment:
+   *
+   * - Sent: the delivery ledger holds an accepted message under one of the sequence's own
+   *   delivery keys ('funnel:<enrollment>:<message>', at most three messages), or the sequence
+   *   was started from the composer (schedule_json is set only by startCampaign, which runs once
+   *   its hand-sent first message was accepted). An uncertain delivery does not count.
+   * - Follow-up: message 2 or 3 was accepted.
+   * - Opened: a message of the sequence had its image loaded at least once.
+   * - Replied: the status says a reply, interest or conversion was recorded (what the progress
+   *   strip counts), or a reply from the sequence's own recipient was matched to the lead after
+   *   it joined, which is the only trace a reply leaves on a funnel that keeps going.
+   * - Bounced: a bounce stopped the sequence, or its address bounced for this lead after it
+   *   joined (a delivery report can arrive after the last message, when nothing is left to stop).
+   *
+   * The rates divide by the sequences sent and only count stages those sequences reached, so a
+   * response recorded before anything went out cannot push a rate past 100%.
+   */
+  function counts(projectId: number) {
+    const rows = db
+      .prepare(
+        `SELECT e.funnel_id,
+          e.schedule_json<>'' OR EXISTS (SELECT 1 FROM email_deliveries d WHERE d.status='SENT'
+            AND d.delivery_key IN ('funnel:'||e.id||':0','funnel:'||e.id||':1','funnel:'||e.id||':2')) sent,
+          EXISTS (SELECT 1 FROM email_deliveries d WHERE d.status='SENT'
+            AND d.delivery_key IN ('funnel:'||e.id||':1','funnel:'||e.id||':2')) followed_up,
+          EXISTS (SELECT 1 FROM funnel_message_opens o
+            WHERE o.project_id=e.project_id AND o.enrollment_id=e.id AND o.open_count>0) opened,
+          e.status IN ('REPLIED','INTERESTED','CONVERTED') OR EXISTS (SELECT 1 FROM incoming_messages i
+            WHERE i.project_id=e.project_id AND i.lead_id=e.lead_id
+              AND lower(trim(i.from_email))=e.recipient AND i.received_at>=e.created_at) replied,
+          e.stop_cause='BOUNCED' OR EXISTS (SELECT 1 FROM email_bounces b
+            WHERE b.recipient=e.recipient AND b.project_id=e.project_id AND b.lead_id=e.lead_id
+              AND b.created_at>=e.created_at) bounced
+        FROM funnel_enrollments e WHERE e.project_id=?`,
+      )
+      .all(projectId) as Array<{
+      funnel_id: number;
+      sent: number;
+      followed_up: number;
+      opened: number;
+      replied: number;
+      bounced: number;
+    }>;
+    const tallies = new Map<number, FunnelCounts & { sent_opened: number; sent_replied: number }>();
+    for (const row of rows) {
+      const tally = tallies.get(row.funnel_id) || {
+        ...emptyCounts,
+        sent_opened: 0,
+        sent_replied: 0,
+      };
+      tally.enrolled++;
+      tally.sent += row.sent;
+      tally.followed_up += row.followed_up;
+      tally.opened += row.opened;
+      tally.replied += row.replied;
+      tally.bounced += row.bounced;
+      tally.sent_opened += row.sent && row.opened;
+      tally.sent_replied += row.sent && row.replied;
+      tallies.set(row.funnel_id, tally);
+    }
+    const byFunnel = new Map<number, FunnelCounts>();
+    for (const [funnelId, { sent_opened, sent_replied, ...tally }] of tallies)
+      byFunnel.set(funnelId, {
+        ...tally,
+        open_rate: tally.sent ? sent_opened / tally.sent : null,
+        reply_rate: tally.sent ? sent_replied / tally.sent : null,
+      });
+    return byFunnel;
+  }
+  /** Moves "Recently updated": an edit, a start or pause, the open switch, new enrollments. */
+  function touch(projectId: number, funnelId: number) {
+    db.prepare('UPDATE funnels SET updated_at=? WHERE id=? AND project_id=?').run(
+      now(),
+      funnelId,
+      projectId,
+    );
   }
   function eligible(
     project: Project,
@@ -703,6 +786,7 @@ export function createFunnels(options: {
         now(),
         now(),
       );
+      touch(project.id, plan.funnel.id);
       audit(
         db,
         project.id,
@@ -796,6 +880,7 @@ export function createFunnels(options: {
         now(),
         now(),
       );
+      touch(project.id, funnel.id);
       // Counted, not named: a person's name stays out of the audit trail.
       audit(
         db,
@@ -824,7 +909,8 @@ export function createFunnels(options: {
     });
     app.get(base, (req, res) => {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
-      const counts = progress(p.id);
+      const where = progress(p.id);
+      const reached = counts(p.id);
       res.json({
         funnels: (
           db
@@ -834,7 +920,8 @@ export function createFunnels(options: {
           .map(serialize)
           .map((funnel) => ({
             ...funnel,
-            progress: counts.get(funnel.id) || {
+            counts: reached.get(funnel.id) || emptyCounts,
+            progress: where.get(funnel.id) || {
               waiting: [0, 0, 0],
               replied: 0,
               bounced: 0,
@@ -860,7 +947,7 @@ export function createFunnels(options: {
       const id = Number(
         db
           .prepare(
-            'INSERT INTO funnels (project_id,name,audience,steps_json,stop_on_reply,fit_band,created_at,created_by) VALUES (?,?,?,?,?,?,?,?)',
+            'INSERT INTO funnels (project_id,name,audience,steps_json,stop_on_reply,track_opens,fit_band,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',
           )
           .run(
             p.id,
@@ -868,7 +955,9 @@ export function createFunnels(options: {
             input.audience,
             JSON.stringify(steps),
             input.stop_on_reply ? 1 : 0,
+            input.track_opens ? 1 : 0,
             input.fit_band,
+            now(),
             now(),
             req.user.name,
           ).lastInsertRowid,
@@ -891,13 +980,15 @@ export function createFunnels(options: {
       const input = funnelSchema.parse(body);
       const steps = storedSteps(p.id, input.steps);
       db.prepare(
-        'UPDATE funnels SET name=?,audience=?,steps_json=?,stop_on_reply=?,fit_band=?,revision=revision+1 WHERE id=? AND project_id=?',
+        'UPDATE funnels SET name=?,audience=?,steps_json=?,stop_on_reply=?,track_opens=?,fit_band=?,revision=revision+1,updated_at=? WHERE id=? AND project_id=?',
       ).run(
         input.name,
         input.audience,
         JSON.stringify(steps),
         input.stop_on_reply ? 1 : 0,
+        input.track_opens ? 1 : 0,
         input.fit_band,
+        now(),
         f.id,
         p.id,
       );
@@ -906,9 +997,19 @@ export function createFunnels(options: {
     app.patch(base + '/:funnelId', adminOnly, (req, res) => {
       const p = getProject(db, positiveId(req.params.projectId), req.user);
       const f = getFunnel(p.id, positiveId(req.params.funnelId));
+      // "Count opens" can change on a funnel that is already in use: it is not part of the
+      // sequence a lead was checked against, and only decides what messages not yet sent carry.
       const input = z
-        .object({ status: z.enum(['ACTIVE', 'PAUSED']), revision: z.number().int().positive() })
+        .object({
+          status: z.enum(['ACTIVE', 'PAUSED']).optional(),
+          track_opens: z.boolean().optional(),
+          revision: z.number().int().positive(),
+        })
         .strict()
+        .refine(
+          (value) => value.status !== undefined || value.track_opens !== undefined,
+          'Choose a status or whether to count opens.',
+        )
         .parse(req.body);
       if (input.revision !== f.revision)
         throw new HttpError(409, 'The funnel changed. Refresh before saving.');
@@ -921,12 +1022,20 @@ export function createFunnels(options: {
           );
         funnelSchema.parse({ name: f.name, audience: f.audience, steps: f.steps });
       }
-      db.prepare('UPDATE funnels SET status=?,revision=revision+1 WHERE id=? AND project_id=?').run(
-        input.status,
-        f.id,
-        p.id,
-      );
-      audit(db, p.id, req.user.name, 'funnel.' + input.status.toLowerCase(), f.name);
+      const trackOpens = input.track_opens ?? f.track_opens;
+      db.prepare(
+        'UPDATE funnels SET status=?,track_opens=?,revision=revision+1,updated_at=? WHERE id=? AND project_id=?',
+      ).run(input.status ?? f.status, trackOpens ? 1 : 0, now(), f.id, p.id);
+      if (input.status)
+        audit(db, p.id, req.user.name, 'funnel.' + input.status.toLowerCase(), f.name);
+      if (trackOpens !== f.track_opens)
+        audit(
+          db,
+          p.id,
+          req.user.name,
+          trackOpens ? 'funnel.opens_counted' : 'funnel.opens_not_counted',
+          f.name,
+        );
       res.json(getFunnel(p.id, f.id));
     });
     app.get(base + '/:funnelId/enrollments', (req, res) => {
@@ -1048,6 +1157,7 @@ export function createFunnels(options: {
           );
           count++;
         }
+        if (count) touch(p.id, f.id);
         audit(
           db,
           p.id,
@@ -1218,38 +1328,55 @@ export function createFunnels(options: {
         // a different merged address, so re-check suppression and the three-email limit on
         // the address that will actually leave the mailbox (before outreach reserves a slot).
         assertCanContact(db, sendTo);
-        await outreach.send({
-          projectId: job.project_id,
-          leadId: job.lead_id,
-          actor: job.created_by,
-          config,
-          to: sendTo,
-          subject: built.subject,
-          text: built.body,
-          html:
-            built.html ||
-            renderEmail({
-              body: built.body,
-              fromName: config.from_name,
-              fromEmail: config.from_email,
-              signature: config.signature,
-              leadName: lead.name,
-              includeFooter: false,
-            }),
-          files: built.files,
-          deliveryKey: 'funnel:' + job.id + ':' + job.next_step,
-          beforeSend: () => {
-            // Do not call assertCanContact here: outreach already reserved a SENDING row,
-            // which counts toward the three-email limit and would falsely block the 3rd send.
-            const { lead: current } = verify();
-            const again = compose(step, current, config, config.from_name, 'check');
-            if (stepRecipient(again, job.recipient) !== sendTo)
-              throw new HttpError(
-                409,
-                'Lead, recipient or training changed after enrollment. Review this lead before contacting again.',
-              );
-          },
-        });
+        const html =
+          built.html ||
+          renderEmail({
+            body: built.body,
+            fromName: config.from_name,
+            fromEmail: config.from_email,
+            signature: config.signature,
+            leadName: lead.name,
+            includeFooter: false,
+          });
+        const deliveryKey = 'funnel:' + job.id + ':' + job.next_step;
+        // With "Count opens" on, this one message gets its own image address.
+        const open =
+          f.track_opens && html
+            ? issueOpenToken(db, publicOrigin, {
+                projectId: job.project_id,
+                leadId: job.lead_id,
+                enrollmentId: job.id,
+                step: job.next_step,
+              })
+            : null;
+        try {
+          await outreach.send({
+            projectId: job.project_id,
+            leadId: job.lead_id,
+            actor: job.created_by,
+            config,
+            to: sendTo,
+            subject: built.subject,
+            text: built.body,
+            html: open ? withOpenPixel(html, open.url) : html,
+            files: built.files,
+            deliveryKey,
+            beforeSend: () => {
+              // Do not call assertCanContact here: outreach already reserved a SENDING row,
+              // which counts toward the three-email limit and would falsely block the 3rd send.
+              const { lead: current } = verify();
+              const again = compose(step, current, config, config.from_name, 'check');
+              if (stepRecipient(again, job.recipient) !== sendTo)
+                throw new HttpError(
+                  409,
+                  'Lead, recipient or training changed after enrollment. Review this lead before contacting again.',
+                );
+            },
+          });
+        } catch (error) {
+          if (open) discardOpenToken(db, open.tokenHash, deliveryKey);
+          throw error;
+        }
         const next = job.next_step + 1;
         // A time the author picked for this follow-up wins over the funnel's own delay.
         const chosen = parseSchedule(job.schedule_json)[next];

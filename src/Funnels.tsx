@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Plus,
   Pause,
@@ -13,6 +13,11 @@ import {
   X,
   Braces,
   MessageSquareReply,
+  Search,
+  SearchX,
+  SlidersHorizontal,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import type { Lead, Project, User, EmailTemplate } from '../shared/types';
 import type { EmailFile } from '../shared/email';
@@ -20,11 +25,29 @@ import type {
   Enrollment,
   FitBand,
   Funnel,
+  FunnelCounts,
   FunnelProgress,
   FunnelStep,
   OutreachOutcome,
 } from '../shared/funnels';
-import { fitBandLabels } from '../shared/funnels';
+import { emptyCounts, fitBandLabels, funnelCompleted } from '../shared/funnels';
+import {
+  activeFunnelFilterCount,
+  emptyFunnelFilters,
+  filterFunnels,
+  funnelAudiences,
+  funnelPerformanceFilters,
+  funnelPerformanceLabels,
+  funnelSorts,
+  funnelStatusFilters,
+  funnelStatusLabels,
+  funnelTypeLabels,
+  funnelTypes,
+  type FunnelFilters,
+  type FunnelPerformance,
+  type FunnelSort,
+  type FunnelStatusFilter,
+} from '../shared/funnel-filters';
 import { blocksToHtml, htmlToText, mergeFieldsIn, textToHtml } from '../shared/email-html';
 import { api, json, label, date } from './api';
 import { RichEmailEditor } from './RichEmailEditor';
@@ -107,6 +130,9 @@ const emptyProgress: FunnelProgress = {
   completed: 0,
   total: 0,
 };
+const opensNote =
+  'Opens are approximate: some mail apps load images automatically, others block them.';
+const percent = (rate: number | null) => (rate === null ? '—' : Math.round(rate * 100) + '%');
 
 interface StepDraft {
   delay_days: number;
@@ -139,6 +165,8 @@ export default function Funnels({
   const [ready, setReady] = useState(false),
     [starting, setStarting] = useState(false),
     [busy, setBusy] = useState(false);
+  const [filters, setFilters] = useState<FunnelFilters>(emptyFunnelFilters);
+  const shown = useMemo(() => filterFunnels(items, filters), [items, filters]);
   const active = items.find((item) => item.id === selected);
   const reload = () => setRefresh((n) => n + 1);
   useEffect(() => {
@@ -177,6 +205,24 @@ export default function Funnels({
           ? 'Funnel started. Due messages will enter the delivery queue.'
           : 'Funnel paused.',
       );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  /** "Count opens" may change on a running funnel: it only affects messages not yet sent. */
+  async function changeTrackOpens(on: boolean) {
+    if (!active) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api(base + '/' + active.id, {
+        method: 'PATCH',
+        body: json({ track_opens: on, revision: active.revision }),
+      });
+      reload();
+      notify(on ? 'Opens will be counted from the next message.' : 'Opens are no longer counted.');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -230,13 +276,42 @@ export default function Funnels({
             <span>Stops on a reply, a bounce or an opt-out</span>
           </div>
           {items.length ? (
-            <div className="funnel-list">
-              {items.map((item) => (
-                <button className="funnel-row" key={item.id} onClick={() => setSelected(item.id)}>
-                  <FunnelSummary funnel={item} />
-                </button>
-              ))}
-            </div>
+            <>
+              <FunnelToolbar
+                funnels={items}
+                shown={shown.length}
+                filters={filters}
+                onChange={setFilters}
+              />
+              {shown.length ? (
+                <div className="funnel-list">
+                  {shown.map((item) => (
+                    <button
+                      className="funnel-row"
+                      key={item.id}
+                      onClick={() => setSelected(item.id)}
+                    >
+                      <FunnelSummary funnel={item} />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <Empty
+                  icon={<SearchX size={30} />}
+                  title="No funnels match"
+                  action={
+                    <button
+                      className="button secondary"
+                      onClick={() => setFilters({ ...emptyFunnelFilters, sort: filters.sort })}
+                    >
+                      Clear all
+                    </button>
+                  }
+                >
+                  Try another search, or fewer filters.
+                </Empty>
+              )}
+            </>
           ) : (
             <Empty
               icon={<GitBranch size={30} />}
@@ -265,6 +340,7 @@ export default function Funnels({
               <p>{active.audience}</p>
             </div>
             <Badge value={active.status} />
+            {funnelCompleted(active) && <Badge value="completed">Completed</Badge>}
             <button className="button secondary" onClick={() => setEnrolling(true)}>
               <Users size={15} />
               Add qualified leads
@@ -290,7 +366,26 @@ export default function Funnels({
             )}
           </div>
           <section className="panel funnel-overview">
-            <FunnelSummary funnel={active} detailed />
+            <FunnelSummary
+              funnel={active}
+              detailed
+              openSetting={
+                <div className="funnel-open-setting">
+                  {user.role === 'admin' && (
+                    <label className="funnel-open-switch">
+                      <input
+                        type="checkbox"
+                        checked={active.track_opens}
+                        disabled={busy}
+                        onChange={(e) => void changeTrackOpens(e.target.checked)}
+                      />
+                      Count opens
+                    </label>
+                  )}
+                  <small>{opensNote}</small>
+                </div>
+              }
+            />
           </section>
           <div className="funnel-sequence">
             {active.steps.map((step, i) => (
@@ -403,22 +498,86 @@ export default function Funnels({
 }
 
 /**
- * One funnel, simply: which messages it sends and when, which lead data it uses, and how its
- * leads are progressing — waiting for message 1, 2 or 3, replied, bounced, stopped or done.
+ * Enrolled → Sent → Opened → Replied → Follow-up → Bounced: how many of the funnel's sequences
+ * reached each stage, as the server counted them, with the open and reply rates of those sent.
  */
-function FunnelSummary({ funnel, detailed = false }: { funnel: Funnel; detailed?: boolean }) {
+function FunnelReach({ counts, trackOpens }: { counts: FunnelCounts; trackOpens: boolean }) {
+  const stages = [
+    { key: 'enrolled', label: 'Enrolled', value: counts.enrolled },
+    { key: 'sent', label: 'Sent', value: counts.sent },
+    { key: 'opened', label: 'Opened', value: counts.opened, hint: opensNote },
+    { key: 'replied', label: 'Replied', value: counts.replied },
+    { key: 'followed-up', label: 'Follow-up', value: counts.followed_up },
+    { key: 'bounced', label: 'Bounced', value: counts.bounced },
+  ];
+  const nothingSent = 'Nothing has been sent yet.';
+  // A funnel that never counted opens has no open rate, not a rate of 0%.
+  const uncounted = !trackOpens && !counts.opened;
+  return (
+    <div className="funnel-reach">
+      <ol className="funnel-counts" aria-label="Leads at each stage">
+        {stages.map((stage, index) => (
+          <li
+            key={stage.key}
+            className={'stage-' + stage.key + (stage.value ? '' : ' is-zero')}
+            title={stage.hint}
+          >
+            {index > 0 && (
+              <span className="funnel-counts-arrow" aria-hidden="true">
+                →
+              </span>
+            )}
+            {stage.label} <strong>{stage.value}</strong>
+          </li>
+        ))}
+      </ol>
+      <p className="funnel-rates">
+        <span
+          title={
+            uncounted
+              ? 'This funnel does not count opens.'
+              : counts.open_rate === null
+                ? nothingSent
+                : 'Opened, of those sent'
+          }
+        >
+          Open rate <strong>{uncounted ? '—' : percent(counts.open_rate)}</strong>
+        </span>
+        <span title={counts.reply_rate === null ? nothingSent : 'Replied, of those sent'}>
+          Reply rate <strong>{percent(counts.reply_rate)}</strong>
+        </span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One funnel, simply: which messages it sends and when, which lead data it uses, and how many
+ * leads reached each stage. The detailed view adds where every sequence is now — waiting for
+ * message 1, 2 or 3, finished, or ended by a reply, a bounce or a stop.
+ */
+function FunnelSummary({
+  funnel,
+  detailed = false,
+  openSetting,
+}: {
+  funnel: Funnel;
+  detailed?: boolean;
+  /** The "Count opens" switch and its note, shown under the counts. */
+  openSetting?: ReactNode;
+}) {
   const progress = funnel.progress || emptyProgress;
   const fields = funnelFields(funnel);
   const stages = [
     ...funnel.steps.map((_, index) => ({
       key: 'm' + index,
-      label: 'Next: message ' + (index + 1),
+      label: 'Waiting for message ' + (index + 1),
       value: progress.waiting[index] || 0,
       tone: 'waiting',
     })),
-    { key: 'replied', label: 'Replied', value: progress.replied, tone: 'good' },
-    { key: 'completed', label: 'Completed', value: progress.completed, tone: 'good' },
-    { key: 'bounced', label: 'Bounced', value: progress.bounced, tone: 'bad' },
+    { key: 'completed', label: 'Finished', value: progress.completed, tone: 'good' },
+    { key: 'replied', label: 'Ended by a reply', value: progress.replied, tone: 'good' },
+    { key: 'bounced', label: 'Ended by a bounce', value: progress.bounced, tone: 'bad' },
     { key: 'stopped', label: 'Stopped', value: progress.stopped, tone: 'muted' },
     ...(progress.blocked
       ? [{ key: 'blocked', label: 'Needs attention', value: progress.blocked, tone: 'bad' }]
@@ -432,13 +591,20 @@ function FunnelSummary({ funnel, detailed = false }: { funnel: Funnel; detailed?
           <strong>{funnel.name}</strong>
           <small>{funnel.audience || 'All relevant qualified leads'}</small>
         </div>
-        <Badge value={funnel.status}>{label(funnel.status)}</Badge>
+        <span className="funnel-badges">
+          <Badge value={funnel.status}>{label(funnel.status)}</Badge>
+          {funnelCompleted(funnel) && <Badge value="completed">Completed</Badge>}
+        </span>
       </div>
       <div className="funnel-tags">
         <span>{fitBandLabels[funnel.fit_band || 'ANY']}</span>
         <span>
           <MessageSquareReply size={12} />
           {funnel.stop_on_reply ? 'Stops when the lead replies' : 'Keeps going after a reply'}
+        </span>
+        <span>
+          {funnel.track_opens ? <Eye size={12} /> : <EyeOff size={12} />}
+          {funnel.track_opens ? 'Counts opens' : 'Opens not counted'}
         </span>
       </div>
       <div className="funnel-summary-grid">
@@ -479,18 +645,212 @@ function FunnelSummary({ funnel, detailed = false }: { funnel: Funnel; detailed?
           </div>
         </div>
       </div>
-      <div className="funnel-progress" aria-label="How leads are progressing">
-        <span className="funnel-summary-label">
-          How leads are progressing · {progress.total} in total
+      <div>
+        <span className="funnel-summary-label">How many leads reached each stage</span>
+        <FunnelReach counts={funnel.counts || emptyCounts} trackOpens={funnel.track_opens} />
+        {openSetting}
+      </div>
+      {detailed && (
+        <div className="funnel-progress" aria-label="Where each sequence is now">
+          <span className="funnel-summary-label">
+            Where each sequence is now · {progress.total} in total
+          </span>
+          <ol>
+            {stages.map((stage) => (
+              <li
+                key={stage.key}
+                className={'tone-' + stage.tone + (stage.value ? '' : ' is-zero')}
+              >
+                <strong>{stage.value}</strong>
+                <small>{stage.label}</small>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Search, filters and sort for the funnel list. Each choice applies at once: the list is a few
+ * funnels already in the browser, with their counts from the server, so nothing is fetched.
+ */
+function FunnelToolbar({
+  funnels,
+  shown,
+  filters,
+  onChange,
+}: {
+  funnels: Funnel[];
+  /** How many funnels pass the filters. */
+  shown: number;
+  filters: FunnelFilters;
+  onChange: (filters: FunnelFilters) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const count = activeFunnelFilterCount(filters);
+  const narrowed = count > 0 || Boolean(filters.search.trim());
+  const audiences = funnelAudiences(funnels);
+  const set = (patch: Partial<FunnelFilters>) => onChange({ ...filters, ...patch });
+  const panel = 'funnel-filter-panel';
+  return (
+    <div className="funnel-toolbar-wrap">
+      <div className="funnel-toolbar">
+        <label className="search-input funnel-search">
+          <Search size={15} aria-hidden="true" />
+          <span className="visually-hidden">Search funnels</span>
+          <input
+            type="search"
+            value={filters.search}
+            onChange={(e) => set({ search: e.target.value })}
+            placeholder="Search name, audience or subject"
+          />
+        </label>
+        <button
+          ref={toggle}
+          type="button"
+          className={'funnel-filters-button' + (count ? ' is-active' : '')}
+          aria-expanded={open}
+          aria-controls={open ? panel : undefined}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <SlidersHorizontal size={15} aria-hidden="true" />
+          Filters
+          {count > 0 && (
+            <span className="funnel-filters-count" aria-label={count + ' active'}>
+              {count}
+            </span>
+          )}
+          <ChevronDown
+            size={15}
+            aria-hidden="true"
+            className={'funnel-filters-caret' + (open ? ' is-open' : '')}
+          />
+        </button>
+        <label className="funnel-sort">
+          Sort
+          <select
+            value={filters.sort}
+            onChange={(e) => set({ sort: e.target.value as FunnelSort })}
+          >
+            {funnelSorts.map((sort) => (
+              <option key={sort.value} value={sort.value}>
+                {sort.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {open && (
+        <div
+          className="funnel-filter-panel"
+          id={panel}
+          role="group"
+          aria-label="Filter funnels"
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            setOpen(false);
+            toggle.current?.focus();
+          }}
+        >
+          <label>
+            Status
+            <select
+              value={filters.status}
+              onChange={(e) => set({ status: e.target.value as FunnelStatusFilter | '' })}
+            >
+              <option value="">All statuses</option>
+              {funnelStatusFilters.map((value) => (
+                <option key={value} value={value}>
+                  {funnelStatusLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Type
+            <select
+              value={filters.type}
+              onChange={(e) => set({ type: e.target.value as FitBand | '' })}
+            >
+              <option value="">All types</option>
+              {funnelTypes.map((value) => (
+                <option key={value} value={value}>
+                  {funnelTypeLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Audience
+            {/* "=" marks a chosen audience, so a funnel without one can be picked as well. */}
+            <select
+              value={filters.audience === null ? '' : '=' + filters.audience}
+              onChange={(e) => set({ audience: e.target.value ? e.target.value.slice(1) : null })}
+            >
+              <option value="">All audiences</option>
+              {audiences.map((audience) => (
+                <option key={audience || 'none'} value={'=' + audience}>
+                  {audience
+                    ? audience.length > 80
+                      ? audience.slice(0, 79) + '…'
+                      : audience
+                    : 'No audience set'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Performance
+            <select
+              value={filters.performance}
+              onChange={(e) => set({ performance: e.target.value as FunnelPerformance | '' })}
+            >
+              <option value="">Any performance</option>
+              {funnelPerformanceFilters.map((value) => (
+                <option key={value} value={value}>
+                  {funnelPerformanceLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Created from
+            <input
+              type="date"
+              value={filters.created_from}
+              max={filters.created_to || undefined}
+              onChange={(e) => set({ created_from: e.target.value })}
+            />
+          </label>
+          <label>
+            Created to
+            <input
+              type="date"
+              value={filters.created_to}
+              min={filters.created_from || undefined}
+              onChange={(e) => set({ created_to: e.target.value })}
+            />
+          </label>
+        </div>
+      )}
+      <div className="funnel-results" aria-live="polite">
+        <span>
+          {narrowed
+            ? shown + ' of ' + funnels.length + ' funnels'
+            : funnels.length + (funnels.length === 1 ? ' funnel' : ' funnels')}
         </span>
-        <ol>
-          {stages.map((stage) => (
-            <li key={stage.key} className={'tone-' + stage.tone + (stage.value ? '' : ' is-zero')}>
-              <strong>{stage.value}</strong>
-              <small>{stage.label}</small>
-            </li>
-          ))}
-        </ol>
+        {narrowed && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => onChange({ ...emptyFunnelFilters, sort: filters.sort })}
+          >
+            Clear all
+          </button>
+        )}
       </div>
     </div>
   );
@@ -512,7 +872,8 @@ function FunnelEditor({
   const [name, setName] = useState(initial?.name || ''),
     [audience, setAudience] = useState(initial?.audience || '');
   const [fitBand, setFitBand] = useState<FitBand>(initial?.fit_band || 'ANY'),
-    [stopOnReply, setStopOnReply] = useState(initial?.stop_on_reply ?? true);
+    [stopOnReply, setStopOnReply] = useState(initial?.stop_on_reply ?? true),
+    [trackOpens, setTrackOpens] = useState(initial?.track_opens ?? true);
   const [steps, setSteps] = useState<StepDraft[]>(() =>
     (initial?.steps || starterSteps).map((step) => ({
       delay_days: step.delay_days,
@@ -618,6 +979,7 @@ function FunnelEditor({
                   audience,
                   fit_band: fitBand,
                   stop_on_reply: stopOnReply,
+                  track_opens: trackOpens,
                   steps: steps.map((step) => ({
                     delay_days: step.delay_days,
                     send_time: step.send_time?.trim() || '',
@@ -690,6 +1052,20 @@ function FunnelEditor({
             </small>
           </label>
         </div>
+        <label className="funnel-toggle">
+          <span>
+            <input
+              type="checkbox"
+              checked={trackOpens}
+              onChange={(e) => setTrackOpens(e.target.checked)}
+            />
+            Count opens
+          </span>
+          <small>
+            Adds a 1×1 image to each message to see when it is opened. {opensNote} Opening your own
+            copy with images shown counts too.
+          </small>
+        </label>
         <p className="muted">
           Write each message in the editor; it is delivered as email-safe HTML with a plain-text
           copy. Set each message’s To address (default {'{{contact_email}}'}). Missing merge fields

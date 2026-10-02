@@ -106,6 +106,42 @@ export interface FunnelProgress {
   completed: number;
   total: number;
 }
+/**
+ * How many of a funnel's sequences reached each stage, counted once per enrollment (one
+ * recipient's sequence) by the server. The stages are not a partition: a sequence that was sent,
+ * opened and replied to counts in all three.
+ */
+export interface FunnelCounts {
+  /** Every sequence in the funnel. */
+  enrolled: number;
+  /** At least one message accepted by the mailbox (a hand-sent first message included). */
+  sent: number;
+  /** At least one message whose image was loaded. Approximate by nature. */
+  opened: number;
+  /**
+   * A reply, interest or conversion recorded on the sequence, or a reply from its recipient
+   * matched to the lead after it joined (which also counts where the funnel keeps going).
+   */
+  replied: number;
+  /** Message 2 or 3 was accepted by the mailbox. */
+  followed_up: number;
+  /** Stopped by a bounce, or the recipient's address bounced for this lead after it joined. */
+  bounced: number;
+  /** Of the sequences sent, the share opened; null while nothing has been sent. */
+  open_rate: number | null;
+  /** Of the sequences sent, the share replied to; null while nothing has been sent. */
+  reply_rate: number | null;
+}
+export const emptyCounts: FunnelCounts = {
+  enrolled: 0,
+  sent: 0,
+  opened: 0,
+  replied: 0,
+  followed_up: 0,
+  bounced: 0,
+  open_rate: null,
+  reply_rate: null,
+};
 export interface Funnel {
   id: number;
   project_id: number;
@@ -115,13 +151,27 @@ export interface Funnel {
   status: FunnelStatus;
   revision: number;
   created_at: string;
+  /** An edit, a start or pause, the open-counting switch or new enrollments; not each send. */
+  updated_at: string;
   enrolled_count: number;
   queued_count: number;
   converted_count: number;
   /** Whether a matched incoming reply stops this sequence's remaining messages. */
   stop_on_reply: boolean;
+  /** "Count opens": messages not yet sent carry a 1×1 image that records when they are opened. */
+  track_opens: boolean;
   fit_band: FitBand;
   progress?: FunnelProgress;
+  counts?: FunnelCounts;
+}
+/**
+ * A funnel that has run its course: started at some point, has leads, and none of them is still
+ * waiting for a message. It can still be Active, and then a lead added later starts it again.
+ */
+export function funnelCompleted(
+  funnel: Pick<Funnel, 'status' | 'enrolled_count' | 'queued_count'>,
+) {
+  return funnel.status !== 'DRAFT' && funnel.enrolled_count > 0 && funnel.queued_count === 0;
 }
 export type OutreachOutcome = 'REPLIED' | 'INTERESTED' | 'CONVERTED' | 'STOPPED' | 'UNSUBSCRIBED';
 export interface Enrollment {

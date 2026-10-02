@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { openDatabase, audit, hash, nameKey, websiteKey, now, type DB } from './database';
 import { installAuth, adminOnly } from './auth';
 import { createOutreach, installUnsubscribe } from './outreach';
+import { installOpenTracking } from './funnel-opens';
 import { createFunnels } from './funnels';
 import { createMailbox } from './mailbox';
 import type { ReadInbox } from './imap';
@@ -370,6 +371,7 @@ export function createApp(options: {
   const parseJson = express.json({ limit: '1mb' });
   app.use((req, res, next) => (importRowsPath.test(req.path) ? next() : parseJson(req, res, next)));
   installUnsubscribe(app, db);
+  installOpenTracking(app, db);
   installAuth(app, db, production);
   installWorkspace(app, db, getProject);
   installLeadFilters(app, {
