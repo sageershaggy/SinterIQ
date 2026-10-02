@@ -44,6 +44,21 @@ const rubric = {
     'The prospect is already an existing Innovista client, an active sales opportunity, or a contact already approached for the same campaign, unless the record represents a genuinely new opportunity.',
   ],
   questions: [],
+  categories: [
+    {
+      name: 'Website development',
+      description: 'An outdated, slow or missing website, or no way to book or buy online.',
+    },
+    {
+      name: 'AI workflow automation',
+      description: 'Enquiries, bookings or admin handled by hand that a workflow could take over.',
+    },
+    {
+      name: 'Digital marketing and SEO',
+      description: 'Weak search visibility, no campaigns or an inactive social presence.',
+    },
+    { name: 'App development', description: 'Customers or field staff who would use an app.' },
+  ],
 };
 
 const project = {
@@ -347,6 +362,11 @@ const researched = {
   qualified_revision: 3,
   next_step: 'SEND_EMAIL',
   outreach_status: 'NOT_CONTACTED',
+  service_fit: [
+    { category: 'Website development', fit: 'GOOD' },
+    { category: 'AI workflow automation', fit: 'GOOD' },
+    { category: 'Digital marketing and SEO', fit: 'POSSIBLE' },
+  ],
   // A researched person already in a campaign (People at this company, emailFixtures.ts).
   campaigns: contactEnrollments,
   runs: [
@@ -406,6 +426,32 @@ const researched = {
           evidence: 'The website shows an operating company with current projects.',
           source_ids: ['E2'],
         })),
+        service_fit: [
+          {
+            category: 'Website development',
+            fit: 'GOOD',
+            reason: 'The site has no booking or quote request, only a contact form.',
+            source_ids: ['E2'],
+          },
+          {
+            category: 'AI workflow automation',
+            fit: 'GOOD',
+            reason: 'Resort enquiries are answered by hand from a shared inbox.',
+            source_ids: ['E2'],
+          },
+          {
+            category: 'Digital marketing and SEO',
+            fit: 'POSSIBLE',
+            reason: 'Projects are listed, but there is no news or campaign page.',
+            source_ids: ['E2'],
+          },
+          {
+            category: 'App development',
+            fit: 'NONE',
+            reason: 'Nothing on the site points to customers or staff who would use an app.',
+            source_ids: [],
+          },
+        ],
         gaps: ['Company size is not published on the website.'],
         next_steps: ['Confirm the team size on the first call.'],
         outreach: {

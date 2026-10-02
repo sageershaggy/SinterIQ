@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import { z } from 'zod';
 import type { DB } from './database';
-import { HttpError, positiveId, text } from './validation';
+import { HttpError, positiveId, requiredText, text } from './validation';
 import { pipelineStatusSql } from './crm';
 import {
   AI_QUALIFIED,
@@ -25,7 +25,7 @@ import {
   type NextStepFilter,
   type QualificationState,
 } from '../shared/lead-filters';
-import { nextStepBands, type Project, type User } from '../shared/types';
+import { nextStepBands, type Project, type TrainingSnapshot, type User } from '../shared/types';
 
 /**
  * The filter bar's half of the lead query. app.ts spreads this into leadQuerySchema and
@@ -60,6 +60,7 @@ export const leadFacetShape = {
   lead_status: many(z.enum(leadStatuses)),
   email_status: many(z.enum(emailStatuses)),
   research: many(z.enum(researchStatuses)),
+  service_fit: many(requiredText(80)),
   added: z.enum(dateAddedPresets).optional(),
   added_from: day.optional(),
   added_to: day.optional(),
@@ -130,6 +131,26 @@ export const researchedSql =
 export const missingDetailsSql = "(l.website='' OR l.industry='' OR (l.city='' AND l.country=''))";
 /** The same test as the NO_WEBSITE view. */
 export const noWebsiteSql = "l.website=''";
+/**
+ * The service ratings of a lead's current result, one row each (leads.service_fit holds only
+ * GOOD and POSSIBLE). A superseded result rates nothing here, as its score belongs to no band.
+ */
+export function serviceFitRowsSql(project: Project) {
+  return (
+    "json_each(CASE WHEN json_valid(l.service_fit) AND NOT " +
+    staleSql(project) +
+    " THEN l.service_fit ELSE '[]' END)"
+  );
+}
+/** The service categories of the published training, in its order: the Service fit facet's values. */
+export function publishedCategories(db: DB, project: Project) {
+  if (!project.active_version) return [];
+  const row = db
+    .prepare('SELECT snapshot_json FROM training_versions WHERE project_id=? AND version=?')
+    .get(project.id, project.active_version) as { snapshot_json: string } | undefined;
+  const snapshot = row ? (JSON.parse(row.snapshot_json) as TrainingSnapshot) : undefined;
+  return (snapshot?.rubric.categories ?? []).map((category) => category.name);
+}
 /**
  * The outreach step, as nextStepFor (shared/types.ts) derives it for a current result: a lead
  * with no run, a superseded run or no score has none, so the filter and the row always agree.
@@ -266,6 +287,13 @@ export function facetWhere(
               : missingDetailsSql,
       ),
     );
+  if (input.service_fit.length)
+    where +=
+      ' AND EXISTS (SELECT 1 FROM ' +
+      serviceFitRowsSql(project) +
+      ' f WHERE ' +
+      inList("json_extract(f.value,'$.category') COLLATE NOCASE", input.service_fit) +
+      ')';
   const range = addedRange(input, nowMs);
   // julianday() reads both ISO timestamps and the legacy "YYYY-MM-DD HH:MM:SS" form.
   if (range.from) {
@@ -364,11 +392,27 @@ export function installLeadFilters(
         .prepare('SELECT COUNT(*) n FROM leads l WHERE ' + where + ' AND l.assigned_to IS NULL')
         .get(...params) as { n: number }
     ).n;
+    // Every category the training names is offered, at nought too: "no lead fits App development
+    // yet" is an answer, and the facet should not appear and vanish as results come in.
+    const rated = db
+      .prepare(
+        "SELECT json_extract(f.value,'$.category') value,COUNT(DISTINCT l.id) count FROM leads l, " +
+          serviceFitRowsSql(project) +
+          ' f WHERE ' +
+          where +
+          " GROUP BY json_extract(f.value,'$.category') COLLATE NOCASE",
+      )
+      .all(...params) as Array<{ value: string; count: number }>;
     const body: LeadFacetOptions = {
       industry: values('industry'),
       country: values('country'),
       city: values('city'),
       assignee: [{ value: UNASSIGNED, label: 'Unassigned', count: unassigned }, ...assigned],
+      service_fit: publishedCategories(db, project).map((value) => ({
+        value,
+        count:
+          rated.find((row) => String(row.value).toLowerCase() === value.toLowerCase())?.count ?? 0,
+      })),
     };
     res.json(body);
   });

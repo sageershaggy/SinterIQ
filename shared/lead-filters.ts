@@ -230,6 +230,11 @@ export interface LeadFacets {
   lead_status: LeadStatusValue[];
   email_status: EmailStatusValue[];
   research: ResearchStatus[];
+  /**
+   * Service category names from the published training, compared case-insensitively: leads whose
+   * current result rates the category GOOD or POSSIBLE.
+   */
+  service_fit: string[];
   added: DateAdded | '';
   /** YYYY-MM-DD, inclusive, in the viewer's time zone. Used when added is CUSTOM. */
   added_from: string;
@@ -248,6 +253,7 @@ export const emptyFacets: LeadFacets = {
   lead_status: [],
   email_status: [],
   research: [],
+  service_fit: [],
   added: '',
   added_from: '',
   added_to: '',
@@ -265,6 +271,7 @@ export const listFacets = [
   'lead_status',
   'email_status',
   'research',
+  'service_fit',
 ] as const;
 export type ListFacet = (typeof listFacets)[number];
 
@@ -307,10 +314,15 @@ export interface LeadSummary {
   requalify: number;
 }
 
-/** Values offered by the Industry, Location and Assigned-to facets, with how many leads hold each. */
+/**
+ * Values offered by the Industry, Location, Assigned-to and Service fit facets, with how many
+ * leads hold each. Service fit lists the published training's categories in its order, at nought
+ * too, counting leads whose current result rates the category GOOD or POSSIBLE.
+ */
 export interface LeadFacetOptions {
   industry: Array<{ value: string; count: number }>;
   country: Array<{ value: string; count: number }>;
   city: Array<{ value: string; count: number }>;
   assignee: Array<{ value: string; label: string; count: number }>;
+  service_fit: Array<{ value: string; count: number }>;
 }

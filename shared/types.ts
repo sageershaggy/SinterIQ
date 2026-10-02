@@ -31,7 +31,28 @@ export interface Rubric {
   criteria: string[];
   exclusions: string[];
   questions: string[];
+  /**
+   * The services the project sells that a lead could be a fit for, each judged separately from
+   * the fit score. Absent on rubrics saved before categories existed, which means none.
+   */
+  categories?: ServiceCategory[];
 }
+/** One offer a lead can be a fit for, such as "Website development", and what a good fit looks like. */
+export interface ServiceCategory {
+  name: string;
+  description: string;
+}
+/** How well a lead fits one service: GOOD a clear evidenced need, POSSIBLE some signals, NONE neither. */
+export type ServiceFitLevel = 'GOOD' | 'POSSIBLE' | 'NONE';
+export interface ServiceFit {
+  /** The category name exactly as the published training spells it. */
+  category: string;
+  fit: ServiceFitLevel;
+  reason: string;
+  source_ids: string[];
+}
+/** The categories a lead's current result rates GOOD or POSSIBLE, GOOD first (leads.service_fit). */
+export type LeadServiceFit = Array<{ category: string; fit: Exclude<ServiceFitLevel, 'NONE'> }>;
 /** A qualification criteria document a project can add to its library (server/criteria-templates.ts). */
 export interface CriteriaTemplate {
   id: string;
@@ -117,6 +138,11 @@ export interface Qualification {
   blockers?: string[];
   /** What the project's offering could do for this company, kept only with a retrieved source. */
   opportunity?: { summary: string; source_ids: string[] };
+  /**
+   * One entry per service category in the published training, in its order. GOOD and POSSIBLE
+   * need a retrieved source. Runs saved before categories existed do not have the field.
+   */
+  service_fit?: ServiceFit[];
   /** The research pass that ran (or was reused) before this evaluation. */
   research?: import('./research').QualificationResearch;
 }
@@ -178,6 +204,8 @@ export interface Lead {
   next_step: NextStep;
   stale: boolean;
   reviewed: boolean;
+  /** The services the latest result rates GOOD or POSSIBLE; superseded with it when stale. */
+  service_fit?: LeadServiceFit;
   created_at: string;
   updated_at: string;
   legacy_json?: string;

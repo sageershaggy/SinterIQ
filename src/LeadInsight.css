@@ -617,3 +617,53 @@
   font-size: 11px;
   color: #5b6655;
 }
+
+/* Service fit (ServiceFitList): one row per category, the level as a chip beside the name, the
+   reason and its sources below the name. The chip styles live with the lead list's cell. */
+.run-service-fit {
+  margin: 20px 0;
+}
+.run-service-fit h3 {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.run-service-fit ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-service-fit li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 10px;
+}
+.run-service-fit li > .service-chip {
+  flex: 0 0 auto;
+  min-width: 92px;
+  text-align: center;
+}
+.run-service-fit li > div {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.run-service-fit strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.company-card .run-service-fit p,
+.run-service-fit p {
+  margin: 2px 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #56614f;
+}
+.run-service-fit .evidence-tags {
+  margin-left: 0;
+}
+.run-service-fit li.is-none strong {
+  font-weight: 550;
+  color: #5b6458;
+}

@@ -71,6 +71,7 @@ import {
   LeadFilterChips,
   LeadFiltersButton,
   Pager,
+  ServiceFitCell,
   SortHeader,
   countView,
   useLeadFacetOptions,
@@ -650,6 +651,9 @@ export default function Leads({
                     <SortHeader column="industry" facets={facets} onChange={changeFacets}>
                       Industry / location
                     </SortHeader>
+                    <th title="Services the latest qualification rates a good (solid) or possible (outline) fit">
+                      Service fit
+                    </th>
                     <SortHeader
                       column="score"
                       facets={facets}
@@ -713,6 +717,9 @@ export default function Leads({
                         <small className="table-subtext">
                           {lead.country || 'Location unknown'}
                         </small>
+                      </td>
+                      <td>
+                        <ServiceFitCell lead={lead} />
                       </td>
                       <td>
                         <FitQualification lead={lead} />

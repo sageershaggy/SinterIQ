@@ -28,6 +28,8 @@ const rubric = {
   criteria: ['Manufactures pumps', 'Employs engineers'],
   exclusions: ['Manufactures bearings'],
   questions: [],
+  // A saved rubric always carries its service categories, none here (tests/service-fit.test.ts).
+  categories: [],
 };
 test('preserved company research is project-scoped and supports AI context without copying contact channels or old decisions', async () => {
   let supplied: Evidence[] = [];

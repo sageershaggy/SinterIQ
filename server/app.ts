@@ -26,6 +26,7 @@ import {
   analyzeTraining,
   generate,
   getAiConfig,
+  leadServiceFit,
   presetForBase,
   publicSettings,
   qualify,
@@ -96,6 +97,7 @@ import {
 import { nextStepFor, nextStepBands, leadStatusFilters } from '../shared/types';
 import type {
   Lead,
+  LeadServiceFit,
   Project,
   Source,
   TrainingSnapshot,
@@ -187,14 +189,29 @@ function serializeLead(row: Lead, project: Project): Lead {
     stale,
     // A superseded result must not keep advertising an outreach step.
     next_step: stale ? 'NONE' : nextStepFor(row.status, row.score),
+    service_fit: storedServiceFit(row.service_fit),
   };
+}
+/** leads.service_fit as stored (server/service-fit-schema.ts); anything unreadable is none. */
+function storedServiceFit(value: unknown): LeadServiceFit {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (item): item is LeadServiceFit[number] =>
+            typeof item?.category === 'string' && (item.fit === 'GOOD' || item.fit === 'POSSIBLE'),
+        )
+      : [];
+  } catch {
+    return [];
+  }
 }
 export const leadQuerySchema = z.object({
   search: text(200).default(''),
   status: z.enum(leadStatusFilters).default('ALL'),
   assigned_to: z.enum(['any', 'me']).default('any'),
   // The Filters panel: qualification, fit score, calls, industry, location, assignee, lead
-  // status, research, date added and the sort order (server/lead-filters.ts).
+  // status, research, service fit, date added and the sort order (server/lead-filters.ts).
   ...leadFacetShape,
   // Archived leads are hidden from every default list; 'only' lists them for restoring.
   archived: z.enum(['exclude', 'only']).default('exclude'),
@@ -978,6 +995,7 @@ export function createApp(options: {
         'decision',
         'score',
         'confidence',
+        'service_fit',
         'next_step',
         'training_version',
         'needs_requalification',
@@ -1034,6 +1052,10 @@ export function createApp(options: {
           row.status,
           row.score,
           row.confidence,
+          // "Website development (good); App development (possible)", from the same run as the score.
+          (serialized.service_fit || [])
+            .map((item) => item.category + ' (' + item.fit.toLowerCase() + ')')
+            .join('; '),
           serialized.next_step,
           row.training_version,
           serialized.stale,
@@ -1307,8 +1329,11 @@ export function createApp(options: {
         );
         // A run that found no contact must not erase one that is already on the record: the
         // panel invites a re-run straight after research, and that would undo it.
+        // service_fit is the list's copy of this run's GOOD and POSSIBLE services, replaced with
+        // the status and score so the two never describe different runs.
         db.prepare(
           `UPDATE leads SET status=?,score=?,confidence=?,latest_run_id=?,training_version=?,qualified_revision=?,
+            service_fit=?,
             contact_name=CASE WHEN ?<>'' THEN ? ELSE contact_name END,
             contact_role=CASE WHEN ?<>'' THEN ? ELSE contact_role END,
             reviewed=0,updated_at=? WHERE id=? AND project_id=?`,
@@ -1319,6 +1344,7 @@ export function createApp(options: {
           id,
           project.active_version,
           lead.revision,
+          JSON.stringify(leadServiceFit(qualified.service_fit)),
           qualified.outreach.contact_name,
           qualified.outreach.contact_name,
           qualified.outreach.contact_role,

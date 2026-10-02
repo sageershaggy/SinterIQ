@@ -16,7 +16,7 @@ import {
   X,
   CircleHelp,
 } from 'lucide-react';
-import type { Project, Source, Rubric, TrainingSnapshot } from '../shared/types';
+import type { Project, Source, Rubric, ServiceCategory, TrainingSnapshot } from '../shared/types';
 import type { SourceUpload, TrainingGraph } from '../shared/research';
 import { api, date, json } from './api';
 import { Alert, Badge, Empty, ExternalLink, GrowingTextarea, Modal, Spinner } from './ui';
@@ -41,18 +41,31 @@ type Editor = {
   criteria: string;
   exclusions: string;
   questions: string;
+  categories: string;
 };
+/** A service category as one editor line: "Name: what a good fit looks like". */
+const categoryLine = (category: ServiceCategory) =>
+  category.description ? category.name + ': ' + category.description : category.name;
 const edit = (rubric: Rubric): Editor => ({
   summary: rubric.summary,
   criteria: rubric.criteria.join('\n'),
   exclusions: rubric.exclusions.join('\n'),
   questions: rubric.questions.join('\n'),
+  categories: (rubric.categories ?? []).map(categoryLine).join('\n'),
 });
 const lines = (value: string) =>
   value
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+/** The editor's category lines back as categories: the name is everything before the first colon. */
+const categoryList = (value: string): ServiceCategory[] =>
+  lines(value).map((line) => {
+    const colon = line.indexOf(':');
+    return colon < 0
+      ? { name: line, description: '' }
+      : { name: line.slice(0, colon).trim(), description: line.slice(colon + 1).trim() };
+  });
 const domain = (value: string) => {
   try {
     return new URL(value).hostname.replace(/^www\./, '');
@@ -173,6 +186,7 @@ export default function Training({
             criteria: lines(next.criteria),
             exclusions: lines(next.exclusions),
             questions: lines(next.questions),
+            categories: categoryList(next.categories),
           },
         }),
       });
@@ -598,6 +612,7 @@ export default function Training({
                 summary: editor.summary,
                 criteria: lines(editor.criteria),
                 exclusions: lines(editor.exclusions),
+                categories: categoryList(editor.categories).map(categoryLine),
               }}
             />
           )}
@@ -641,6 +656,19 @@ export default function Training({
                 value={editor.exclusions}
                 onChange={(e) => update('exclusions', e.target.value)}
                 placeholder="Direct competitor manufacturing the same product…"
+              />
+            </label>
+            <label>
+              Service categories
+              <small>
+                One per line as Name: what a good fit looks like. Each lead is rated a good,
+                possible or no fit for every category, beside its fit score.
+              </small>
+              <GrowingTextarea
+                rows={4}
+                value={editor.categories}
+                onChange={(e) => update('categories', e.target.value)}
+                placeholder="Website development: an outdated or missing website, or a site that cannot take online orders…"
               />
             </label>
             <label>
@@ -879,6 +907,19 @@ export default function Training({
                 <li key={c}>{c}</li>
               ))}
             </ul>
+            {!!oldVersion.snapshot.rubric.categories?.length && (
+              <>
+                <h4>Service categories</h4>
+                <ul>
+                  {oldVersion.snapshot.rubric.categories.map((category) => (
+                    <li key={category.name}>
+                      <strong>{category.name}</strong>
+                      {category.description && ': ' + category.description}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             <h4>Preserved source context</h4>
             {oldVersion.snapshot.sources.map((s) => (
               <details key={s.id}>
