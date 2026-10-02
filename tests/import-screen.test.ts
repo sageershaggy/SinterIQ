@@ -8,7 +8,7 @@ import { createApp } from '../server/app';
 import { type Generate } from '../server/ai';
 import { csvCell } from '../shared/csv';
 import type { ImportLead, ImportPreview, ScreenVerdict } from '../shared/lead-import';
-import type { Project } from '../shared/types';
+import type { Lead, Project } from '../shared/types';
 
 process.env.GEMINI_API_KEY = '';
 process.env.LLM_API_KEY = '';
@@ -266,6 +266,12 @@ test('the quick screen answers every row from the row data alone, against the ru
         contact_role: 'Head of Engineering',
         notes: 'N'.repeat(5000),
         website: 'https://alpha.example',
+        list_data: {
+          Event: 'Hannover Messe 2026',
+          Products: 'P'.repeat(300),
+          // Sent by hand rather than from a preview: still cleaned before the AI sees it.
+          'Booth contact': 'Private Person',
+        },
       }),
       lead({ name: 'Beta Staffing', industry: 'Staffing services' }),
       lead({ name: 'Gamma Holdings' }),
@@ -299,6 +305,13 @@ test('the quick screen answers every row from the row data alone, against the ru
     assert.ok(!text.includes('1234567'), 'the contact phone stays out');
     assert.equal(sent.input.rows[0].contact_role, 'Head of Engineering');
     assert.ok(String(sent.input.rows[0].notes).length <= 601, 'notes are truncated');
+    // The list's other columns are row data too, shortened like the notes.
+    const listed = sent.input.rows[0].list_data as Record<string, string>;
+    assert.deepEqual(Object.keys(listed), ['Event', 'Products']);
+    assert.equal(listed.Event, 'Hannover Messe 2026');
+    assert.equal(listed.Products, 'P'.repeat(120) + '…');
+    assert.deepEqual(sent.input.rows[1].list_data, {});
+    assert.match(sent.system, /list_data holds the other columns of the uploader’s own list/);
     assert.match(sent.system, /remembered/);
     assert.match(sent.system, /nonprofit/);
     // No website is opened: that is the detailed qualification's job.
@@ -526,6 +539,143 @@ test('chosen rows import atomically through the same write path and report the n
     // Every other route still refuses a body over 1 MB.
     const tooBig = await f.post(base, { name: 'Huge', notes: 'x'.repeat(1_100_000) });
     assert.equal(tooBig.status, 413);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('an import keeps the list’s other columns as list data, never a personal detail', async () => {
+  const f = fixture(screenModel([]));
+  try {
+    await f.setup();
+    const project = await publishedProject(f);
+    const base = '/projects/' + project.id + '/leads';
+    const csv =
+      'Company Name,Website,Event,Funding Round,Announced,Stand,Booth Contact,Speaker Email,Fax,LinkedIn,Remarks,Rep,Raised\n' +
+      'Fair Pumps,fair-pumps.example,Hannover Messe 2026,Series B,2026-03-15,Hall 3 A12,Jana Weber,jana@fair.example,+49 30 7654321,in/jana-weber,Call Jana on +49 30 1234567,rep@fair.example,€12.500.000\n';
+    const preview = await f.upload(base + '/import/preview', csv);
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    const row = (preview.body as ImportPreview).rows[0];
+    // A column whose header names a person or a way to reach one is left out, and so is any
+    // value holding an email address or a phone number. Dates and amounts are not phone numbers.
+    const kept = {
+      Event: 'Hannover Messe 2026',
+      'Funding round': 'Series B',
+      Announced: '2026-03-15',
+      Stand: 'Hall 3 A12',
+      Raised: '€12.500.000',
+    };
+    assert.deepEqual(row.lead.list_data, kept);
+    assert.equal(row.lead.contact_name, '');
+
+    // The dialog sends the previewed row back, and the lead keeps its list data.
+    const imported = await f.post(base + '/import/rows', { leads: [row.lead] });
+    assert.equal(imported.status, 200, JSON.stringify(imported.body));
+    const id = imported.body.created_ids[0] as number;
+    const url = '/api' + base + '/' + id;
+    const created = (await f.agent.get(url)).body as Lead;
+    assert.deepEqual(created.list_data, kept);
+    assert.ok(!JSON.stringify(created).includes('Jana'), 'no personal detail reached the lead');
+
+    // The lead form neither carries nor clears it.
+    const edited = await f.put(base + '/' + id, {
+      revision: created.revision,
+      name: created.name,
+      website: created.website,
+      country: 'Germany',
+    });
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+    assert.deepEqual(edited.body.list_data, kept);
+    const refused = await f.put(base + '/' + id, {
+      revision: edited.body.revision,
+      name: created.name,
+      list_data: {},
+    });
+    assert.equal(refused.status, 400);
+
+    // Updating a duplicate merges the columns: a new value replaces the same column, the rest
+    // stay, and like any other merged change it moves the revision and clears the review.
+    f.db.prepare('UPDATE leads SET reviewed=1 WHERE id=?').run(id);
+    const merged = await f.post(base + '/import/rows', {
+      leads: [lead({ name: 'Fair Pumps', list_data: { 'FUNDING ROUND': 'Series C', Hall: '4' } })],
+      on_duplicate: 'update',
+    });
+    assert.equal(merged.status, 200, JSON.stringify(merged.body));
+    assert.equal(merged.body.updated, 1);
+    const after = (await f.agent.get(url)).body as Lead;
+    assert.deepEqual(after.list_data, { ...kept, 'Funding round': 'Series C', Hall: '4' });
+    assert.equal(after.revision, edited.body.revision + 1);
+    assert.equal(after.reviewed, false);
+    // The same columns again change nothing, and skipping a duplicate never touches them.
+    const same = await f.post(base + '/import/rows', {
+      leads: [lead({ name: 'Fair Pumps', list_data: { Hall: '4' } })],
+      on_duplicate: 'update',
+    });
+    assert.deepEqual([same.body.updated, same.body.skipped], [0, 1]);
+    const skipped = await f.post(base + '/import/rows', {
+      leads: [lead({ name: 'Fair Pumps', list_data: { Hall: '9' } })],
+    });
+    assert.equal(skipped.body.skipped, 1);
+    const unchanged = (await f.agent.get(url)).body as Lead;
+    assert.equal(unchanged.list_data?.Hall, '4');
+    assert.equal(unchanged.revision, after.revision);
+
+    // A hand-made request is cleaned by the same rule, and held to the same limits.
+    const crafted = await f.post(base + '/import/rows', {
+      leads: [
+        lead({
+          name: 'Crafted Pumps',
+          list_data: {
+            Event: 'Achema 2027',
+            'Contact person': 'Jana Weber',
+            Note: 'jana@crafted.example',
+            Industry: 'Pumps',
+            ['Long ' + 'x'.repeat(80)]: 'y'.repeat(400),
+          },
+        }),
+        lead({
+          name: 'Wide Pumps',
+          list_data: Object.fromEntries(
+            Array.from({ length: 30 }, (_, i) => ['Column ' + (i + 1), 'v' + (i + 1)]),
+          ),
+        }),
+        lead({
+          name: 'Long Pumps',
+          list_data: Object.fromEntries(
+            Array.from({ length: 20 }, (_, i) => ['Column ' + (i + 1), 'z'.repeat(300)]),
+          ),
+        }),
+      ],
+    });
+    assert.equal(crafted.status, 200, JSON.stringify(crafted.body));
+    const stored = (name: string) =>
+      JSON.parse(
+        (
+          f.db
+            .prepare('SELECT list_data FROM leads WHERE project_id=? AND name=?')
+            .get(project.id, name) as { list_data: string }
+        ).list_data,
+      ) as Record<string, string>;
+    const long = 'Long ' + 'x'.repeat(55);
+    assert.deepEqual(stored('Crafted Pumps'), {
+      Event: 'Achema 2027',
+      [long]: 'y'.repeat(299) + '…',
+    });
+    assert.equal(long.length, 60);
+    const wide = stored('Wide Pumps');
+    assert.equal(Object.keys(wide).length, 25);
+    assert.equal(wide['Column 25'], 'v25');
+    const packed = stored('Long Pumps');
+    assert.ok(JSON.stringify(packed).length <= 4000);
+    assert.ok(Object.keys(packed).length >= 12, JSON.stringify(Object.keys(packed)));
+
+    // The one-shot file import keeps the same columns.
+    const oneShot = await f.upload(base + '/import', 'name,event,email\nSolo Pumps,Achema 2027,a@solo.example\n');
+    assert.equal(oneShot.status, 200, JSON.stringify(oneShot.body));
+    assert.deepEqual(stored('Solo Pumps'), { Event: 'Achema 2027' });
+    // A lead added by hand has none.
+    assert.equal((await f.post(base, { name: 'Typed Pumps' })).status, 201);
+    assert.deepEqual(stored('Typed Pumps'), {});
   } finally {
     f.dispose();
   }

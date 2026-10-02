@@ -225,6 +225,11 @@ export interface Lead {
   reviewed: boolean;
   /** The services the latest result rates GOOD or POSSIBLE; superseded with it when stale. */
   service_fit?: LeadServiceFit;
+  /**
+   * The imported list's other columns (shared/lead-import.ts ListData), label → value. Written
+   * only by an import, never by the lead form; empty when the list had none.
+   */
+  list_data?: Record<string, string>;
   created_at: string;
   updated_at: string;
   legacy_json?: string;

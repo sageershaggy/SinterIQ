@@ -75,7 +75,7 @@ import {
   text,
   webUrl,
 } from './validation';
-import { readImportRows, mapImportRows } from './import';
+import { readImportRows, mapImportRows, storedListData } from './import';
 import {
   checkImportLead,
   importLeads,
@@ -191,6 +191,7 @@ function serializeLead(row: Lead, project: Project): Lead {
     // A superseded result must not keep advertising an outreach step.
     next_step: stale ? 'NONE' : nextStepFor(row.status, row.score),
     service_fit: storedServiceFit(row.service_fit),
+    list_data: storedListData(row.list_data),
   };
 }
 /** leads.service_fit as stored (server/service-fit-schema.ts); anything unreadable is none. */

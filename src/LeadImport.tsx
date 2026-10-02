@@ -254,6 +254,10 @@ export function ImportModal({
   }
 
   const toScreen = groups ? groups.ready.length : 0;
+  // The file's other columns that travel with the leads as list data, as the server labelled them.
+  const listColumns = preview
+    ? [...new Set(preview.rows.flatMap((row) => Object.keys(row.lead.list_data ?? {})))]
+    : [];
   const reasonOf = (row: PreviewRow) =>
     row.duplicate
       ? 'Matches ' + row.duplicate.name + ' in this project.'
@@ -288,7 +292,8 @@ export function ImportModal({
                 Only the company name is required. Common export headings are recognised too —
                 Company Name, Company Website, Company Size, Full Name, Job Title, Emails, Phone
                 Numbers, Locality. A row with no company name is reported and skipped, because a
-                lead is a company.
+                lead is a company. Other columns, such as an event or a funding round, are kept
+                with the lead as your list data; contact details in them are left out.
               </small>
             </div>
             <a className="text-button" href="/branding/leads-template.csv" download>
@@ -319,6 +324,9 @@ export function ImportModal({
               <span>
                 <strong>{file.name}</strong>
                 <small>{plural(preview.total, 'row')} read</small>
+                {listColumns.length > 0 && (
+                  <small>Also kept with each lead: {listColumns.join(', ')}</small>
+                )}
               </span>
               {screenState !== 'running' && !busy && (
                 <label className="text-button import-file-change">

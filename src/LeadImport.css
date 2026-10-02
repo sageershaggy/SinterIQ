@@ -36,6 +36,7 @@
 }
 .import-file small {
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 /* A text-styled "choose another file": the input stays focusable but out of sight. */
 .import-file-change {

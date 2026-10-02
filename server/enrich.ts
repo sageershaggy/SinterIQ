@@ -406,8 +406,11 @@ function plausibleName(name: string) {
     name.split(/\s+/).length <= 8
   );
 }
-/** Contact details belong in a contact, never in a fact about the company. */
-const personalDetail = /@|(?:\d[\s().-]?){7,}/;
+/**
+ * Contact details belong in a contact, never in a fact about the company. An imported list's
+ * extra columns are held to the same rule (listData in server/import.ts).
+ */
+export const personalDetail = /@|(?:\d[\s().-]?){7,}/;
 
 /** The project's training, as far as research needs it. */
 export interface ResearchTraining {

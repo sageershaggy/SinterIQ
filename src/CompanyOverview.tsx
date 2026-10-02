@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import {
   CircleAlert,
   Flag,
@@ -403,6 +403,8 @@ export function CompanyOverview({
     }
   }
   const citations = profile?.citations || [];
+  // The imported list's other columns (an event, a funding round): the team's data, as entered.
+  const listed = Object.entries(lead.list_data ?? {});
   const latest = lead.runs?.[0];
   const current = latest && !lead.stale ? latest : null;
   // Conflicts from the latest run that still describe the record: a field someone has changed
@@ -630,6 +632,20 @@ export function CompanyOverview({
               <summary>Notes from the lead record</summary>
               <p>{lead.notes}</p>
             </details>
+          )}
+          {listed.length > 0 && (
+            <section className="company-list-data" aria-label="From your lead list">
+              <strong>From your lead list</strong>
+              <small>Provided by you, not checked on the web</small>
+              <dl>
+                {listed.map(([name, value]) => (
+                  <Fragment key={name}>
+                    <dt>{name}</dt>
+                    <dd>{value}</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            </section>
           )}
           <p className="fine-print">
             “In the lead record” was typed or imported; “Found by research” was read from the

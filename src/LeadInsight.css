@@ -454,6 +454,38 @@
   font-size: 12px;
   white-space: pre-wrap;
 }
+/* The imported list's other columns: the team's data, set apart from the researched facts. */
+.company-list-data {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-left: 3px solid #ecdcae;
+  background: #fdfaf0;
+  border-radius: 0 8px 8px 0;
+  font-size: 12px;
+}
+.company-list-data > strong {
+  display: block;
+  color: #4c6a3d;
+}
+.company-list-data > small {
+  display: block;
+  margin-top: 2px;
+  color: #6c7564;
+}
+.company-list-data dl {
+  display: grid;
+  grid-template-columns: minmax(0, 100px) minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 10px 0 0;
+}
+.company-list-data dt {
+  color: #697568;
+  overflow-wrap: anywhere;
+}
+.company-list-data dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .research-before {
   display: flex;
   gap: 9px;

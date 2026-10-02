@@ -5,7 +5,7 @@ import { audit, nameKey, now, websiteKey, type DB, type Secrets } from './databa
 import { getAiConfig, type Generate } from './ai';
 import { notifyProject } from './notifications';
 import { checkedUrl } from './network';
-import { importLimits, mapImportRows, readImportRows } from './import';
+import { importLimits, listData, mapImportRows, readImportRows, storedListData } from './import';
 import { screenRows } from './import-screen';
 import { HttpError, leadSchema, positiveId } from './validation';
 import {
@@ -34,7 +34,16 @@ const fieldLabels: Record<string, string> = {
   contact_email: 'Contact email',
   contact_phone: 'Contact phone',
   notes: 'Notes',
+  list_data: 'The other columns',
 };
+/**
+ * An imported row's list data, which only the import path accepts: leadSchema stays the lead
+ * form's contract, so an edit can neither send nor clear it. Whatever arrives is cleaned by the
+ * same rule as a file read (listData), so a hand-made request cannot store personal details.
+ */
+const listDataSchema = z.record(z.string(), z.union([z.string(), z.number()])).transform(listData);
+/** A row as the import path accepts it: the lead form's fields plus its list data. */
+const importLeadSchema = leadSchema.extend({ list_data: listDataSchema.default({}) });
 /** Turns a validator issue into something a person reading a spreadsheet can act on. */
 function friendlyIssue(path: string, message: string) {
   const label = fieldLabels[path] || 'This row';
@@ -71,7 +80,7 @@ export function checkImportLead(
         '" is not a usable public address. Add the real website, then qualify the lead.';
     }
   }
-  const parsed = leadSchema.safeParse(row);
+  const parsed = importLeadSchema.safeParse(row);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     return { ok: false, reason: friendlyIssue(String(issue.path[0] ?? ''), issue.message) };
@@ -109,7 +118,7 @@ export function insertLead(db: DB, projectId: number, lead: ImportLead) {
   const id = Number(
     db
       .prepare(
-        'INSERT INTO leads (project_id,name,name_key,website,website_key,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO leads (project_id,name,name_key,website,website_key,country,city,industry,employee_count,contact_name,contact_role,contact_email,contact_phone,notes,list_data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       )
       .run(
         projectId,
@@ -126,6 +135,7 @@ export function insertLead(db: DB, projectId: number, lead: ImportLead) {
         lead.contact_email,
         lead.contact_phone,
         lead.notes,
+        JSON.stringify(lead.list_data ?? {}),
         now(),
         now(),
       ).lastInsertRowid,
@@ -167,30 +177,35 @@ export function importLeads(
       // Only fill in values the CSV actually carries, so a sparse row never blanks a lead.
       const current = db
         .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
-        .get(result.duplicate.id, project.id) as Lead;
+        .get(result.duplicate.id, project.id) as Omit<Lead, 'list_data'> & { list_data: string };
+      const stored = storedListData(current.list_data);
       const merged = {
         website: lead.website || current.website,
         country: lead.country || current.country,
         industry: lead.industry || current.industry,
         notes: lead.notes || current.notes,
+        // The list's columns merge: a new value replaces the same column, the others stay.
+        list_data: JSON.stringify(listData({ ...stored, ...lead.list_data })),
       };
       const changedFields =
         merged.website !== current.website ||
         merged.country !== current.country ||
         merged.industry !== current.industry ||
-        merged.notes !== current.notes;
+        merged.notes !== current.notes ||
+        merged.list_data !== JSON.stringify(stored);
       if (!changedFields) {
         duplicates.push(lead.name);
         continue;
       }
       db.prepare(
-        'UPDATE leads SET website=?,website_key=?,country=?,industry=?,notes=?,revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+        'UPDATE leads SET website=?,website_key=?,country=?,industry=?,notes=?,list_data=?,revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
       ).run(
         merged.website,
         websiteKey(merged.website),
         merged.country,
         merged.industry,
         merged.notes,
+        merged.list_data,
         now(),
         result.duplicate.id,
         project.id,
@@ -331,7 +346,7 @@ export function installLeadImport(
     const input = z
       .object({
         rows: z
-          .array(leadSchema)
+          .array(importLeadSchema)
           .min(1)
           .max(screenBatchSize, 'Send at most ' + screenBatchSize + ' rows per quick screen.'),
       })
