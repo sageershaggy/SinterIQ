@@ -6,9 +6,10 @@ import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../server/app';
 import { emailDomainCandidate, isSharedMailDomain } from '../server/enrich';
-import type { Generate } from '../server/ai';
+import { specificBlocker, validateQualification, type Generate } from '../server/ai';
 import type { WebsitePage } from '../server/network';
 import type {
+  Evidence,
   Lead,
   Project,
   Qualification,
@@ -388,7 +389,15 @@ test('when research verifies nothing, the result says what was checked', async (
     assert.ok(checked, JSON.stringify(result.gaps));
     assert.match(checked, /shared email provider/);
     assert.match(checked, /parked, for-sale or placeholder/);
-    assert.equal(result.decision, 'NEEDS_REVIEW');
+    // Researched properly and nothing found: missing information lowers the score, it is not a
+    // reason for review. The record alone proves no rule, so nothing is met and nothing blocks.
+    assert.equal(result.decision, 'NOT_A_TARGET');
+    assert.equal(result.score, 0);
+    assert.deepEqual(result.blockers, []);
+    assert.ok(
+      result.gaps.some((gap) => gap.startsWith('No retrieved source for: Manufactures pumps')),
+      JSON.stringify(result.gaps),
+    );
   } finally {
     f.dispose();
   }
@@ -511,13 +520,13 @@ test('an invented evidence id is asked for again once, with the valid ids named'
   }
 });
 
-test('the citation retry happens once: a model that still invents an id saves nothing', async () => {
+test('the citation retry happens once: an id still invented loses its claim, not the run', async () => {
   const home = 'https://invented-pumps.example.com';
   const f = fixture(
     {
       qualify: (input) => {
         const result = complete(input);
-        result.criteria = result.criteria.map((item) => ({ ...item, source_ids: ['E9'] }));
+        result.criteria[0].source_ids = ['E9'];
         return result;
       },
     },
@@ -528,12 +537,92 @@ test('the citation retry happens once: a model that still invents an id saves no
     const project = await readyProject(f);
     const { base } = await addLead(f, project.id, { name: 'Invented Pumps', website: home });
     const qualified = await f.post(base + '/qualify');
-    assert.equal(qualified.status, 502, JSON.stringify(qualified.body));
-    assert.match(qualified.body.error, /cited evidence that was not supplied/);
+    assert.equal(qualified.status, 200, JSON.stringify(qualified.body));
     assert.equal(f.calls.qualify.length, 2);
+    const result = qualified.body.result as Qualification;
+    // The claim that cited only the invented id is unverified, with the reason on show.
+    assert.equal(result.criteria[0].outcome, 'UNKNOWN');
+    assert.deepEqual(result.criteria[0].source_ids, []);
+    assert.ok(
+      result.gaps.includes(
+        'The AI cited a source that was not supplied for: Manufactures pumps; it was not counted.',
+      ),
+      JSON.stringify(result.gaps),
+    );
+    // The rest of the answer stands: one of two criteria met.
+    assert.equal(result.criteria[1].outcome, 'MATCH');
+    assert.equal(result.score, 50);
     const after = (await f.get(base)).body as Lead & { runs: Run[] };
-    assert.equal(after.runs.length, 0);
-    assert.equal(after.status, 'UNREVIEWED');
+    assert.equal(after.runs.length, 1);
+    assert.equal(after.status, result.decision);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a supplied id written another way is read back without a retry', async () => {
+  const home = 'https://written-pumps.example.com';
+  const f = fixture(
+    {
+      qualify: (input) => {
+        const result = complete(input);
+        // The page's own URL, a bracketed id and a "Source" prefix all name supplied evidence.
+        result.criteria[0].source_ids = [home + '/'];
+        result.criteria[1].source_ids = ['[E2]'];
+        result.exclusions[0].source_ids = ['Source e2'];
+        return result;
+      },
+    },
+    { 'https://example.org': trainingSite, [home]: 'Written Pumps manufactures pumps.' },
+  );
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const { base } = await addLead(f, project.id, { name: 'Written Pumps', website: home });
+    const qualified = await f.post(base + '/qualify');
+    assert.equal(qualified.status, 200, JSON.stringify(qualified.body));
+    assert.equal(f.calls.qualify.length, 1, 'no repair call for a citation written differently');
+    const result = qualified.body.result as Qualification;
+    assert.deepEqual(
+      [...result.criteria, ...result.exclusions].map((item) => item.source_ids),
+      [['E2'], ['E2'], ['E2']],
+    );
+    assert.equal(result.decision, 'QUALIFIED');
+    // The first call already lists the ids that may be cited, and names the project.
+    const input = f.calls.qualify[0] as { evidence_index: Array<{ id: string; kind: string }> };
+    assert.deepEqual(
+      input.evidence_index.map((item) => item.id + ':' + item.kind),
+      ['E1:lead_record', 'E2:website'],
+    );
+    assert.match(f.calls.systems.at(-1)!, /"Pump Research"/);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a website on record that cannot be read holds the lead in review, with the score shown', async () => {
+  const home = 'https://unreachable-pumps.example.com';
+  const f = fixture({}, { 'https://example.org': trainingSite });
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const { base } = await addLead(f, project.id, {
+      name: 'Unreachable Pumps',
+      website: home,
+      industry: 'Pumps',
+    });
+    const qualified = await f.post(base + '/qualify');
+    assert.equal(qualified.status, 200, JSON.stringify(qualified.body));
+    const result = qualified.body.result as Qualification;
+    assert.equal(result.decision, 'NEEDS_REVIEW');
+    assert.deepEqual(result.blockers, [
+      'The website on record (' +
+        home +
+        ') could not be read, so the company could not be researched.',
+    ]);
+    // Nobody could read a page, so nothing is met — but that is the blocker, not the verdict.
+    assert.equal(result.score, 0);
+    assert.ok(result.next_steps.some((step) => step.includes(home)));
   } finally {
     f.dispose();
   }
@@ -598,6 +687,206 @@ test('the same rules in another order or with numbering are still every rule', a
   } finally {
     f.dispose();
   }
+});
+
+// --- The final status ---------------------------------------------------------------------
+
+/** Five criteria, so each one met is 20 points, and two exclusions. */
+const fiveRules: TrainingSnapshot = {
+  project: { name: 'Status Research', description: '', website: '' },
+  rubric: {
+    summary: 'Find pump manufacturers.',
+    criteria: [
+      'Manufactures pumps',
+      'Employs engineers',
+      'Exports to Europe',
+      'Runs a test bench',
+      'Sells to the chemical industry',
+    ],
+    exclusions: [
+      'Manufactures bearings',
+      'Government or non-commercial organization with no approved commercial opportunity',
+    ],
+    questions: [],
+  },
+  sources: [],
+};
+const recordItem: Evidence = {
+  id: 'E1',
+  kind: 'lead_record',
+  title: 'User-provided lead record (unverified)',
+  url: '',
+  content: '{"name":"Status Pumps"}',
+  captured_at: '2026-10-01T00:00:00.000Z',
+};
+const pageItem: Evidence = {
+  id: 'E2',
+  kind: 'website',
+  title: 'status-pumps.example.com/',
+  url: 'https://status-pumps.example.com/',
+  content: 'Status Pumps manufactures pumps.',
+  captured_at: '2026-10-01T00:00:00.000Z',
+};
+/** A model answer meeting the first `met` criteria from the page and clearing both exclusions. */
+function answer(met: number, extra: Record<string, unknown> = {}) {
+  return {
+    decision: 'NEEDS_REVIEW',
+    score: 35,
+    confidence: 40,
+    summary: 'A pump maker with little published detail.',
+    criteria: fiveRules.rubric.criteria.map((criterion, index) => ({
+      criterion,
+      outcome: index < met ? 'MATCH' : 'UNKNOWN',
+      evidence: index < met ? 'The home page says so.' : 'Not on the pages read.',
+      source_ids: index < met ? ['E2'] : [],
+    })),
+    exclusions: fiveRules.rubric.exclusions.map((criterion) => ({
+      criterion,
+      outcome: 'NO_MATCH',
+      evidence: 'The home page describes a private pump manufacturer.',
+      source_ids: ['E2'],
+    })),
+    gaps: ['Industry unknown', 'Location unknown'],
+    next_steps: [],
+    outreach: {
+      contact_name: '',
+      contact_role: '',
+      contact_source_ids: [],
+      why_qualified: 'Builds pumps.',
+      call_script: 'Ask about their pump lines.',
+    },
+    ...extra,
+  };
+}
+const judge = (raw: unknown) =>
+  validateQualification(raw, fiveRules, [recordItem, pageItem], { name: 'Status Pumps' });
+const nonprofit = fiveRules.rubric.exclusions[1];
+
+test('missing information lowers the score and never causes review: 20/100 is Not a target', () => {
+  // Everything the old checks sent to review at once: low confidence, gaps, unverified rules, a
+  // model suggesting review and a blocker that only says information is missing.
+  const result = judge(
+    answer(1, { blocker: 'Insufficient information: no website, industry or location found.' }),
+  );
+  assert.equal(result.score, 20);
+  assert.equal(result.decision, 'NOT_A_TARGET');
+  assert.deepEqual(result.blockers, []);
+  // What is missing stays on show; it just does not decide the status.
+  assert.ok(result.gaps.includes('Industry unknown'));
+  assert.equal(result.confidence, 40);
+  assert.equal(result.outreach.call_script, '');
+});
+
+test('from 50 a lead is Qualified, whatever the model suggested or how sure it was', () => {
+  const result = judge(answer(3));
+  assert.equal(result.score, 60);
+  assert.equal(result.decision, 'QUALIFIED');
+  assert.deepEqual(result.blockers, []);
+  assert.equal(result.outreach.call_script, 'Ask about their pump lines.');
+  assert.equal(judge(answer(2)).decision, 'NOT_A_TARGET');
+});
+
+test('an exclusion met on a retrieved page is Not a target at 0, even with every criterion met', () => {
+  const raw = answer(5);
+  raw.exclusions[0] = {
+    ...raw.exclusions[0],
+    outcome: 'MATCH',
+    evidence: 'The products page lists ball bearings.',
+    source_ids: ['E2'],
+  };
+  const result = judge(raw);
+  assert.equal(result.exclusions[0].outcome, 'MATCH');
+  assert.equal(result.decision, 'NOT_A_TARGET');
+  assert.equal(result.score, 0);
+  assert.equal(result.outreach.why_qualified, '');
+});
+
+test('an exclusion only the lead record supports is unverified, and holds a 50+ lead in review', () => {
+  const recordOnly = {
+    criterion: nonprofit,
+    outcome: 'MATCH',
+    evidence: 'The record notes call it a nonprofit.',
+    source_ids: ['E1'],
+  };
+  const raw = answer(3);
+  raw.exclusions[1] = recordOnly;
+  const result = judge(raw);
+  assert.equal(result.exclusions[1].outcome, 'UNKNOWN');
+  assert.ok(
+    result.gaps.includes(
+      'No retrieved source for: ' + nonprofit + ' (only the unverified lead record was cited)',
+    ),
+    JSON.stringify(result.gaps),
+  );
+  // Not excluded: the score stands, but a possible exclusion is unchecked.
+  assert.equal(result.score, 60);
+  assert.equal(result.decision, 'NEEDS_REVIEW');
+  assert.deepEqual(result.blockers, ['Could not verify the exclusion: ' + nonprofit]);
+  // Below 50 the same unverified exclusion changes nothing.
+  const low = answer(2);
+  low.exclusions[1] = recordOnly;
+  const lowResult = judge(low);
+  assert.equal(lowResult.decision, 'NOT_A_TARGET');
+  assert.deepEqual(lowResult.blockers, []);
+  // The same holds when the model itself could not settle the exclusion.
+  const unsettled = answer(4);
+  unsettled.exclusions[0] = { ...unsettled.exclusions[0], outcome: 'UNKNOWN', source_ids: [] };
+  assert.deepEqual(judge(unsettled).blockers, [
+    'Could not verify the exclusion: Manufactures bearings',
+  ]);
+});
+
+test('a specific verification blocker is kept and a generic one is ignored', () => {
+  const generic = judge(
+    answer(3, {
+      blocker: 'Limited public information about Status Pumps; no LinkedIn profile found.',
+    }),
+  );
+  assert.equal(generic.decision, 'QUALIFIED');
+  assert.deepEqual(generic.blockers, []);
+  const specific =
+    'The website describes Status Dental, a clinic, not the pump maker in the record.';
+  const kept = judge(answer(3, { blocker: specific }));
+  assert.equal(kept.decision, 'NEEDS_REVIEW');
+  assert.deepEqual(kept.blockers, [specific]);
+  assert.equal(kept.score, 60);
+  for (const phrase of [
+    'Insufficient information',
+    'Missing data.',
+    'Not enough evidence to verify the company.',
+    'No website',
+    'None',
+    'N/A',
+    'No website found for NY Ortho',
+    'Only one page could be read.',
+  ])
+    assert.equal(specificBlocker(phrase, 'nyortho'), '', phrase);
+  for (const phrase of [
+    'Several companies share the name and the evidence does not settle which one this is.',
+    'The domain is parked and for sale.',
+    'The company closed in 2021, according to its own site.',
+    'The evidence contradicts itself on who the company is.',
+  ])
+    assert.equal(specificBlocker(phrase, 'Status Pumps'), phrase);
+});
+
+test('an opportunity is kept only with a retrieved source', () => {
+  const summary = 'Their seals wear fast in chemical service, which the offering addresses.';
+  const kept = judge(
+    answer(3, { opportunity: { summary, source_ids: ['https://status-pumps.example.com'] } }),
+  );
+  assert.deepEqual(kept.opportunity, { summary, source_ids: ['E2'] });
+  const cleared = judge(answer(3, { opportunity: { summary, source_ids: ['E1'] } }));
+  assert.deepEqual(cleared.opportunity, { summary: '', source_ids: [] });
+  assert.ok(
+    cleared.gaps.includes(
+      'An opportunity was proposed without a retrieved source and was not kept.',
+    ),
+  );
+  // An answer without the newer fields still validates, with neither filled.
+  const older = judge(answer(3));
+  assert.deepEqual(older.opportunity, { summary: '', source_ids: [] });
+  assert.equal(older.decision, 'QUALIFIED');
 });
 
 // --- People on the company's own website -------------------------------------------------

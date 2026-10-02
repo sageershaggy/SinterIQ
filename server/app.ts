@@ -1396,6 +1396,8 @@ export function createApp(options: {
       const qualified = await qualify(config, snapshot, lead, evidence, callAi, {
         research: found.context,
         origin: found.origin,
+        // A website on record that could not be read is a blocker, not a low score.
+        unreadable: fetchFailures,
       });
       if (fetchFailures.length)
         qualified.next_steps.push('Some pages were unavailable: ' + fetchFailures.join(', '));
