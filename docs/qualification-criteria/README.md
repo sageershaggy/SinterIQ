@@ -2,8 +2,8 @@
 
 These are starting drafts of the qualification criteria for the categories the team searches around.
 Each one is written to be uploaded to a project's Training library as a source. Train AI reads it and
-proposes a draft training version (summary, criteria, exclusions, open questions); nothing is used for
-qualification until someone approves and publishes that version.
+proposes a draft training version (summary, criteria, exclusions, service categories, open
+questions); nothing is used for qualification until someone approves and publishes that version.
 
 The documents are meant to be edited. Change the wording, add examples of good and bad leads, and
 upload the new version; each upload becomes a new source and each Train AI run a new draft.
@@ -33,6 +33,10 @@ upload the new version; each upload becomes a new source and each Train AI run a
   fact it adds.
 - The open questions are what the AI could not decide from the documents. Answer them in the next
   version of the document.
+- A criteria document usually describes one service category. With several in the library, Train AI
+  proposes a category for each offer ("AI app development: …", "Marketing support: …"), and every
+  lead is rated a good fit, possible fit or no need shown for each one, beside the fit score. Like a
+  met criterion, a good or possible fit needs a source retrieved from the web.
 
 ## What the fit score means
 
