@@ -136,8 +136,13 @@ function narrowed(rows: Array<Record<string, unknown>>, query: URLSearchParams) 
             ? 'NOT_QUALIFIED'
             : 'NEEDS_REVIEW';
   const tests: Record<string, (row: Record<string, unknown>, value: string) => boolean> = {
+    // The fixtures keep no runs, so "Qualified by AI" reads the current status instead.
     qualification: (row, value) =>
-      value === 'AI_QUALIFIED' ? Boolean(row.latest_run_id) : state(row) === value,
+      value === 'AI_QUALIFIED'
+        ? Boolean(row.latest_run_id)
+        : value === 'AI_SAID_QUALIFIED'
+          ? state(row) === 'QUALIFIED'
+          : state(row) === value,
     next_step: (row, value) => row.next_step === value,
     assignee: (row, value) =>
       value === 'me'

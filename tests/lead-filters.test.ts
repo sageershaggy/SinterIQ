@@ -11,6 +11,7 @@ import { HttpError } from '../server/validation';
 import { type Generate } from '../server/ai';
 import {
   AI_QUALIFIED,
+  AI_SAID_QUALIFIED,
   facetParams,
   emptyFacets,
   qualificationFilters,
@@ -36,6 +37,8 @@ const generated: Generate = async (_config, system, input) => {
   if (system.includes('candidate official website domains')) return { domains: [] };
   if (system.includes('extract company facts')) return { fields: [], notes: [] };
   const snapshot = (input as { approved_training: TrainingSnapshot }).approved_training;
+  // A bearing maker meets the exclusion on its own page, so the run itself says Not a target.
+  const bearings = (input as { lead: { name: string } }).lead.name.includes('Bearings');
   return {
     decision: 'QUALIFIED',
     score: 99,
@@ -49,8 +52,8 @@ const generated: Generate = async (_config, system, input) => {
     })),
     exclusions: snapshot.rubric.exclusions.map((criterion) => ({
       criterion,
-      outcome: 'NO_MATCH',
-      evidence: 'The company buys its bearings.',
+      outcome: bearings ? 'MATCH' : 'NO_MATCH',
+      evidence: bearings ? 'The company makes ball bearings.' : 'The company buys its bearings.',
       source_ids: ['E2'],
     })),
     gaps: [],
@@ -825,10 +828,10 @@ test('the counts above the table cover the whole project and each one is a worki
       ['REQUALIFY', 'requalify'],
     ] as const)
       assert.equal((await list('qualification=' + state)).body.total, expected[key], state);
-    // "AI qualified" is offered beside the partition, not inside it: the counts keep their five
-    // states, and it finds exactly the leads outside Raw.
+    // "AI qualified" and "Qualified by AI" are offered beside the partition, not inside it: the
+    // counts keep their five states, and "AI qualified" finds exactly the leads outside Raw.
     assert.deepEqual(
-      qualificationFilters.filter((value) => value !== AI_QUALIFIED),
+      qualificationFilters.filter((value) => value !== AI_QUALIFIED && value !== AI_SAID_QUALIFIED),
       [...qualificationStates],
     );
     const analysed = await list('qualification=AI_QUALIFIED');
@@ -874,6 +877,110 @@ test('a real qualification lands in Qualified, and editing the lead moves it to 
     assert.deepEqual(await names('qualification=REQUALIFY'), ['Real Run Pumps']);
     const summary = (await f.agent.get('/api' + base)).body.summary;
     assert.deepEqual([summary.qualified, summary.requalify], [0, 1]);
+  } finally {
+    f.dispose();
+  }
+});
+
+test('"Qualified by AI" is the AI’s own current verdict, whatever a reviewer decided since', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id + '/leads';
+    const ids: Record<string, number> = {};
+    for (const name of ['Said Pumps', 'Overruled Pumps', 'Bearings Works', 'Edited Pumps', 'Raw Pumps']) {
+      const created = await f.post(base, {
+        name,
+        website: 'https://' + name.toLowerCase().replace(' ', '-') + '.example.com',
+        industry: 'Pumps',
+        country: 'Germany',
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      ids[name] = created.body.id;
+      if (name === 'Raw Pumps') continue;
+      const run = await f.post(base + '/' + created.body.id + '/qualify', {});
+      assert.equal(run.status, 200, JSON.stringify(run.body));
+    }
+    const read = async (name: string) =>
+      (await f.agent.get('/api' + base + '/' + ids[name])).body as Lead;
+    // A reviewer overrules the AI on one lead; another is edited after its run.
+    const overruled = await read('Overruled Pumps');
+    const review = await f.post(base + '/' + overruled.id + '/review', {
+      run_id: overruled.latest_run_id,
+      decision: 'NOT_A_TARGET',
+      notes: 'The client already works with this company.',
+    });
+    assert.equal(review.status, 200, JSON.stringify(review.body));
+    const edited = await read('Edited Pumps');
+    const saved = await f.put(base + '/' + edited.id, {
+      revision: edited.revision,
+      name: edited.name,
+      website: edited.website,
+      industry: 'Pump manufacturing',
+      country: 'Germany',
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+
+    const names = async (query: string) => {
+      const response = await f.agent.get('/api' + base + '?' + query);
+      assert.equal(response.status, 200, query + ' → ' + JSON.stringify(response.body));
+      return (response.body.leads as Lead[]).map((lead) => lead.name).sort();
+    };
+    // Alone: every lead whose current run said Qualified, the overruled one included. The edited
+    // lead's verdict belongs to a record that has changed since, so it is not current.
+    assert.deepEqual(await names('qualification=AI_SAID_QUALIFIED'), [
+      'Overruled Pumps',
+      'Said Pumps',
+    ]);
+    // The status follows the reviewer instead.
+    assert.deepEqual(await names('qualification=QUALIFIED'), ['Said Pumps']);
+    assert.deepEqual(await names('qualification=NOT_QUALIFIED'), [
+      'Bearings Works',
+      'Overruled Pumps',
+    ]);
+    // ORed with any other value chosen beside it, ANDed with the other facets and the search.
+    assert.deepEqual(await names('qualification=AI_SAID_QUALIFIED&qualification=RAW'), [
+      'Overruled Pumps',
+      'Raw Pumps',
+      'Said Pumps',
+    ]);
+    assert.deepEqual(await names('qualification=AI_SAID_QUALIFIED&qualification=AI_QUALIFIED'), [
+      'Bearings Works',
+      'Edited Pumps',
+      'Overruled Pumps',
+      'Said Pumps',
+    ]);
+    assert.deepEqual(await names('qualification=REQUALIFY&qualification=AI_SAID_QUALIFIED'), [
+      'Edited Pumps',
+      'Overruled Pumps',
+      'Said Pumps',
+    ]);
+    assert.deepEqual(await names('qualification=AI_SAID_QUALIFIED&search=over'), [
+      'Overruled Pumps',
+    ]);
+    // The export asks the same question.
+    const exported = await f.agent.get('/api' + base + '/export?qualification=AI_SAID_QUALIFIED');
+    assert.equal(exported.status, 200, exported.text);
+    assert.deepEqual(
+      exported.text
+        .replace(/^﻿/, '')
+        .split('\r\n')
+        .slice(1)
+        .filter(Boolean)
+        .map((line) => /^"((?:[^"]|"")*)"/.exec(line)![1])
+        .sort(),
+      ['Overruled Pumps', 'Said Pumps'],
+    );
+    // Once the training changes, no verdict is current.
+    const current = (await f.agent.get('/api/projects/' + project.id)).body.project as Project;
+    const added = await f.post('/projects/' + project.id + '/sources', {
+      revision: current.revision,
+      title: 'Later brief',
+      content: 'Also consider valve manufacturers with their own engineering team.',
+    });
+    assert.equal(added.status, 201, JSON.stringify(added.body));
+    assert.deepEqual(await names('qualification=AI_SAID_QUALIFIED'), []);
   } finally {
     f.dispose();
   }

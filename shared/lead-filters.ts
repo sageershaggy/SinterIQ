@@ -30,11 +30,21 @@ export type QualificationState = (typeof qualificationStates)[number];
  * any of them; the counts and the table's badge only ever use the partition above.
  */
 export const AI_QUALIFIED = 'AI_QUALIFIED';
-export type QualificationFilter = QualificationState | typeof AI_QUALIFIED;
+/**
+ * "Qualified by AI" is the AI's own verdict rather than the lead's status: the leads whose latest
+ * run on the current training said Qualified, whatever a reviewer decided since. Offered and ORed
+ * like "AI qualified", and outside the partition too, so no count card stands for it.
+ */
+export const AI_SAID_QUALIFIED = 'AI_SAID_QUALIFIED';
+export type QualificationFilter =
+  | QualificationState
+  | typeof AI_QUALIFIED
+  | typeof AI_SAID_QUALIFIED;
 /** The AI qualification facet's values, in the order the filter bar lists them. */
 export const qualificationFilters = [
   'RAW',
   AI_QUALIFIED,
+  AI_SAID_QUALIFIED,
   'QUALIFIED',
   'NEEDS_REVIEW',
   'NOT_QUALIFIED',
@@ -43,6 +53,7 @@ export const qualificationFilters = [
 export const qualificationLabels: Record<QualificationFilter, string> = {
   RAW: 'Raw leads',
   AI_QUALIFIED: 'AI qualified',
+  AI_SAID_QUALIFIED: 'Qualified by AI',
   QUALIFIED: 'Qualified',
   NEEDS_REVIEW: 'Needs review',
   NOT_QUALIFIED: 'Not qualified',
@@ -51,6 +62,8 @@ export const qualificationLabels: Record<QualificationFilter, string> = {
 export const qualificationHints: Record<QualificationFilter, string> = {
   RAW: 'No AI research run yet',
   AI_QUALIFIED: 'Analysed by AI, whatever the result',
+  AI_SAID_QUALIFIED:
+    'The AI’s own verdict on the current training was Qualified, whatever a reviewer decided since',
   QUALIFIED: 'Qualified on the current training',
   NEEDS_REVIEW: 'Research or verification could not finish; a person decides',
   NOT_QUALIFIED: 'Not a target on the current training',

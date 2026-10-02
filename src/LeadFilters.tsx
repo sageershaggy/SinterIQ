@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   AI_QUALIFIED,
+  AI_SAID_QUALIFIED,
   ASSIGNED_TO_ANYONE,
   ASSIGNED_TO_ME,
   UNASSIGNED,
@@ -792,6 +793,12 @@ export function countView(facets: LeadFacets, plain: boolean): 'total' | Qualifi
   const count = activeFacetCount(facets);
   if (!count) return 'total';
   const [only] = facets.qualification;
-  // "AI qualified" has no card: it spans four of them.
-  return count === 1 && facets.qualification.length === 1 && only !== AI_QUALIFIED ? only : null;
+  // "AI qualified" has no card: it spans four of them. Nor has "Qualified by AI": it is the AI's
+  // verdict, which a reviewer may have changed, not the status the cards count.
+  return count === 1 &&
+    facets.qualification.length === 1 &&
+    only !== AI_QUALIFIED &&
+    only !== AI_SAID_QUALIFIED
+    ? only
+    : null;
 }

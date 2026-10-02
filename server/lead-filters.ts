@@ -5,6 +5,7 @@ import { HttpError, positiveId, requiredText, text } from './validation';
 import { pipelineStatusSql } from './crm';
 import {
   AI_QUALIFIED,
+  AI_SAID_QUALIFIED,
   ASSIGNED_TO_ANYONE,
   ASSIGNED_TO_ME,
   UNASSIGNED,
@@ -120,6 +121,19 @@ export function callStatusSql() {
 }
 /** Analysed by AI at least once, whatever it decided: every qualification state but RAW. */
 export const analysedSql = 'l.latest_run_id IS NOT NULL';
+/**
+ * The AI's own verdict on the current training was Qualified. Read from the latest run itself,
+ * in this project, because a reviewer's decision replaces leads.status; a superseded verdict
+ * belongs to training or a record that has changed since, so it does not count.
+ */
+export function aiSaidQualifiedSql(project: Project) {
+  return (
+    '(l.latest_run_id IS NOT NULL AND NOT ' +
+    staleSql(project) +
+    ' AND EXISTS (SELECT 1 FROM qualification_runs q WHERE q.id=l.latest_run_id AND q.project_id=l.project_id' +
+    " AND json_extract(q.result_json,'$.decision')='QUALIFIED'))"
+  );
+}
 /** Lead status: the manual CRM status, New until someone moves it (server/crm.ts). */
 export const leadStatusSql = pipelineStatusSql;
 /** Email status: the outreach status the mail and funnel code maintains. */
@@ -230,10 +244,14 @@ export function facetWhere(
     ' AND ' + inList(expression, values);
   const anyOf = (parts: string[]) => (parts.length ? ' AND (' + parts.join(' OR ') + ')' : '');
   if (input.qualification.length) {
-    // "AI qualified" is every lead a run has looked at, ORed with any state chosen beside it.
-    const states = input.qualification.filter((value) => value !== AI_QUALIFIED);
+    // "AI qualified" is every lead a run has looked at and "Qualified by AI" every lead whose
+    // current run said Qualified; each ORs with any state chosen beside it.
+    const states = input.qualification.filter(
+      (value) => value !== AI_QUALIFIED && value !== AI_SAID_QUALIFIED,
+    );
     where += anyOf([
       ...(input.qualification.includes(AI_QUALIFIED) ? [analysedSql] : []),
+      ...(input.qualification.includes(AI_SAID_QUALIFIED) ? [aiSaidQualifiedSql(project)] : []),
       ...(states.length ? [inList(qualificationStateSql(project), states)] : []),
     ]);
   }
