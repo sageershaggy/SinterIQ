@@ -72,7 +72,14 @@ import {
   webUrl,
 } from './validation';
 import { readImportRows, mapImportRows } from './import';
-import { checkImportLead, importLeads, insertLead, requireImportable } from './lead-import';
+import {
+  checkImportLead,
+  importLeads,
+  importRowsPath,
+  insertLead,
+  installLeadImport,
+  requireImportable,
+} from './lead-import';
 import { csvCell } from '../shared/csv';
 import { criteriaTemplate, listCriteriaTemplates } from './criteria-templates';
 import {
@@ -359,7 +366,9 @@ export function createApp(options: {
       message: { error: 'Too many requests. Retry shortly.' },
     }),
   );
-  app.use(express.json({ limit: '1mb' }));
+  // Chosen import rows can be far above 1 MB; that route parses its own body after sign-in.
+  const parseJson = express.json({ limit: '1mb' });
+  app.use((req, res, next) => (importRowsPath.test(req.path) ? next() : parseJson(req, res, next)));
   installUnsubscribe(app, db);
   installAuth(app, db, production);
   installWorkspace(app, db, getProject);
@@ -883,6 +892,17 @@ export function createApp(options: {
     audit(db, project.id, req.user.name, 'lead.created', input.name);
     notifyLead(db, project.id, result.id!, 'created', input.name + ' was added.');
     res.status(201).json(getLead(db, project, result.id!));
+  });
+  // Preview, quick screen and chosen-row import (server/lead-import.ts). The one-shot file
+  // import below stays for API callers and writes through the same importLeads.
+  installLeadImport(app, {
+    db,
+    secrets,
+    getProject,
+    generate: callAi,
+    aiReady: () => Boolean(options.generate || getAiConfig(db, secrets).api_key),
+    upload: upload.single('file'),
+    fileLimit,
   });
   app.post(
     '/api/projects/:projectId/leads/import',

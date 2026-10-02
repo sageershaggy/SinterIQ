@@ -1,16 +1,26 @@
-import type { z } from 'zod';
-import { audit, nameKey, now, websiteKey, type DB } from './database';
+import express, { type Express, type RequestHandler } from 'express';
+import { rateLimit } from 'express-rate-limit';
+import { z } from 'zod';
+import { audit, nameKey, now, websiteKey, type DB, type Secrets } from './database';
+import { getAiConfig, type Generate } from './ai';
 import { notifyProject } from './notifications';
 import { checkedUrl } from './network';
-import type { RowProblem } from './import';
-import { HttpError, leadSchema } from './validation';
-import type { Lead, Project } from '../shared/types';
-
-type ImportLead = z.infer<typeof leadSchema>;
+import { importLimits, mapImportRows, readImportRows } from './import';
+import { screenRows } from './import-screen';
+import { HttpError, leadSchema, positiveId } from './validation';
+import {
+  screenBatchSize,
+  type ImportLead,
+  type ImportPreview,
+  type ImportProblem,
+  type ScreenVerdict,
+} from '../shared/lead-import';
+import type { Lead, Project, TrainingSnapshot, User } from '../shared/types';
 
 /*
- * Lead import: the checks every row passes and the one transaction every import writes through.
- * The one-shot file route in app.ts uses both.
+ * Lead import: the checks every row passes and the one transaction every import writes through,
+ * plus the preview → quick screen → chosen rows flow the import dialog uses. The one-shot file
+ * route in app.ts shares the checks and the write, so the two can never import differently.
  */
 const fieldLabels: Record<string, string> = {
   name: 'Company name',
@@ -69,7 +79,7 @@ export function checkImportLead(
   return { ok: true, value: parsed.data, warning };
 }
 /** A file with nothing importable is refused outright, naming the first problem. */
-export function requireImportable(count: number, problems: RowProblem[]) {
+export function requireImportable(count: number, problems: ImportProblem[]) {
   if (!count)
     throw new HttpError(
       400,
@@ -209,4 +219,213 @@ export function importLeads(
       );
     return { updated, created, skipped: duplicates.length, duplicates, created_ids: createdIds };
   })();
+}
+
+/**
+ * Chosen rows arrive as one JSON body, which for a full 5,000-row file is far above the 1 MB
+ * every other route accepts: the file itself may be 4 MB, an .xlsx is compressed, and JSON
+ * repeats each field name on every row. That route parses its own body (app.ts skips it), and
+ * only after sign-in and a project check, so nobody can make the server read 16 MB anonymously.
+ */
+export const importRowsPath = /^\/api\/projects\/[^/]+\/leads\/import\/rows\/?$/i;
+const importRowsBodyLimit = '16mb';
+
+const rowsSchema = z
+  .object({
+    leads: z.array(z.record(z.string(), z.unknown())).min(1).max(importLimits.rows),
+    on_duplicate: z.enum(['skip', 'update']).default('skip'),
+    // What the quick screen left out, for the audit line. Counts only: rejected rows are never sent.
+    screened: z
+      .object({
+        rejected: z.number().int().min(0).max(importLimits.rows),
+        unclear: z.number().int().min(0).max(importLimits.rows),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export function installLeadImport(
+  app: Express,
+  options: {
+    db: DB;
+    secrets: Secrets;
+    getProject: (db: DB, id: number, user: User) => Project;
+    generate: Generate;
+    /** True when an AI provider can be called: a saved key, or a model a test injected. */
+    aiReady: () => boolean;
+    upload: RequestHandler;
+    fileLimit: RequestHandler;
+  },
+) {
+  const { db, getProject } = options;
+  const trainingReady = (project: Project) =>
+    Boolean(project.active_version) && project.revision === project.trained_revision;
+  // Its own budget rather than the shared 100 AI runs: a 600-row file is only 15 batches, but
+  // a full 5,000-row file is 125, and screening a list must not use up the qualification that
+  // follows it. 150 batches is one full file with room to stop and carry on.
+  const screenLimit = rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 150,
+    keyGenerator: (req) => String(req.user.id),
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+      error:
+        'Quick-screen limit reached (150 batches of 40 rows per 15 minutes). Wait, then screen the rest.',
+    },
+  });
+
+  /**
+   * Reads and checks a file exactly as the import does, and saves nothing: the rows that can be
+   * imported, the ones that cannot and why, and which companies are already in this project.
+   */
+  app.post(
+    '/api/projects/:projectId/leads/import/preview',
+    options.fileLimit,
+    options.upload,
+    async (req, res) => {
+      const project = getProject(db, positiveId(req.params.projectId), req.user);
+      if (!req.file) throw new HttpError(400, 'Choose a file to import.');
+      const raw = await readImportRows(req.file.originalname, req.file.buffer);
+      const { leads, lines, problems, warnings } = mapImportRows(raw, checkImportLead);
+      requireImportable(leads.length, problems);
+      const columns = [...new Set(raw.flatMap((row) => Object.keys(row)))].filter(Boolean);
+      const preview: ImportPreview = {
+        total: raw.length,
+        columns,
+        rows: leads.map((lead, i) => ({
+          row: lines[i],
+          lead,
+          // Header is line 1, so line n is raw row n - 2.
+          cells: columns.map((column) => raw[lines[i] - 2][column] ?? ''),
+          duplicate: findDuplicate(db, project.id, lead) || null,
+        })),
+        problems,
+        warnings,
+        screening: !trainingReady(project)
+          ? {
+              available: false,
+              reason:
+                'Publish the current training first; the quick screen checks rows against it.',
+            }
+          : !options.aiReady()
+            ? {
+                available: false,
+                reason: 'No AI provider is set up yet. An administrator can add one in Settings.',
+              }
+            : { available: true, reason: '' },
+      };
+      res.json(preview);
+    },
+  );
+
+  /**
+   * Quick-screens one batch of rows against the published training. The browser sends the
+   * file in batches so it can show progress and stop; the server keeps nothing. A row that is
+   * already in this project is answered from the project's own duplicate matching and never
+   * reaches the AI.
+   */
+  app.post('/api/projects/:projectId/leads/import/screen', screenLimit, async (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const input = z
+      .object({
+        rows: z
+          .array(leadSchema)
+          .min(1)
+          .max(screenBatchSize, 'Send at most ' + screenBatchSize + ' rows per quick screen.'),
+      })
+      .strict()
+      .parse(req.body);
+    if (!trainingReady(project))
+      throw new HttpError(409, 'Publish the current project training before quick-screening rows.');
+    if (!options.aiReady()) throw new HttpError(409, 'Configure an AI provider in Settings first.');
+    const version = db
+      .prepare('SELECT snapshot_json FROM training_versions WHERE project_id=? AND version=?')
+      .get(project.id, project.active_version) as { snapshot_json: string };
+    const snapshot = JSON.parse(version.snapshot_json) as TrainingSnapshot;
+    const verdicts: ScreenVerdict[] = [];
+    const pending: Array<{ index: number; lead: ImportLead }> = [];
+    input.rows.forEach((lead, index) => {
+      const duplicate = findDuplicate(db, project.id, lead);
+      if (duplicate)
+        verdicts[index] = {
+          index,
+          verdict: 'DUPLICATE',
+          reason: 'Already in this project as ' + duplicate.name + '.',
+          rule: '',
+          duplicate,
+        };
+      else pending.push({ index, lead });
+    });
+    if (pending.length) {
+      const results = await screenRows(
+        getAiConfig(db, options.secrets),
+        snapshot.rubric,
+        pending.map((item) => item.lead),
+        options.generate,
+      );
+      pending.forEach((item, i) => (verdicts[item.index] = { index: item.index, ...results[i] }));
+    }
+    res.json({ verdicts });
+  });
+
+  /**
+   * Imports the rows the person chose after the preview, through the same validation and the
+   * same transaction as a file import. Every row is checked before any is written, so one bad
+   * row imports nothing.
+   */
+  app.post(
+    '/api/projects/:projectId/leads/import/rows',
+    options.fileLimit,
+    (req, _res, next) => {
+      getProject(db, positiveId(req.params.projectId), req.user);
+      next();
+    },
+    express.json({ limit: importRowsBodyLimit }),
+    (req, res) => {
+      const project = getProject(db, positiveId(req.params.projectId), req.user);
+      const input = rowsSchema.parse(req.body);
+      const leads: ImportLead[] = [];
+      const warnings: ImportProblem[] = [];
+      input.leads.forEach((candidate, index) => {
+        const result = checkImportLead(candidate);
+        const name = typeof candidate.name === 'string' ? candidate.name.slice(0, 200) : '';
+        if (!result.ok)
+          throw new HttpError(
+            400,
+            'Lead ' +
+              (index + 1) +
+              (name ? ' (' + name + ')' : '') +
+              ': ' +
+              result.reason +
+              ' Nothing was imported.',
+          );
+        leads.push(result.value);
+        if (result.warning) warnings.push({ row: index + 1, name, reason: result.warning });
+      });
+      const notes = [warnings.length + ' imported without a usable website'];
+      if (input.screened)
+        notes.push(
+          'quick screen left out ' +
+            input.screened.rejected +
+            ' rejected and ' +
+            input.screened.unclear +
+            ' unclear or unscreened rows',
+        );
+      const results = importLeads(db, {
+        project,
+        actor: req.user.name,
+        leads,
+        onDuplicate: input.on_duplicate,
+        notes,
+      });
+      res.json({
+        ...results,
+        total: leads.length,
+        warned: warnings.length,
+        warnings: warnings.slice(0, 50),
+      });
+    },
+  );
 }

@@ -292,6 +292,8 @@ export function mapImportRows<T>(
   ) => { ok: true; value: T; warning?: string } | { ok: false; reason: string },
 ) {
   const leads: T[] = [];
+  /** The file line each lead came from, so a preview can point back at the row. */
+  const lines: number[] = [];
   const problems: RowProblem[] = [];
   /** Rows that imported, but with something unusable dropped along the way. */
   const warnings: RowProblem[] = [];
@@ -327,7 +329,8 @@ export function mapImportRows<T>(
       return;
     }
     leads.push(result.value);
+    lines.push(line);
     if (result.warning) warnings.push({ row: line, name: candidate.name, reason: result.warning });
   });
-  return { leads, problems, warnings };
+  return { leads, lines, problems, warnings };
 }
