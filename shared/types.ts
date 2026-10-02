@@ -153,11 +153,15 @@ export interface Qualification {
    * information is never one. Runs saved before blockers existed do not have the field.
    */
   blockers?: string[];
-  /** What the project's offering could do for this company, kept only with a retrieved source. */
+  /**
+   * What the project's offering could do for this company, kept only with a retrieved source or
+   * the team's own list data.
+   */
   opportunity?: { summary: string; source_ids: string[] };
   /**
    * One entry per service category in the published training, in its order. GOOD and POSSIBLE
-   * need a retrieved source. Runs saved before categories existed do not have the field.
+   * need a retrieved source or the team's own list data. Runs saved before categories existed do
+   * not have the field.
    */
   service_fit?: ServiceFit[];
   /** Details the company's own website states differently from the record, one per field. */
@@ -171,7 +175,12 @@ export interface Evidence {
   url: string;
   content: string;
   captured_at: string;
-  kind: 'website' | 'lead_record';
+  /**
+   * website: fetched from the web. lead_record: the record as entered, which proves nothing.
+   * provided_list: the columns the team imported with its lead list (an event, a funding round),
+   * citable for exactly those facts but never checked on the web.
+   */
+  kind: 'website' | 'lead_record' | 'provided_list';
 }
 export interface Run {
   id: number;

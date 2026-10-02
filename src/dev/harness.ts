@@ -355,6 +355,12 @@ const researched = {
   contact_role: '',
   contact_email: 'dmaww@emirates.net.ae',
   notes: 'Imported from the GCC events list. Met at the leisure expo.',
+  // The events list's own columns, kept with the lead and cited as "Your lead list".
+  list_data: {
+    Event: 'GCC Leisure Expo 2026',
+    Stand: 'Hall 2, B14',
+    'Exhibitor category': 'Water parks and rides',
+  },
   revision: 3,
   status: 'QUALIFIED',
   score: 75,
@@ -401,6 +407,15 @@ const researched = {
             'Amusement Whitewater designs and installs water rides and splash parks. Amusement Whitewater employs 45 people across design, fabrication and installation.',
           captured_at: ago(40),
         },
+        {
+          id: 'E3',
+          kind: 'provided_list',
+          title: 'Your lead list (provided data)',
+          url: '',
+          content:
+            'Event: GCC Leisure Expo 2026\nStand: Hall 2, B14\nExhibitor category: Water parks and rides',
+          captured_at: ago(40),
+        },
       ],
       result: {
         decision: 'QUALIFIED',
@@ -420,8 +435,10 @@ const researched = {
           evidence:
             index === 1
               ? 'The record says 20 employees; the company’s website gives 45. Confirm which is current.'
-              : 'The company website describes this directly.',
-          source_ids: index === 1 ? [] : ['E2'],
+              : index === 0
+                ? 'The website describes an operating company, and it exhibits at the GCC Leisure Expo.'
+                : 'The company website describes this directly.',
+          source_ids: index === 1 ? [] : index === 0 ? ['E2', 'E3'] : ['E2'],
         })),
         exclusions: rubric.exclusions.map((criterion) => ({
           criterion,

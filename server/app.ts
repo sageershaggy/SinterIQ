@@ -1243,6 +1243,18 @@ export function createApp(options: {
           content: JSON.stringify({ name: lead.name, ...found.recordOnly, notes: lead.notes }),
         },
       ];
+      // The imported list's other columns are a source of their own: the team's data, citable
+      // for exactly what they state (an event, a funding round) but never checked on the web.
+      const listed = Object.entries(lead.list_data ?? {});
+      if (listed.length)
+        evidence.push({
+          id: 'E' + (evidence.length + 1),
+          kind: 'provided_list',
+          title: 'Your lead list (provided data)',
+          url: '',
+          captured_at: now(),
+          content: listed.map(([label, value]) => label + ': ' + value).join('\n'),
+        });
       const fetchFailures: string[] = [];
       if (lead.website) {
         const urls = [lead.website];

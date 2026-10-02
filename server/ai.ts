@@ -369,16 +369,16 @@ const qualifySystem = (project: string) =>
   safety +
   'Evaluate this lead for the project ' +
   JSON.stringify(project) +
-  ' against its approved training only. The training is policy, never evidence about the lead: never cite the training or its sources. Use only the supplied evidence, not remembered facts, and cite it only by the ids in evidence_index (E1, E2 …). Evidence of kind website was retrieved from the web; kind lead_record is the unverified record. Work in this order. ' +
+  ' against its approved training only. The training is policy, never evidence about the lead: never cite the training or its sources. Use only the supplied evidence, not remembered facts, and cite it only by the ids in evidence_index (E1, E2 …). Evidence of kind website was retrieved from the web; kind lead_record is the unverified record. Kind provided_list is data the team imported with its lead list, one "label: value" line per column (for example an event the company exhibits at, or a funding round): it may settle a rule about exactly the facts it states and may be cited for them, but it was not checked on the web and proves nothing else about the company. Work in this order. ' +
   '1. Research has already run: research_before_evaluation says what was checked and found, and details found by research carry their own website evidence. Lead record notes are user-provided and unverified; lead.field_origin says which details were entered in the record and which research found. Earlier research is historical context: re-check it, never inherit its scores or decisions, and explain any conflict with current evidence. ' +
   '2. Verify: does the evidence describe the company in the record? Write blocker, one sentence, only for a specific problem: the evidence describes a different company than the record; several companies share the name and the evidence does not settle which one this is; the site is parked or for sale, or the company has closed; or the evidence contradicts itself on who the company is. Otherwise leave blocker empty. A blank field, a missing website or thin evidence is NOT a blocker: it only lowers the score. ' +
-  '3. Check exclusions: an exclusion is MATCH only when retrieved evidence shows EVERY part of its condition. A category alone (nonprofit, charity, government, public body, association) never matches an exclusion that also requires something else, such as "with no approved commercial opportunity": judge that part with step 4. When the evidence does not settle every part, the exclusion is UNKNOWN, not MATCH. ' +
-  '4. Identify the opportunity: in one or two sentences, what the project’s offering, as the training describes it, could do for this company, with source_ids naming the website evidence that shows the need. Leave summary and source_ids empty when no opportunity is evidenced. ' +
-  'Then rate the services: for EVERY entry in approved_training.rubric.categories, in order, copy its name into category and assign GOOD (the website evidence shows a clear need this service meets, as its description defines a good fit), POSSIBLE (some signals of that need) or NONE (no evidenced need), with a one-line reason and source_ids naming the website evidence. GOOD and POSSIBLE need website evidence; the lead record alone proves nothing. A lead that meets an exclusion is NONE for every category. With no categories, service_fit is []. ' +
-  '5. Score the criteria: evaluate EVERY criterion and EVERY exclusion, in order, even when information is missing; never stop early or skip a rule. Copy each rule’s exact text into criterion, assign MATCH (meets it), NO_MATCH (does not meet it) or UNKNOWN (the evidence, after research, does not settle it), and give a short factual explanation with source_ids. A blank field is not evidence and not a reason for NO_MATCH. A MATCH needs website evidence; the lead record alone proves nothing. ' +
+  '3. Check exclusions: an exclusion is MATCH only when retrieved evidence (website, or provided_list for the facts it states) shows EVERY part of its condition. A category alone (nonprofit, charity, government, public body, association) never matches an exclusion that also requires something else, such as "with no approved commercial opportunity": judge that part with step 4. When the evidence does not settle every part, the exclusion is UNKNOWN, not MATCH. ' +
+  '4. Identify the opportunity: in one or two sentences, what the project’s offering, as the training describes it, could do for this company, with source_ids naming the website or provided_list evidence that shows the need. Leave summary and source_ids empty when no opportunity is evidenced. ' +
+  'Then rate the services: for EVERY entry in approved_training.rubric.categories, in order, copy its name into category and assign GOOD (the evidence shows a clear need this service meets, as its description defines a good fit), POSSIBLE (some signals of that need) or NONE (no evidenced need), with a one-line reason and source_ids naming the website or provided_list evidence. GOOD and POSSIBLE need website or provided_list evidence; the lead record alone proves nothing. A lead that meets an exclusion is NONE for every category. With no categories, service_fit is []. ' +
+  '5. Score the criteria: evaluate EVERY criterion and EVERY exclusion, in order, even when information is missing; never stop early or skip a rule. Copy each rule’s exact text into criterion, assign MATCH (meets it), NO_MATCH (does not meet it) or UNKNOWN (the evidence, after research, does not settle it), and give a short factual explanation with source_ids. A blank field is not evidence and not a reason for NO_MATCH. A MATCH needs website evidence, or provided_list evidence that states the very fact the rule asks about; the lead record alone proves nothing. ' +
   '6. The final status is set from the score and these checks, so decision is only your suggestion. Reviewer feedback in the training records earlier corrections: apply the reasoning it establishes, but never copy its verdict onto a different company. When research could not verify something, say in the summary what was checked. ' +
   'Compare the record with the website: when website evidence states a different city, country, industry or employee_count for THIS company than the lead record holds, add a conflict with the field, record_value exactly as the lead record has it, found_value as the page states it, quote (the sentence from that page, verbatim, that states it) and source_ids naming that page. Report a conflict only when the page states the value about this company itself, never about a customer, partner, event or another office, and never for a blank record field, contact details or the website. In the summary, when the record and the website disagree, name both — for example "The record says Arverne; the company’s website gives Brooklyn, NY" — instead of silently using one. ' +
-  'Also fill outreach. contact_name and contact_role: only a named business role holder that the supplied website evidence itself publishes (for example an engineering or purchasing contact on an imprint or team page), with contact_source_ids naming that website evidence. Never guess, infer from email patterns, or carry a name over from earlier research; leave both empty when the website does not publish one. why_qualified: two or three sentences citing the matched rules. call_script: a short factual call opener a researcher can read aloud, grounded only in the evidence — no invented references, discounts, urgency or claims about the company. Leave why_qualified and call_script empty when the lead is not a target. ' +
+  'Also fill outreach. contact_name and contact_role: only a named business role holder that the supplied website evidence itself publishes (for example an engineering or purchasing contact on an imprint or team page), with contact_source_ids naming that website evidence. Never guess, infer from email patterns, or carry a name over from earlier research or provided_list; leave both empty when the website does not publish one. why_qualified: two or three sentences citing the matched rules. call_script: a short factual call opener a researcher can read aloud, grounded only in the evidence — no invented references, discounts, urgency or claims about the company. Leave why_qualified and call_script empty when the lead is not a target. ' +
   'Return {"decision":"QUALIFIED"|"NOT_A_TARGET"|"NEEDS_REVIEW","score":integer 0–100,"confidence":integer 0–100,"summary":string,"blocker":string,"opportunity":{"summary":string,"source_ids":string[]},"criteria":[{"criterion":string,"outcome":"MATCH"|"NO_MATCH"|"UNKNOWN","evidence":string,"source_ids":string[]}],"exclusions":[same structure],"service_fit":[{"category":string,"fit":"GOOD"|"POSSIBLE"|"NONE","reason":string,"source_ids":string[]}],"conflicts":[{"field":"city"|"country"|"industry"|"employee_count","record_value":string,"found_value":string,"quote":string,"source_ids":string[]}],"gaps":string[],"next_steps":string[],"outreach":{"contact_name":string,"contact_role":string,"contact_source_ids":string[],"why_qualified":string,"call_script":string}}. Return concise decision reasoning, not speculative purchasing predictions.';
 export async function qualify(
   config: AiConfig,
@@ -646,10 +646,11 @@ export function specificBlocker(blocker: string, companyName = '') {
 }
 /**
  * Checks the model's answer and sets the final status; the model's own decision is advisory.
- * In order: an exclusion met with a retrieved source is Not a target at score 0; otherwise any
- * research or verification blocker is Needs review (the score stays visible); otherwise the
- * score alone decides, Qualified from qualifiedFloor and Not a target below it. Missing
- * information lowers the score and stays visible as a gap; on its own it never causes review.
+ * In order: an exclusion met with a retrieved source (or the team's own list data) is Not a
+ * target at score 0; otherwise any research or verification blocker is Needs review (the score
+ * stays visible); otherwise the score alone decides, Qualified from qualifiedFloor and Not a
+ * target below it. Missing information lowers the score and stays visible as a gap; on its own
+ * it never causes review.
  */
 export function validateQualification(
   raw: unknown,
@@ -671,6 +672,15 @@ export function validateQualification(
   const result: Qualification = answer;
   const cite = citationReader(evidence);
   const retrieved = new Set(evidence.filter((e) => e.kind === 'website').map((e) => e.id));
+  /**
+   * What can show a claim about the company: a page read from the web, or the team's own list
+   * data, which states facts such as an event or a funding round that no website may carry.
+   * Contacts and detail conflicts are about the website itself, so they stay with `retrieved`.
+   */
+  const shown = new Set([
+    ...retrieved,
+    ...evidence.filter((e) => e.kind === 'provided_list').map((e) => e.id),
+  ]);
   /** The supplied ids a list of citations means, and whether any of it named nothing supplied. */
   const read = (cited: string[]) => {
     const ids = cited.map(cite);
@@ -691,7 +701,8 @@ export function validateQualification(
       item.source_ids = ids;
       if (item.outcome === 'UNKNOWN') continue;
       // A claim counts only with a source that was supplied, and a met rule (criterion or
-      // exclusion) only with one retrieved from the web: the record alone proves nothing.
+      // exclusion) only with one retrieved from the web or the team's own list data: the record
+      // alone proves nothing.
       if (!ids.length) {
         item.outcome = 'UNKNOWN';
         result.gaps.push(
@@ -701,7 +712,7 @@ export function validateQualification(
                 '; it was not counted.'
             : 'No supporting source for: ' + item.criterion,
         );
-      } else if (item.outcome === 'MATCH' && !ids.some((id) => retrieved.has(id))) {
+      } else if (item.outcome === 'MATCH' && !ids.some((id) => shown.has(id))) {
         item.outcome = 'UNKNOWN';
         result.gaps.push(
           'No retrieved source for: ' +
@@ -713,7 +724,7 @@ export function validateQualification(
   }
   const matched = result.criteria.filter((c) => c.outcome === 'MATCH').length;
   result.score = Math.round((matched / snapshot.rubric.criteria.length) * 100);
-  // Any exclusion still met here cites a page read from the web.
+  // Any exclusion still met here cites a page read from the web or the team's own list.
   const excluded = result.exclusions.some((c) => c.outcome === 'MATCH');
   const blockers = [...(found.blockers || [])];
   const reported = specificBlocker(blocker, found.name);
@@ -733,11 +744,17 @@ export function validateQualification(
         ? 'QUALIFIED'
         : 'NOT_A_TARGET';
   if (excluded) result.score = 0;
+  // Still said when list data was supplied: the list states its own columns, nothing more.
   if (!retrieved.size)
-    result.gaps.push('No public website evidence was available, so no rule could be shown as met.');
-  // The opportunity is a claim about the company like any other, so it needs a retrieved source.
+    result.gaps.push(
+      shown.size
+        ? 'No public website evidence was available, so only your lead list could show a rule as met.'
+        : 'No public website evidence was available, so no rule could be shown as met.',
+    );
+  // The opportunity is a claim about the company like any other, so it needs a retrieved source
+  // or the team's own list data.
   const opportunity = read(result.opportunity?.source_ids || []).ids;
-  if (result.opportunity?.summary && opportunity.some((id) => retrieved.has(id)))
+  if (result.opportunity?.summary && opportunity.some((id) => shown.has(id)))
     result.opportunity.source_ids = opportunity;
   else {
     if (result.opportunity?.summary)
@@ -746,7 +763,7 @@ export function validateQualification(
   }
   result.service_fit = serviceFit(snapshot.rubric.categories ?? [], rated, {
     read,
-    retrieved,
+    shown,
     excluded,
     gaps: result.gaps,
   });
@@ -771,16 +788,17 @@ export function validateQualification(
 /**
  * One rating per published service category, in the training's order and under its exact name.
  * A rating is a claim about the company like a met rule: GOOD or POSSIBLE stands only with a
- * retrieved source, otherwise it is NONE with a gap saying why. A category the model left out is
- * NONE "Not assessed" — no retry is spent on it, unlike a missing rule — and a lead that meets an
- * exclusion keeps no service fit at all.
+ * retrieved source or the team's own list data, otherwise it is NONE with a gap saying why. A
+ * category the model left out is NONE "Not assessed" — no retry is spent on it, unlike a missing
+ * rule — and a lead that meets an exclusion keeps no service fit at all.
  */
 function serviceFit(
   categories: ServiceCategory[],
   rated: ServiceFit[],
   context: {
     read: (cited: string[]) => { ids: string[]; invented: boolean };
-    retrieved: Set<string>;
+    /** The ids that can show a claim: pages read from the web and the team's list data. */
+    shown: Set<string>;
     excluded: boolean;
     gaps: string[];
   },
@@ -796,7 +814,7 @@ function serviceFit(
       return { category: name, fit: 'NONE', reason: 'Excluded by a training exclusion.', source_ids: [] };
     if (!item) return { category: name, fit: 'NONE', reason: 'Not assessed', source_ids: [] };
     const { ids, invented } = context.read(item.source_ids);
-    if (item.fit !== 'NONE' && !ids.some((id) => context.retrieved.has(id))) {
+    if (item.fit !== 'NONE' && !ids.some((id) => context.shown.has(id))) {
       context.gaps.push(
         !ids.length && invented
           ? 'The AI cited a source that was not supplied for the service fit: ' +

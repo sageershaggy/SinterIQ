@@ -249,6 +249,39 @@ test('an excluded lead keeps no service fit, and a training without categories r
   assert.deepEqual(plain.service_fit, []);
 });
 
+test('the team’s own lead list can show a service need, like a page can', () => {
+  const listItem: Evidence = {
+    id: 'E3',
+    kind: 'provided_list',
+    title: 'Your lead list (provided data)',
+    url: '',
+    content: 'Event: Hannover Messe 2026\nApp: none listed',
+    captured_at: '2026-10-01T00:00:00.000Z',
+  };
+  const result = validateQualification(
+    answer([
+      {
+        category: 'App development',
+        fit: 'POSSIBLE',
+        reason: 'The list says they have no app for the fair.',
+        source_ids: ['E3'],
+      },
+    ]),
+    snapshot,
+    [recordItem, pageItem, listItem],
+    { name: 'Fit Works' },
+  );
+  assert.deepEqual(result.service_fit?.[1], {
+    category: 'App development',
+    fit: 'POSSIBLE',
+    reason: 'The list says they have no app for the fair.',
+    source_ids: ['E3'],
+  });
+  assert.deepEqual(leadServiceFit(result.service_fit), [
+    { category: 'App development', fit: 'POSSIBLE' },
+  ]);
+});
+
 // --- Through the API ----------------------------------------------------------------------
 
 const trainingSite = 'Example Digital builds websites, apps and campaigns for manufacturers.';

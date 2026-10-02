@@ -114,7 +114,7 @@ export function FitScore({ lead }: { lead: Lead }) {
           <FitBands score={lead.stale ? null : lead.score} />
           <p>
             The score is the share of the project’s positive criteria this company meets, with a web
-            source behind each. A supported exclusion sets it to 0.
+            source or your lead list behind each. A supported exclusion sets it to 0.
           </p>
           <p>
             Status: {qualifiedFloor}–100 Qualified, 0–{qualifiedFloor - 1} Not a target; the bands
@@ -127,13 +127,22 @@ export function FitScore({ lead }: { lead: Lead }) {
   );
 }
 
-/** Cited evidence ids, each opening the page it came from. The lead record has no page. */
+/**
+ * Cited evidence ids, each opening the page it came from. The lead record has no page, and the
+ * team's own list data says so in words, so nobody mistakes it for something read on the web.
+ */
 export function SourceLinks({ ids, evidence }: { ids: string[]; evidence: Evidence[] }) {
   if (!ids.length) return null;
   return (
     <div className="evidence-tags">
       {ids.map((id) => {
         const item = evidence.find((entry) => entry.id === id);
+        if (item?.kind === 'provided_list')
+          return (
+            <span key={id} className="is-list" title="Provided by you, not checked on the web">
+              Your lead list
+            </span>
+          );
         const href = item?.url ? safeHref(item.url) : '';
         return href ? (
           <a key={id} href={href} target="_blank" rel="noreferrer" title={item?.title}>
