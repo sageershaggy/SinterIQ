@@ -31,8 +31,8 @@ Each criterion is judged Meets, Does not meet or Unable to verify, with the evid
    sales, or recent expansion news on the company's own site.
 4. **Sells to customers who can be reached through marketing.** Evidence: clear products or services
    with a public offer, not a purely internal or government-only business.
-5. **Company size between 5 and 250 employees.** Evidence: the about page, the careers page or the size
-   in the lead record.
+5. **Company size between 5 and 250 employees.** Evidence: the about page or the careers page. A size
+   in the lead record's size field is not evidence on its own.
 6. **Marketing contact reachable.** A named person in one of the roles above, or a marketing or press
    contact address, is listed on the company's own site.
 
@@ -49,8 +49,8 @@ A lead matching any of these is Not a target, whatever else it scores.
 
 Criteria 2, 4 and 6 can be verified from the company's own website (home, about and team pages).
 Criteria 1 and 3 can be verified when the home or about page shows the activity or the news;
-research does not read blog, news or careers pages on its own. Size often needs the employee count
-in the imported lead data.
+research does not read blog, news or careers pages on its own. Size counts when the company's own
+pages state it; the size field of the lead record does not count by itself.
 
 ## What the fit score means here
 

@@ -33,8 +33,8 @@ Each criterion is judged Meets, Does not meet or Unable to verify, with the evid
    company is itself the studio doing the building.
 4. **Is hiring or growing in AI or software engineering.** Evidence: open roles for AI, machine
    learning, data or software engineers, posted within the last 12 months where a date is shown.
-5. **Company size between 10 and 1,000 employees.** Evidence: the about page, the careers page, or
-   the size in the lead record. Below 10 is usually too small to buy; above 1,000 usually has
+5. **Company size between 10 and 1,000 employees.** Evidence: the about page or the careers page. A
+   size in the lead record's size field is not evidence on its own. Below 10 is usually too small to buy; above 1,000 usually has
    centralised procurement.
 6. **Decision-maker reachable.** A named person in one of the roles above is listed on the company's
    own site, or a role-based contact address exists for engineering or partnerships.
@@ -57,8 +57,9 @@ A lead matching any of these is Not a target, whatever else it scores.
 
 Criteria 1, 2, 3 and 6 can be verified from the company's own website (home, about, product and
 team pages). Criterion 4 needs the open roles to be mentioned on those pages, or a hiring column in
-the imported lead list, because research does not read careers pages. Criterion 5 often needs the
-employee count in the imported lead data; without it the lead is Unable to verify on size.
+the imported lead list, because research does not read careers pages. Criterion 5 counts when the
+company's own pages state the size; the size field of the lead record is unverified and does not
+count by itself, so without it on the site the lead is Unable to verify on size.
 
 ## What the fit score means here
 
