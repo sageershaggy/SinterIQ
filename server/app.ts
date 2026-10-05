@@ -43,6 +43,13 @@ import {
   type ListModels,
 } from './ai-settings';
 import { cleanKey, presetInfo, providerPresetIds } from '../shared/ai-providers';
+import { getJevKey, installJevSettings } from './jev';
+import {
+  installQuickDecisions,
+  quickDecisionFor,
+  quickSummarySql,
+  readQuickSummary,
+} from './quick-decision';
 import {
   createDecision,
   healthDecisionQuestions,
@@ -192,6 +199,9 @@ function serializeLead(row: Lead, project: Project): Lead {
     next_step: stale ? 'NONE' : nextStepFor(row.status, row.score),
     service_fit: storedServiceFit(row.service_fit),
     list_data: storedListData(row.list_data),
+    ...('quick_raw' in row
+      ? { quick: readQuickSummary((row as { quick_raw?: unknown }).quick_raw, row, project), quick_raw: undefined }
+      : {}),
   };
 }
 /** leads.service_fit as stored (server/service-fit-schema.ts); anything unreadable is none. */
@@ -454,6 +464,25 @@ export function createApp(options: {
     secrets,
     list: options.listModels || listModels,
     limit: expensiveLimit,
+  });
+  // Fast decisions (TypeSafe Jev): its own budget, since one call is a fraction of a cent and a
+  // second, and screening a page of leads must not use up the detailed qualification's budget.
+  const decisionLimit = rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 200,
+    keyGenerator: (req) => String(req.user.id),
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'Fast decision limit reached (200 requests per 15 minutes). Wait, then continue.' },
+  });
+  installJevSettings(app, { db, secrets, decide, limit: decisionLimit });
+  const quickDecisions = installQuickDecisions(app, {
+    db,
+    secrets,
+    getProject,
+    decide,
+    readWebsite,
+    limit: decisionLimit,
   });
   const mailLimit = rateLimit({
     windowMs: 15 * 60_000,
@@ -884,7 +913,9 @@ export function createApp(options: {
     const page = Math.min(input.page, pages);
     const rows = db
       .prepare(
-        'SELECT l.*,a.name assigned_to_name,(SELECT COUNT(*) FROM call_logs c WHERE c.lead_id=l.id) call_count' +
+        'SELECT l.*,a.name assigned_to_name,(SELECT COUNT(*) FROM call_logs c WHERE c.lead_id=l.id) call_count,' +
+          quickSummarySql +
+          ' quick_raw' +
           ' FROM leads l LEFT JOIN accounts a ON a.id=l.assigned_to WHERE ' +
           where +
           ' ORDER BY ' +
@@ -927,6 +958,7 @@ export function createApp(options: {
     getProject,
     generate: callAi,
     aiReady: () => Boolean(options.generate || getAiConfig(db, secrets).api_key),
+    screenWithJev: quickDecisions.screenWithJev,
     upload: upload.single('file'),
     fileLimit,
   });
@@ -1105,6 +1137,7 @@ export function createApp(options: {
       ...lead,
       runs,
       reviews,
+      quick_decision: quickDecisionFor(db, project, lead),
       preserved_records: preservedRecords(db, project.id, lead.id),
       feedback: db
         .prepare(
@@ -1823,17 +1856,10 @@ export function createApp(options: {
     const base_url = input.base_url?.trim() || current.base_url;
     const useDecisions =
       input.mode === 'decisions' || (input.mode !== 'chat' && isDecisionsModel(model));
-    // Decisions go to OpenRouter only. Never forward a Gemini/OpenAI chat key there —
-    // reuse the saved key only when chat is already configured for OpenRouter.
+    // Decisions go to OpenRouter only. Never forward a Gemini/OpenAI chat key there: a typed
+    // key, else the Jev key (saved, OPENROUTER_API_KEY, or a saved OpenRouter chat key).
     const api_key = useDecisions
-      ? (input.api_key?.trim() ||
-          process.env.OPENROUTER_API_KEY?.trim() ||
-          (current.provider === 'openai_compatible' &&
-          isOpenRouterBase(current.base_url) &&
-          current.api_key
-            ? current.api_key
-            : '') ||
-          '')
+      ? cleanKey(input.api_key || '') || getJevKey(db, secrets).key
       : input.api_key
         ? cleanKey(input.api_key)
         : current.api_key;

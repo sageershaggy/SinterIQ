@@ -1,9 +1,11 @@
+import { quickVerdictSql } from './quick-decision';
 import type { Express } from 'express';
 import { z } from 'zod';
 import type { DB } from './database';
 import { HttpError, positiveId, requiredText, text } from './validation';
 import { pipelineStatusSql } from './crm';
 import {
+  quickFilters,
   AI_QUALIFIED,
   AI_SAID_QUALIFIED,
   ASSIGNED_TO_ANYONE,
@@ -62,6 +64,7 @@ export const leadFacetShape = {
   email_status: many(z.enum(emailStatuses)),
   research: many(z.enum(researchStatuses)),
   service_fit: many(requiredText(80)),
+  quick: many(z.enum(quickFilters)),
   added: z.enum(dateAddedPresets).optional(),
   added_from: day.optional(),
   added_to: day.optional(),
@@ -305,6 +308,7 @@ export function facetWhere(
               : missingDetailsSql,
       ),
     );
+  if (input.quick.length) where += oneOf(quickVerdictSql(project), input.quick);
   if (input.service_fit.length)
     where +=
       ' AND EXISTS (SELECT 1 FROM ' +

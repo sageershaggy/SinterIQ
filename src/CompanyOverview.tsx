@@ -24,6 +24,7 @@ import { api, date, json, label } from './api';
 import { Alert, Badge, ExternalLink, Spinner } from './ui';
 import { callOutcomeLabels } from '../shared/calls';
 import { crmEvents } from './LeadComments';
+import { QuickDecisionCard } from './QuickDecision';
 import { ActivityLog, ContactsCard, RunFindings, type LogEvent } from './LeadInsight';
 
 /** What this record calls each field a research pass can fill. */
@@ -580,6 +581,14 @@ export function CompanyOverview({
           </button>
         </div>
       </div>
+      <QuickDecisionCard
+        base={base}
+        lead={lead}
+        ready={research.ready}
+        onQualify={research.onQualify}
+        onDecided={onChanged}
+        notify={notify}
+      />
       {(!!research.missing.length || !!research.outcome) && (
         <ResearchSection lead={lead} research={research} />
       )}

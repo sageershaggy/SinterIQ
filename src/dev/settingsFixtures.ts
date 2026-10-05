@@ -91,3 +91,81 @@ export const settingsWrites: Array<[string, RegExp, (body: unknown) => unknown]>
     },
   ],
 ];
+
+/** Settings → Fast decisions (Jev), and the fast decisions themselves. */
+let jev = {
+  has_key: false,
+  key_preview: '',
+  source: 'none',
+  model: 'typesafe/jev-1.13',
+  status: null as null | Record<string, unknown>,
+};
+const rule = (text: string, call: string, p: number) => ({
+  rule: text,
+  call,
+  probabilities:
+    call === 'MEETS'
+      ? { meets: p, does_not_meet: 0.05, unknown: 1 - p - 0.05 }
+      : call === 'DOES_NOT_MEET'
+        ? { meets: 0.05, does_not_meet: p, unknown: 1 - p - 0.05 }
+        : { meets: 0.2, does_not_meet: 0.1, unknown: p },
+});
+export const harnessQuickDecision = () => ({
+  verdict: 'LIKELY_QUALIFIED',
+  score: 75,
+  excluded_by: '',
+  unknown_share: 0.25,
+  overall: { level: 3, label: 'Probably a fit' },
+  criteria: [
+    rule('Business type is an SMB, startup, or growing e-commerce/service business.', 'MEETS', 0.91),
+    rule('Company size is roughly 2–200 employees.', 'UNKNOWN', 0.71),
+    rule('Has a clear need matching an Innovista service.', 'MEETS', 0.84),
+    rule('Shows an evidenced website or digital gap.', 'MEETS', 0.77),
+  ],
+  exclusions: [
+    rule('The company is permanently closed, dormant or no longer operating.', 'DOES_NOT_MEET', 0.93),
+  ],
+  website_read: true,
+  model: 'typesafe/jev-1.13',
+  latency_ms: 412,
+  lead_revision: 3,
+  training_version: 10,
+  created_at: now(),
+  created_by: 'Workspace Administrator',
+  stale: false,
+});
+settingsRoutes.push([/^\/settings\/jev$/, () => jev]);
+settingsWrites.push(
+  [
+    'PUT',
+    /^\/settings\/jev$/,
+    (body) => {
+      const input = body as { api_key?: string; clear_api_key?: boolean };
+      jev = input.clear_api_key
+        ? { ...jev, has_key: false, key_preview: '', source: 'none', status: null }
+        : input.api_key
+          ? { ...jev, has_key: true, key_preview: '••••' + input.api_key.slice(-4), source: 'saved', status: null }
+          : jev;
+      return jev;
+    },
+  ],
+  [
+    'POST',
+    /^\/settings\/jev\/test$/,
+    () => {
+      jev.status = { ok: true, message: 'Connected', latency_ms: 287, checked_at: now() };
+      return jev;
+    },
+  ],
+  ['POST', /^\/projects\/2\/leads\/\d+\/quick-decision$/, () => harnessQuickDecision()],
+  [
+    'POST',
+    /^\/projects\/2\/quick-decisions$/,
+    (body) => ({
+      results: ((body as { lead_ids: number[] }).lead_ids || []).map((lead_id, index) => ({
+        lead_id,
+        decision: { ...harnessQuickDecision(), verdict: ['LIKELY_QUALIFIED', 'UNSURE', 'LIKELY_NOT'][index % 3] },
+      })),
+    }),
+  ],
+);

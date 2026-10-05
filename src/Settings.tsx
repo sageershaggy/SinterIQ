@@ -14,6 +14,7 @@ import { api, json, setSession, type Session } from './api';
 import { Alert, Badge, Modal, Spinner } from './ui';
 import { initials } from './AccountMenu';
 import { AiProviderSettings } from './AiProviderSettings';
+import { JevSettings } from './JevSettings';
 
 export default function Settings({
   user,
@@ -100,6 +101,7 @@ export default function Settings({
             </section>
           )}
           {user.role === 'admin' && <AiProviderSettings notify={notify} />}
+          {user.role === 'admin' && <JevSettings notify={notify} />}
           <section className="panel">
             <div className="section-title">
               <h2>

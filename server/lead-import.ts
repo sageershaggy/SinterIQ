@@ -6,7 +6,7 @@ import { getAiConfig, type Generate } from './ai';
 import { notifyProject } from './notifications';
 import { checkedUrl } from './network';
 import { importLimits, listData, mapImportRows, readImportRows, storedListData } from './import';
-import { screenRows } from './import-screen';
+import { screenRows, type ScreenResult } from './import-screen';
 import { HttpError, leadSchema, positiveId } from './validation';
 import {
   screenBatchSize,
@@ -15,7 +15,7 @@ import {
   type ImportProblem,
   type ScreenVerdict,
 } from '../shared/lead-import';
-import type { Lead, Project, TrainingSnapshot, User } from '../shared/types';
+import type { Lead, Project, Rubric, TrainingSnapshot, User } from '../shared/types';
 
 /*
  * Lead import: the checks every row passes and the one transaction every import writes through,
@@ -269,6 +269,8 @@ export function installLeadImport(
     generate: Generate;
     /** True when an AI provider can be called: a saved key, or a model a test injected. */
     aiReady: () => boolean;
+    /** The quick screen through Jev when a Jev key is set; null means use the chat model. */
+    screenWithJev?: (rubric: Rubric, leads: ImportLead[]) => Promise<ScreenResult[] | null>;
     upload: RequestHandler;
     fileLimit: RequestHandler;
   },
@@ -354,7 +356,6 @@ export function installLeadImport(
       .parse(req.body);
     if (!trainingReady(project))
       throw new HttpError(409, 'Publish the current project training before quick-screening rows.');
-    if (!options.aiReady()) throw new HttpError(409, 'Configure an AI provider in Settings first.');
     const version = db
       .prepare('SELECT snapshot_json FROM training_versions WHERE project_id=? AND version=?')
       .get(project.id, project.active_version) as { snapshot_json: string };
@@ -374,12 +375,13 @@ export function installLeadImport(
       else pending.push({ index, lead });
     });
     if (pending.length) {
-      const results = await screenRows(
-        getAiConfig(db, options.secrets),
-        snapshot.rubric,
-        pending.map((item) => item.lead),
-        options.generate,
-      );
+      const rows = pending.map((item) => item.lead);
+      // Jev answers each row in about a second; without a Jev key the chat model screens.
+      const fast = await options.screenWithJev?.(snapshot.rubric, rows);
+      if (!fast && !options.aiReady())
+        throw new HttpError(409, 'Configure an AI provider or a Jev key in Settings first.');
+      const results =
+        fast ?? (await screenRows(getAiConfig(db, options.secrets), snapshot.rubric, rows, options.generate));
       pending.forEach((item, i) => (verdicts[item.index] = { index: item.index, ...results[i] }));
     }
     res.json({ verdicts });

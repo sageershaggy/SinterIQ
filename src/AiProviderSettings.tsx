@@ -57,8 +57,7 @@ export function AiProviderSettings({ notify }: { notify: (message: string) => vo
     >({ state: 'idle' }),
     [connection, setConnection] = useState<Connection>({ state: 'idle' }),
     [busy, setBusy] = useState(''),
-    [error, setError] = useState(''),
-    [jev, setJev] = useState('');
+    [error, setError] = useState('');
   const detectRun = useRef(0);
 
   function adopt(data: AiSettings) {
@@ -221,41 +220,6 @@ export function AiProviderSettings({ notify }: { notify: (message: string) => vo
       setDetect({ state: 'idle' });
       notify('AI provider saved.');
       if (saved.has_api_key) await check('Connecting to ' + info.label + ' · ' + saved.model + '…');
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function testJev() {
-    setBusy('jev');
-    setError('');
-    setJev('');
-    try {
-      const res = await api<{
-        model: string;
-        latency_ms: number;
-        answers?: Record<string, { type: string; noul?: number }>;
-      }>('/settings/llm/test', {
-        method: 'POST',
-        body: json({
-          provider: 'openai_compatible',
-          model: 'typesafe/jev-1.13',
-          base_url: 'https://openrouter.ai/api/v1',
-          api_key: cleanKey(key) || undefined,
-          mode: 'decisions',
-        }),
-      });
-      const noul = res.answers?.ok?.type === 'noul' ? res.answers.ok.noul : undefined;
-      setJev(
-        'Jev decision OK via ' +
-          res.model +
-          ' (' +
-          res.latency_ms +
-          ' ms)' +
-          (noul !== undefined ? ' · health ' + noul.toFixed(2) : ''),
-      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -500,8 +464,6 @@ export function AiProviderSettings({ notify }: { notify: (message: string) => vo
               </>
             )}
           </div>
-          {jev && <p className="fine-print ai-note-ok">{jev}</p>}
-
           <div className="form-actions">
             <button
               className="button primary"
@@ -528,20 +490,7 @@ export function AiProviderSettings({ notify }: { notify: (message: string) => vo
               <RefreshCw size={16} />
               Check connection
             </button>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={!!busy}
-              onClick={() => void testJev()}
-              title="Uses the key typed above, OPENROUTER_API_KEY on the server, or a saved OpenRouter key — never a Gemini key"
-            >
-              {busy === 'jev' ? <Spinner text="Testing Jev…" /> : 'Test Jev decision'}
-            </button>
           </div>
-          <p className="fine-print">
-            Test Jev uses OpenRouter&apos;s Decisions API with <code>typesafe/jev-1.13</code>: paste
-            an OpenRouter key above or set <code>OPENROUTER_API_KEY</code> on the server.
-          </p>
         </form>
       )}
     </section>

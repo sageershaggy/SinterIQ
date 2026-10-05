@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
+  Zap,
   Users,
   Pencil,
   Trash2,
@@ -306,6 +307,53 @@ export default function Leads({
   // The selection bar's Stop: the lead in progress finishes, the rest are not started.
   const stopBatch = useRef(false),
     [stopping, setStopping] = useState(false);
+  /** Fast decisions (Jev) for the selection: ten leads per request, about a second each. */
+  async function bulkQuickDecide() {
+    setError('');
+    const ids = [...selected];
+    const tally = { LIKELY_QUALIFIED: 0, UNSURE: 0, LIKELY_NOT: 0 };
+    const failures: string[] = [];
+    try {
+      for (let start = 0; start < ids.length; start += 10) {
+        if (!mounted.current) return;
+        setBusy('Fast decision ' + Math.min(start + 10, ids.length) + ' of ' + ids.length + '…');
+        const { results } = await api<{
+          results: Array<{ lead_id: number; decision?: { verdict: keyof typeof tally }; error?: string }>;
+        }>(base + '/quick-decisions', {
+          method: 'POST',
+          body: json({ lead_ids: ids.slice(start, start + 10) }),
+        });
+        for (const item of results) {
+          if (item.decision) tally[item.decision.verdict]++;
+          else
+            failures.push(
+              (leads.find((l) => l.id === item.lead_id)?.name || item.lead_id) + ': ' + item.error,
+            );
+        }
+      }
+      notify(
+        'Fast decision on ' +
+          (ids.length - failures.length) +
+          ' lead' +
+          (ids.length - failures.length === 1 ? '' : 's') +
+          ': ' +
+          tally.LIKELY_QUALIFIED +
+          ' likely qualified, ' +
+          tally.UNSURE +
+          ' unsure, ' +
+          tally.LIKELY_NOT +
+          ' likely not a target. Filter by "Fast decision" to work through them.',
+      );
+      if (failures.length) setError(failures.slice(0, 5).join(' · '));
+    } catch (e) {
+      if (mounted.current) setError((e as Error).message);
+    } finally {
+      if (mounted.current) {
+        setBusy('');
+        reload();
+      }
+    }
+  }
   async function bulkQualify() {
     setError('');
     stopBatch.current = false;
@@ -564,6 +612,19 @@ export default function Leads({
                     {ready ? 'Run AI qualification' : 'Set up qualification'}
                   </>
                 )}
+              </button>
+              <button
+                className="button secondary"
+                disabled={!!busy || !ready}
+                title={
+                  ready
+                    ? 'Jev judges each selected lead against every rule in about a second; it does not change the qualification'
+                    : 'Publish the project training first'
+                }
+                onClick={() => void bulkQuickDecide()}
+              >
+                <Zap size={15} />
+                Fast decision (Jev)
               </button>
               {busy.startsWith('Qualifying') && (
                 <button

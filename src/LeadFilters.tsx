@@ -1,3 +1,4 @@
+import { quickVerdictHints, quickVerdictLabels } from '../shared/quick-decision';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   ArrowDown,
@@ -19,6 +20,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  quickFilterLabels,
+  quickFilters,
   AI_QUALIFIED,
   AI_SAID_QUALIFIED,
   ASSIGNED_TO_ANYONE,
@@ -123,6 +126,11 @@ const fixed = {
     label: researchStatusLabels[value],
     hint: researchStatusHints[value],
   })),
+  quick: quickFilters.map((value) => ({
+    value,
+    label: quickFilterLabels[value],
+    hint: value === 'NONE' ? undefined : quickVerdictHints[value],
+  })),
 };
 const facetTitles: Record<ListFacet, string> = {
   qualification: 'AI qualification',
@@ -137,6 +145,7 @@ const facetTitles: Record<ListFacet, string> = {
   email_status: 'Email status',
   research: 'Research status',
   service_fit: 'Service fit',
+  quick: 'Fast decision (Jev)',
 };
 function valueLabel(facet: ListFacet, value: string, options: LeadFacetOptions) {
   if (facet === 'assignee')
@@ -333,6 +342,7 @@ export function LeadFilterBar({
           service categories, so a project without them never shows an empty choice. */}
       <div className="lead-filter-grid">
         {select('qualification', 'All', fixed.qualification)}
+        {select('quick', 'Any', fixed.quick)}
         {select('score', 'Any score', fixed.score)}
         {select('lead_status', 'All statuses', fixed.lead_status)}
         {select('email_status', 'All statuses', fixed.email_status)}
@@ -705,6 +715,9 @@ export function FitQualification({ lead }: { lead: Lead }) {
     lead.reviewed ? 'reviewed' : '',
     lead.outreach_status && lead.outreach_status !== 'NOT_CONTACTED'
       ? 'email ' + label(lead.outreach_status).toLowerCase()
+      : '',
+    lead.quick && !lead.quick.stale
+      ? 'Jev: ' + quickVerdictLabels[lead.quick.verdict].toLowerCase()
       : '',
   ]
     .filter(Boolean)

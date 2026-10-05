@@ -9,6 +9,7 @@ import { installOutreachSchema } from './outreach-schema';
 import { installWorkspaceSchema } from './workspace-schema';
 import { adoptWorkspaceMailbox, installMailboxSchema } from './mailbox-schema';
 import { installResearchSchema } from './research-schema';
+import { installQuickDecisionSchema } from './quick-decision-schema';
 import { installCrmSchema } from './crm-schema';
 import { installActivitySchema } from './activity-schema';
 import { installIntelSchema } from './intel-schema';
@@ -158,6 +159,7 @@ export function openDatabase(dataDir: string, legacyPath?: string) {
   installWorkspaceSchema(db);
   installMailboxSchema(db);
   installResearchSchema(db);
+  installQuickDecisionSchema(db);
   installCrmSchema(db);
   installActivitySchema(db);
   installIntelSchema(db);

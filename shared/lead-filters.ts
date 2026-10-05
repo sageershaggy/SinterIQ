@@ -7,6 +7,7 @@
  * value per facet); different facets AND together, and all of them AND with the page's view
  * (the Review queue, or all leads) and with the search box.
  */
+import { quickVerdictLabels, quickVerdicts } from './quick-decision';
 import { nextStepBands, type CallOutcome } from './types';
 import { callOutcomeStage, type CallStage } from './calls';
 import { pipelineStatusLabels, pipelineStatuses, type PipelineStatus } from './crm';
@@ -246,6 +247,8 @@ export interface LeadFacets {
    * current result rates the category GOOD or POSSIBLE.
    */
   service_fit: string[];
+  /** The current fast decision (Jev), or NONE for leads without one. */
+  quick: QuickFilter[];
   added: DateAdded | '';
   /** YYYY-MM-DD, inclusive, in the viewer's time zone. Used when added is CUSTOM. */
   added_from: string;
@@ -265,6 +268,7 @@ export const emptyFacets: LeadFacets = {
   email_status: [],
   research: [],
   service_fit: [],
+  quick: [],
   added: '',
   added_from: '',
   added_to: '',
@@ -283,8 +287,17 @@ export const listFacets = [
   'email_status',
   'research',
   'service_fit',
+  'quick',
 ] as const;
 export type ListFacet = (typeof listFacets)[number];
+
+/** The Fast decision filter: Jev's current verdict, or none for leads not decided on this version. */
+export const quickFilters = [...quickVerdicts, 'NONE'] as const;
+export type QuickFilter = (typeof quickFilters)[number];
+export const quickFilterLabels: Record<QuickFilter, string> = {
+  ...quickVerdictLabels,
+  NONE: 'No fast decision yet',
+};
 
 /** How many filters are active, the sort order not counted. */
 export function activeFacetCount(facets: LeadFacets) {

@@ -239,6 +239,10 @@ export interface Lead {
    * only by an import, never by the lead form; empty when the list had none.
    */
   list_data?: Record<string, string>;
+  /** The latest fast decision (Jev), for the list badge and filter (shared/quick-decision.ts). */
+  quick?: import('./quick-decision').QuickSummary | null;
+  /** The latest fast decision in full, on the lead page. */
+  quick_decision?: import('./quick-decision').QuickDecision | null;
   created_at: string;
   updated_at: string;
   legacy_json?: string;
@@ -429,6 +433,15 @@ export interface EmailMessage {
   error: string;
   created_by: string;
   created_at: string;
+}
+/** Settings → Fast decisions (server/jev.ts). The key itself is never sent to the browser. */
+export interface JevSettings {
+  has_key: boolean;
+  key_preview: string;
+  /** saved here, OPENROUTER_API_KEY on the server, a saved OpenRouter chat key, or none. */
+  source: 'saved' | 'environment' | 'chat' | 'none';
+  model: string;
+  status: { ok: boolean; message: string; latency_ms: number | null; checked_at: string } | null;
 }
 export interface Settings {
   provider: 'gemini' | 'openai_compatible';
