@@ -17,6 +17,7 @@ import { shellRoutes } from './shell-fixtures';
 import { contactEnrollments, emailRoutes, emailWrites } from './emailFixtures';
 import { settingsRoutes, settingsWrites } from './settingsFixtures';
 import { importWrite } from './importFixtures';
+import { analysisRoutes, analysisWrite } from './analysisFixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -690,6 +691,7 @@ const signedInAs = {
 const routes: Array<[RegExp, (route: string) => unknown]> = [
   ...shellRoutes,
   ...settingsRoutes,
+  ...analysisRoutes,
   [
     /^\/auth\/me$/,
     () => (signedOut ? { user: null, csrf_token: '', setup_required: false } : signedInAs),
@@ -820,6 +822,8 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   const imported = await importWrite(method, route, init);
   if (imported) return imported;
+  const analysed = await analysisWrite(method, route);
+  if (analysed) return analysed;
   if (method !== 'GET') {
     const write =[...settingsWrites, ...emailWrites].find(([verb, pattern]) => verb === method && pattern.test(route));
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;

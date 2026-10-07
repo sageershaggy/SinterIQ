@@ -8,7 +8,7 @@ import { createApp } from '../server/app';
 import { HttpError } from '../server/validation';
 import type { Generate } from '../server/ai';
 import type { Lead, Project, TrainingSnapshot } from '../shared/types';
-import type { QualificationJobState } from '../shared/qualification-jobs';
+import type { QualificationJobState, RunningAnalyses } from '../shared/qualification-jobs';
 
 process.env.GEMINI_API_KEY = '';
 process.env.LLM_API_KEY = '';
@@ -172,6 +172,9 @@ async function fixture(options: { provider?: boolean } = {}) {
     },
     get jobs() {
       return instance.qualificationJobs;
+    },
+    get app() {
+      return instance.app;
     },
     /** A project whose training is published, so its leads can be qualified. */
     async project(name = 'Pump Research') {
@@ -596,6 +599,98 @@ test('stop takes effect once the lead in progress is finished', async () => {
       f.updates(project)[0],
       /^Qualification stopped on training v1 after 1 of 3 leads: .*\. Stopped by Jobs Admin\.$/,
     );
+  } finally {
+    f.dispose();
+  }
+});
+
+test('the header feed lists running jobs only in projects the viewer can reach, with progress and starter, and shows a stop', async () => {
+  const f = await fixture();
+  try {
+    const alpha = await f.project('Alpha Research');
+    const beta = await f.project('Beta Research');
+    for (const name of ['Alpha Pumps', 'Beta Pumps', 'Gamma Pumps']) await f.lead(alpha, name);
+    await f.lead(beta, 'Foreign Pumps');
+    const member = await f.researcher('watcher', [alpha.id]);
+    const outsider = await f.researcher('outsider', []);
+    const feed = async (who: Session) => {
+      const response = await send(who, 'get', '/analysis/running');
+      assert.equal(response.status, 200, response.text);
+      return response.body as RunningAnalyses;
+    };
+
+    // Signed out, there is nothing to see.
+    const anonymous = await request(f.app).get('/api/analysis/running');
+    assert.equal(anonymous.status, 401);
+    assert.deepEqual(await feed(f.admin), { running: [], recent: [] });
+
+    const ids = f.db
+      .prepare('SELECT id FROM leads WHERE project_id=? ORDER BY id')
+      .all(alpha.id)
+      .map((row) => (row as { id: number }).id);
+    const mine = await f.start(alpha, { scope: 'ids', lead_ids: ids }, member);
+    assert.equal(mine.status, 201, mine.text);
+    const job = (mine.body as QualificationJobState).job!;
+    const other = await f.start(beta, { scope: 'raw' });
+    assert.equal(other.status, 201, other.text);
+
+    // The researcher sees the job in their project, never the one in a project they are not on.
+    let seen = await feed(member);
+    assert.deepEqual(
+      seen.running.map((item) => [item.id, item.project_id, item.project_name]),
+      [[job.id, alpha.id, 'Alpha Research']],
+    );
+    assert.equal(seen.running[0].created_by, 'Researcher watcher');
+    assert.equal(seen.running[0].mine, true);
+    assert.equal(seen.running[0].can_stop, true);
+    assert.equal(seen.running[0].total, 3);
+    assert.equal(seen.running[0].done, 0);
+    assert.deepEqual(seen.recent, []);
+    assert.ok(!JSON.stringify(seen).includes('Beta Research'));
+    assert.deepEqual(await feed(outsider), { running: [], recent: [] });
+    // An administrator sees both, and may stop the one someone else started.
+    const all = await feed(f.admin);
+    assert.deepEqual(all.running.map((item) => item.project_name).sort(), [
+      'Alpha Research',
+      'Beta Research',
+    ]);
+    const watched = all.running.find((item) => item.id === job.id)!;
+    assert.equal(watched.mine, false);
+    assert.equal(watched.can_stop, true);
+
+    // Progress follows the runner, including the lead in progress.
+    assert.equal(await f.jobs.runNext(alpha.id), 'next');
+    assert.equal((await feed(member)).running[0].done, 1);
+    const held = f.ai.hold(f.items(job.id)[1].name);
+    const step = f.jobs.runNext(alpha.id);
+    await held.entered;
+    seen = await feed(member);
+    assert.equal(seen.running[0].current_lead?.name, f.items(job.id)[1].name);
+
+    // Stop through the existing route: "stopping" first, then it moves to the recent summaries.
+    assert.equal((await f.stop(alpha, job.id, member)).status, 200);
+    assert.equal((await feed(member)).running[0].stopping, true);
+    held.release();
+    assert.equal(await step, 'finished');
+    seen = await feed(member);
+    assert.deepEqual(seen.running, []);
+    assert.equal(seen.recent.length, 1);
+    assert.equal(seen.recent[0].id, job.id);
+    assert.equal(seen.recent[0].status, 'STOPPED');
+    assert.equal(seen.recent[0].done, 2);
+    assert.equal(seen.recent[0].total, 3);
+    assert.equal(seen.recent[0].stop_reason, 'Stopped by Researcher watcher.');
+    assert.equal(seen.recent[0].can_stop, false);
+    assert.deepEqual(
+      (await feed(f.admin)).running.map((item) => item.project_name),
+      ['Beta Research'],
+    );
+
+    // A job that ended long ago is history, not news.
+    f.db
+      .prepare('UPDATE qualification_jobs SET finished_at=? WHERE id=?')
+      .run(new Date(Date.now() - 3 * 60 * 60_000).toISOString(), job.id);
+    assert.deepEqual((await feed(member)).recent, []);
   } finally {
     f.dispose();
   }

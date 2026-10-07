@@ -8,7 +8,10 @@ import {
   maxJobLeadIds,
   projectWideScopes,
   qualificationJobScopes,
+  recentAnalysisMinutes,
   type QualificationJob,
+  type RunningAnalyses,
+  type RunningAnalysisJob,
   type QualificationJobScope,
   type QualificationJobState,
   type QualificationJobStatus,
@@ -604,7 +607,39 @@ export function createQualificationJobs(deps: {
     };
   }
 
+  /**
+   * Every job running in a project the viewer can reach, and those that ended a short while ago,
+   * for the header indicator on every page. Membership is the same test getProject makes: a
+   * researcher's unassigned projects contribute nothing, so they cannot be probed this way.
+   */
+  function running(viewer: User): RunningAnalyses {
+    const since = new Date(Date.now() - recentAnalysisMinutes * 60_000).toISOString();
+    const rows = db
+      .prepare(
+        `SELECT j.*,p.name project_name FROM qualification_jobs j JOIN projects p ON p.id=j.project_id
+        WHERE (j.status='RUNNING' OR j.finished_at>=?)
+          AND (?=1 OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id=j.project_id AND m.account_id=?))
+        ORDER BY j.id DESC LIMIT 50`,
+      )
+      .all(since, viewer.role === 'admin' ? 1 : 0, viewer.id) as Array<
+      JobRow & { project_name: string }
+    >;
+    const jobs: RunningAnalysisJob[] = rows.map((row) => ({
+      ...view(row, viewer),
+      project_name: row.project_name,
+      mine: row.created_by_id === viewer.id,
+    }));
+    return {
+      running: jobs.filter((job) => job.status === 'RUNNING'),
+      recent: jobs.filter((job) => job.status !== 'RUNNING'),
+    };
+  }
+
   function install(app: Express) {
+    /** The header's "Analysis running" indicator polls this on every page. */
+    app.get('/api/analysis/running', (req, res) => {
+      res.json(running(req.user));
+    });
     const base = '/api/projects/:projectId/qualification-jobs';
     /** The running job (or the last one) and the counts the start dialog offers. */
     app.get(base + '/current', (req, res) => {

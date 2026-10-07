@@ -1,0 +1,249 @@
+/* The header's "Analysis running" indicator (src/AnalysisIndicator.tsx): a quiet pill beside the
+   updates bell while an analysis runs or has just ended, and a panel with Stop analysis. */
+.analysis-indicator {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+/* Nothing to show: no box, so the header keeps its spacing. */
+.analysis-indicator.is-empty {
+  display: contents;
+}
+.analysis-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.analysis-pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 250px;
+  min-height: 40px;
+  padding: 4px 12px 7px 11px;
+  border: 1px solid #d9e5c6;
+  border-radius: 10px;
+  background: #f3f7ec;
+  color: #4f7a3a;
+  text-align: left;
+  overflow: hidden;
+}
+.analysis-pill:hover {
+  background: #eaf1df;
+}
+.analysis-indicator.is-stopped .analysis-pill {
+  border-color: #eedfb8;
+  background: #fbf5e5;
+  color: #8a6a24;
+}
+.analysis-pill > svg {
+  flex-shrink: 0;
+}
+.analysis-pill-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+.analysis-pill-text strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.analysis-pill-text small {
+  font-size: 11px;
+  color: #5f6c55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.analysis-pill-bar {
+  position: absolute;
+  left: 11px;
+  right: 11px;
+  bottom: 3px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #dfe8cf;
+}
+.analysis-pill-bar > i,
+.analysis-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #567845;
+  transition: width 0.4s;
+}
+.analysis-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: #315a3f;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+.analysis-indicator.is-stopped .analysis-count {
+  background: #8a6a24;
+}
+.analysis-count.is-phone-only {
+  display: none;
+}
+
+.analysis-panel {
+  position: absolute;
+  right: 0;
+  top: 50px;
+  z-index: 110;
+  width: min(400px, calc(100vw - 32px));
+  padding: 18px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px #1a302326;
+}
+.analysis-panel h3 {
+  font-size: 15px;
+}
+.analysis-panel h3 span {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+}
+.analysis-list {
+  max-height: min(480px, 65vh);
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  list-style: none;
+}
+.analysis-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 2px;
+  border-top: 1px solid var(--line);
+}
+.analysis-item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.analysis-item-head > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #4f7a3a;
+}
+.analysis-item.is-stopped .analysis-item-head > svg {
+  color: #8a6a24;
+}
+.analysis-item-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.analysis-item-head strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+.analysis-item-head small {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.analysis-item-head > .icon-button {
+  width: 28px;
+  height: 28px;
+  margin-top: -4px;
+}
+.analysis-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e4ecd7;
+}
+.analysis-item-detail,
+.analysis-item-origin {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.analysis-item-origin {
+  font-size: 11px;
+}
+.analysis-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.analysis-item-actions .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.analysis-item-actions small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+@media (max-width: 1200px) {
+  .analysis-pill {
+    max-width: 200px;
+  }
+}
+/* A phone: the icon with a count, like the updates bell beside it; the panel says the rest. */
+@media (max-width: 760px) {
+  .analysis-pill {
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    min-height: 0;
+    padding: 0;
+    border-radius: 50%;
+    overflow: visible;
+  }
+  .analysis-pill-text,
+  .analysis-pill-bar,
+  .analysis-indicator .analysis-dismiss-all {
+    display: none;
+  }
+  .analysis-count,
+  .analysis-count.is-phone-only {
+    display: block;
+    position: absolute;
+    right: -4px;
+    top: -3px;
+    min-width: 16px;
+    padding: 1px 4px;
+    border: 2px solid white;
+    font-size: 9px;
+  }
+  .analysis-panel {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    top: var(--analysis-panel-top, 64px);
+    width: auto;
+    max-height: calc(100vh - var(--analysis-panel-top, 64px) - 16px);
+    overflow-y: auto;
+  }
+}

@@ -51,6 +51,12 @@ import { EmailHistory } from './EmailHistory';
 import { ArchiveTools, ArchivedNotice, LeadArchiveButton } from './ArchiveControls';
 import { IncomingReplies } from './IncomingReplies';
 import { QualificationJob } from './QualificationJob';
+import {
+  analysisChanged,
+  startBrowserAnalysis,
+  useBrowserAnalyses,
+  type BrowserAnalysisHandle,
+} from './analysisActivity';
 import { EnrollmentPicker, OutreachOutcomeForm } from './Funnels';
 import { CompanyOverview, missingDetails } from './CompanyOverview';
 import {
@@ -304,9 +310,15 @@ export default function Leads({
       if (mounted.current) setBusy('');
     }
   }
-  // The selection bar's Stop: the lead in progress finishes, the rest are not started.
+  // The selection bar's Stop: the lead in progress finishes, the rest are not started. The batch
+  // is also listed in the header's "Analysis running" indicator, whose Stop does the same, and it
+  // carries on when this page is left (one batch per project at a time).
   const stopBatch = useRef(false),
+    batch = useRef<BrowserAnalysisHandle | null>(null),
     [stopping, setStopping] = useState(false);
+  const batchRunning = useBrowserAnalyses().some(
+    (item) => item.project_id === project.id && item.status === 'RUNNING',
+  );
   /** Fast decisions (Jev) for the selection: ten leads per request, about a second each. */
   async function bulkQuickDecide() {
     setError('');
@@ -359,11 +371,22 @@ export default function Leads({
     stopBatch.current = false;
     setStopping(false);
     let completed = 0,
-      started = 0;
+      started = 0,
+      halted = '';
     const failures: string[] = [];
+    const tracked = (batch.current = startBrowserAnalysis({
+      projectId: project.id,
+      projectName: project.name,
+      total: selected.length,
+      onStop: () => {
+        stopBatch.current = true;
+        setStopping(true);
+      },
+    }));
     for (const [index, id] of selected.entries()) {
-      if (!mounted.current || stopBatch.current) break;
+      if (stopBatch.current) break;
       started = index + 1;
+      tracked.progress(started, completed);
       setBusy('Qualifying ' + (index + 1) + ' of ' + selected.length + '…');
       try {
         await api(base + '/leads/' + id + '/qualify', {
@@ -376,6 +399,7 @@ export default function Leads({
         failures.push((leads.find((l) => l.id === id)?.name || id) + ': ' + message);
         // Stop burning the window once the server rate limit trips — remaining rows would fail the same way.
         if (/analysis limit reached/i.test(message)) {
+          halted = 'The analysis limit was reached; try the rest again shortly.';
           const remaining = selected.length - index - 1;
           if (remaining > 0)
             failures.push(
@@ -388,7 +412,9 @@ export default function Leads({
         }
       }
     }
-    if (mounted.current) {
+    tracked.finish(completed, halted);
+    if (!mounted.current) onChange();
+    else {
       setBusy('');
       setStopping(false);
       reload();
@@ -601,7 +627,12 @@ export default function Leads({
               </span>
               <button
                 className="button primary"
-                disabled={!!busy}
+                disabled={!!busy || (Boolean(ready) && batchRunning)}
+                title={
+                  !busy && ready && batchRunning
+                    ? 'A batch is still running in this project: see Analysis running at the top'
+                    : undefined
+                }
                 onClick={ready ? bulkQualify : onTraining}
               >
                 {busy ? (
@@ -630,13 +661,10 @@ export default function Leads({
                 <button
                   className="button danger"
                   disabled={stopping}
-                  onClick={() => {
-                    stopBatch.current = true;
-                    setStopping(true);
-                  }}
+                  onClick={() => batch.current?.stop()}
                 >
                   <CircleStop size={15} />
-                  {stopping ? 'Stopping after this lead…' : 'Stop qualification'}
+                  {stopping ? 'Stopping after this lead…' : 'Stop analysis'}
                 </button>
               )}
               <button
@@ -980,6 +1008,7 @@ export default function Leads({
                 method: 'POST',
                 body: json({ scope: 'ids', lead_ids: ids }),
               });
+              analysisChanged();
               setImporting(false);
               reload();
               notify(
