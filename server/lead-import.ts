@@ -371,7 +371,7 @@ export function installLeadImport(
   const { db, getProject } = options;
   const trainingReady = (project: Project) =>
     Boolean(project.active_version) && project.revision === project.trained_revision;
-  // Its own budget rather than the shared 100 AI runs: a 600-row file is only 15 batches, but
+  // Its own budget rather than the shared qualification one: a 600-row file is only 15 batches, but
   // a full 5,000-row file is 125, and screening a list must not use up the qualification that
   // follows it. 150 batches is one full file with room to stop and carry on.
   const screenLimit = rateLimit({

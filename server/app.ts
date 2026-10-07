@@ -457,14 +457,20 @@ export function createApp(options: {
   });
   const expensiveLimit = rateLimit({
     windowMs: 15 * 60_000,
-    // Enough for a few 20-lead batches plus training/research, without opening unbounded spend.
-    limit: 100,
+    // Raised from 100 on request: reviewers working a list by hand were hitting the ceiling and
+    // reading the 429 as the qualifier being broken. Still a real cap on spend — it bounds what a
+    // single account can trigger in a quarter hour, and refused requests count toward it, so
+    // hammering the button does not drain the window faster.
+    //
+    // Bulk work should not come through here at all: the qualification job runner calls
+    // qualifyLead in-process and spends none of this budget.
+    limit: 500,
     keyGenerator: (req) => String(req.user.id),
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     message: {
       error:
-        'Analysis limit reached (100 AI runs per 15 minutes). Wait, then continue with the next batch of up to 20 leads.',
+        'Analysis limit reached (500 AI runs per 15 minutes). Wait for the window to reset, or start a qualification job instead of analysing one lead at a time.',
     },
   });
   installAiSettings(app, {
