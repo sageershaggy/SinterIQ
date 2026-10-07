@@ -48,9 +48,11 @@ export function SourceStatus({
 
 /** Uploads that did not make it into the library, with the reason, so none fails silently. */
 export function UploadProblems({ uploads, sources }: { uploads: SourceUpload[]; sources: Source[] }) {
-  // A failure that was later uploaded successfully under the same name is no longer a problem.
+  // A failure whose content is in the library after all — the same file uploaded again, or a
+  // copy refused because the library had it — is no longer a problem; nor is one later uploaded
+  // successfully under the same name (attempts logged before file fingerprints were kept).
   const failed = uploads
-    .filter((item) => item.status === 'FAILED')
+    .filter((item) => item.status === 'FAILED' && !item.in_library)
     .filter((item) => !sources.some((source) => source.filename === item.filename))
     .slice(0, 8);
   if (!failed.length) return null;

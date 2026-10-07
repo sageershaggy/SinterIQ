@@ -111,8 +111,22 @@ export function publicSettings(
     source: config.source,
   };
 }
-export type Generate = (config: AiConfig, system: string, input: unknown) => Promise<unknown>;
-export const generate: Generate = async (config, system, input) => {
+export interface GenerateOptions {
+  /**
+   * Sampling temperature. 0 for a judgement that must come out the same for the same input (the
+   * import quick screen). Left out, Gemini runs at 0.1 and an OpenAI-compatible host at its own
+   * default. A host that refuses the value (some reasoning models only take their default) is
+   * asked again without it.
+   */
+  temperature?: number;
+}
+export type Generate = (
+  config: AiConfig,
+  system: string,
+  input: unknown,
+  options?: GenerateOptions,
+) => Promise<unknown>;
+export const generate: Generate = async (config, system, input, options = {}) => {
   if (!config.api_key)
     throw new HttpError(409, 'Configure an AI provider in Settings before running analysis.');
   try {
@@ -128,7 +142,7 @@ export const generate: Generate = async (config, system, input) => {
         config: {
           systemInstruction: system,
           responseMimeType: 'application/json',
-          temperature: 0.1,
+          temperature: options.temperature ?? 0.1,
           maxOutputTokens: 12000,
         },
       });
@@ -148,8 +162,11 @@ export const generate: Generate = async (config, system, input) => {
         { role: 'user', content: JSON.stringify(input) },
       ];
       // Prefer JSON mode when the provider supports it; many OpenAI-compatible hosts
-      // still reject response_format, so fall back to a plain chat completion.
-      const post = (withJsonMode: boolean) =>
+      // still reject response_format, so fall back to a plain chat completion. A requested
+      // temperature is dropped the same way when the model only accepts its default.
+      let jsonMode = true;
+      let withTemperature = options.temperature !== undefined;
+      const post = () =>
         publicRequest(endpoint, {
           method: 'POST',
           timeout: 90000,
@@ -157,16 +174,18 @@ export const generate: Generate = async (config, system, input) => {
           headers,
           body: JSON.stringify({
             model: config.model,
-            ...(withJsonMode ? { response_format: { type: 'json_object' } } : {}),
+            ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+            ...(withTemperature ? { temperature: options.temperature } : {}),
             messages,
           }),
         });
-      let response = await post(true);
-      if (
-        response.status === 400 &&
-        /response_format|json_object|unknown parameter/i.test(response.text)
-      ) {
-        response = await post(false);
+      let response = await post();
+      for (let retry = 0; retry < 2 && response.status === 400; retry++) {
+        if (withTemperature && /temperature/i.test(response.text)) withTemperature = false;
+        else if (jsonMode && /response_format|json_object|unknown parameter/i.test(response.text))
+          jsonMode = false;
+        else break;
+        response = await post();
       }
       if (response.status < 200 || response.status >= 300) {
         let detail = '';

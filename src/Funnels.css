@@ -362,6 +362,12 @@ label.funnel-sort {
 .funnel-filter-panel input {
   padding: 8px 10px;
 }
+.funnel-filter-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
 .funnel-results {
   display: flex;
   flex-wrap: wrap;

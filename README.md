@@ -166,6 +166,9 @@ A CI workflow runs checks and the dependency audit on pushes and pull requests. 
 | `server/ai.ts`                               | Provider requests, training analysis and qualification validation |
 | `server/import.ts` / `list-data-schema.ts`   | Reading lead files, column mapping and the list data rule         |
 | `server/lead-import.ts` / `import-screen.ts` | Lead import checks and write, preview and the quick screen        |
+| `server/training-library.ts`                 | Upload log, duplicate copies, graph view; Train AI once a project |
+| `server/screen-cache.ts`                     | Quick-screen verdicts remembered per training version             |
+| `server/dedupe-schema.ts`                    | Tables and columns for the two above                              |
 | `server/qualification-jobs.ts`               | Server-side requalification jobs, one lead at a time per project  |
 | `server/detail-conflicts.ts`                 | "Use website value" for a detail the website states differently   |
 | `server/network.ts`                          | Safe public website access and source-link discovery              |

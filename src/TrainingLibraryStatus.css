@@ -1,0 +1,151 @@
+/* Training library: reads in progress, copies of what the library holds, and duplicates. */
+.library-reading {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #e6e2cf;
+  border-radius: 9px;
+  background: #fbf9f1;
+  font-size: 12px;
+  color: #5f5631;
+}
+.library-reading-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+}
+.library-reading-row svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.library-reading-row span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.library-reading-row strong {
+  overflow-wrap: anywhere;
+}
+.library-reading-row small {
+  font-size: 10px;
+  color: #7a7150;
+}
+
+.library-duplicates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px 0 4px;
+  padding: 11px 13px;
+  border: 1px solid #ecdcb5;
+  border-radius: 9px;
+  background: #fdf8ea;
+  color: #6f5319;
+  font-size: 12px;
+}
+.library-duplicates > svg {
+  flex-shrink: 0;
+}
+.library-duplicates > span {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.library-duplicates small {
+  font-size: 11px;
+  color: #7c6530;
+}
+.library-duplicates .button {
+  font-size: 11px;
+  padding: 8px 11px;
+}
+.library-duplicates-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.library-duplicates-list li {
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.library-duplicates-list small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.library-duplicate-flag {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  line-height: 1.5;
+  font-size: 10px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.library-duplicate-flag.is-content {
+  background: #fbefd6;
+  color: #7a5714;
+}
+.library-duplicate-flag.is-name {
+  background: #eef1ea;
+  color: #5d6858;
+  font-weight: 550;
+}
+.library-duplicate-flag svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.library-duplicate-flag > span {
+  min-width: 0;
+}
+
+.library-copies {
+  margin: 12px 0 4px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfcf9;
+  font-size: 12px;
+  color: #4f5a49;
+}
+.library-copies summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.library-copies ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.library-copies li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.library-copy-name {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.library-copies li > span {
+  overflow-wrap: anywhere;
+}
+.library-copies small {
+  color: var(--muted);
+  font-size: 10px;
+}

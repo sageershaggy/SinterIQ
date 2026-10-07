@@ -36,6 +36,9 @@ import {
   emptyFunnelFilters,
   filterFunnels,
   funnelAudiences,
+  funnelCampaignLabels,
+  funnelCampaigns,
+  funnelCompletedHint,
   funnelPerformanceFilters,
   funnelPerformanceLabels,
   funnelSorts,
@@ -47,6 +50,7 @@ import {
   type FunnelPerformance,
   type FunnelSort,
   type FunnelStatusFilter,
+  type FunnelType,
 } from '../shared/funnel-filters';
 import { blocksToHtml, htmlToText, mergeFieldsIn, textToHtml } from '../shared/email-html';
 import { api, json, label, date } from './api';
@@ -705,7 +709,7 @@ function FunnelToolbar({
             type="search"
             value={filters.search}
             onChange={(e) => set({ search: e.target.value })}
-            placeholder="Search name, audience or subject"
+            placeholder="Search name, audience, campaign or subject"
           />
         </label>
         <button
@@ -763,7 +767,11 @@ function FunnelToolbar({
             >
               <option value="">All statuses</option>
               {funnelStatusFilters.map((value) => (
-                <option key={value} value={value}>
+                <option
+                  key={value}
+                  value={value}
+                  title={value === 'COMPLETED' ? funnelCompletedHint : undefined}
+                >
                   {funnelStatusLabels[value]}
                 </option>
               ))}
@@ -773,12 +781,26 @@ function FunnelToolbar({
             Type
             <select
               value={filters.type}
-              onChange={(e) => set({ type: e.target.value as FitBand | '' })}
+              onChange={(e) => set({ type: e.target.value as FunnelType | '' })}
             >
               <option value="">All types</option>
               {funnelTypes.map((value) => (
                 <option key={value} value={value}>
                   {funnelTypeLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Campaign
+            <select
+              value={filters.campaign}
+              onChange={(e) => set({ campaign: e.target.value as FitBand | '' })}
+            >
+              <option value="">All campaigns</option>
+              {funnelCampaigns.map((value) => (
+                <option key={value} value={value}>
+                  {funnelCampaignLabels[value]}
                 </option>
               ))}
             </select>
@@ -834,6 +856,7 @@ function FunnelToolbar({
               onChange={(e) => set({ created_to: e.target.value })}
             />
           </label>
+          <p className="funnel-filter-hint">{funnelCompletedHint}</p>
         </div>
       )}
       <div className="funnel-results" aria-live="polite">

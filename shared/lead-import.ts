@@ -51,6 +51,13 @@ export interface PreviewRow {
   cells: string[];
   /** The lead already in this project that the import would match this row to. */
   duplicate: { id: number; name: string } | null;
+  /**
+   * The file line of an earlier row in this same file that is the same company (same name or
+   * website domain, matched as the import matches leads), or null. Such a row is counted once:
+   * it is never screened and never imported a second time, so adding the same leads to a file
+   * again does not change the counts.
+   */
+  repeat_of?: number | null;
 }
 export interface ImportPreview {
   /** Data rows read from the file. */
@@ -74,6 +81,11 @@ export interface ScreenVerdict {
   /** The approved criterion or exclusion the verdict relies on, word for word; '' when none. */
   rule: string;
   duplicate?: { id: number; name: string };
+  /**
+   * True when this exact row was screened before against the same published training and its
+   * verdict was reused (server/screen-cache.ts) rather than asked again.
+   */
+  reused?: boolean;
 }
 export interface ImportRowsResult {
   total: number;
