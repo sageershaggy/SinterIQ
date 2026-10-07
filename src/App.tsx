@@ -25,6 +25,7 @@ import { Alert, Badge, Brand, Empty, ExternalLink, Modal, Spinner } from './ui';
 import { Notifications } from './Notifications';
 import { AccountMenu } from './AccountMenu';
 import { HeaderQuote } from './Shell';
+import { AnalysisIndicator } from './AnalysisIndicator';
 import { ProjectLibrary } from './ProjectLibrary';
 import { DeleteProjectDialog } from './DeleteProject';
 import { readRoute, type View } from './navigation';
@@ -272,6 +273,7 @@ export default function App({ user, onLogout }: { user: User; onLogout: () => Pr
           </div>
           {view !== 'settings' && <HeaderQuote />}
           <div className="topbar-right">
+            <AnalysisIndicator />
             <Notifications refresh={refresh} />
             <AccountMenu
               user={user}

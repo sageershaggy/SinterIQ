@@ -7,6 +7,7 @@ import type {
   QualificationJobState,
 } from '../shared/qualification-jobs';
 import { api, json } from './api';
+import { analysisChanged, analysisChangedEvent } from './analysisActivity';
 import { Alert, Modal, Spinner } from './ui';
 import './QualificationJob.css';
 
@@ -64,6 +65,13 @@ export function QualificationJob({
     [seen, setSeen] = useState(() => seenJob(project.id));
   const job = state?.job || null;
   const running = job?.status === 'RUNNING';
+  // Started or stopped elsewhere (the header's indicator): read it again at once.
+  const [changed, setChanged] = useState(0);
+  useEffect(() => {
+    const bump = () => setChanged((n) => n + 1);
+    window.addEventListener(analysisChangedEvent, bump);
+    return () => window.removeEventListener(analysisChangedEvent, bump);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     api<QualificationJobState>(base + '/current')
@@ -72,7 +80,7 @@ export function QualificationJob({
     return () => {
       cancelled = true;
     };
-  }, [base, refresh, project.active_version, project.revision]);
+  }, [base, refresh, changed, project.active_version, project.revision]);
   useEffect(() => {
     if (!running) return;
     let cancelled = false;
@@ -120,6 +128,7 @@ export function QualificationJob({
         body: json({}),
       });
       setState(next);
+      analysisChanged();
       notify(
         next.job?.status === 'RUNNING'
           ? 'Stopping after the lead in progress.'
@@ -182,7 +191,7 @@ export function QualificationJob({
                 onClick={() => void stop()}
               >
                 <CircleStop size={15} />
-                {job.stopping ? 'Stopping…' : 'Stop qualification'}
+                {job.stopping ? 'Stopping…' : 'Stop analysis'}
               </button>
             )}
           </div>
@@ -310,6 +319,7 @@ export function QualificationJob({
           onStarted={(next) => {
             setStarting(null);
             setState(next);
+            analysisChanged();
             if (next.job) {
               reported.current = { id: next.job.id, done: 0, running: true, at: Date.now() };
               notify(

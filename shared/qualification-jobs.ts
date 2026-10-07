@@ -59,6 +59,24 @@ export interface QualificationJob {
   can_stop: boolean;
 }
 
+/** A job as the header's "Analysis running" indicator lists it, with the project it runs in. */
+export interface RunningAnalysisJob extends QualificationJob {
+  project_name: string;
+  /** The viewer started it. */
+  mine: boolean;
+}
+/**
+ * GET /api/analysis/running: qualification jobs in every project the viewer can reach (an
+ * administrator's every project, a researcher's assigned ones), never anyone else's.
+ */
+export interface RunningAnalyses {
+  /** Jobs running now, newest first. */
+  running: RunningAnalysisJob[];
+  /** Jobs that ended within the last recentAnalysisMinutes, for the "finished/stopped" summary. */
+  recent: RunningAnalysisJob[];
+}
+export const recentAnalysisMinutes = 30;
+
 /** GET /api/projects/:projectId/qualification-jobs/current */
 export interface QualificationJobState {
   /** The running job, or else the most recent finished one; null before the first. */
