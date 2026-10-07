@@ -500,21 +500,42 @@ export function createApp(options: {
     legacyHeaders: false,
     message: { error: 'Upload limit reached. Please retry in 15 minutes.' },
   });
-  const busy = new Set<string>();
-  async function single<T>(key: string, work: () => Promise<T>) {
-    if (busy.has(key)) throw new HttpError(409, 'Analysis is already running for this item.');
-    if (busy.size >= 3)
-      throw new HttpError(
-        429,
-        'Three analyses are already running. Please retry when one finishes.',
-      );
-    busy.add(key);
-    try {
-      return await work();
-    } finally {
-      busy.delete(key);
-    }
+  /**
+   * Bounded concurrency, one pool per kind of work.
+   *
+   * Remote work (AI analysis, website reads, SMTP tests) shares a pool so a slow or unreachable
+   * provider cannot be piled onto. Reading an uploaded document is LOCAL CPU work — unzipping a
+   * DOCX, parsing a PDF — and gets its own pool, because it has no reason to queue behind a
+   * remote call.
+   *
+   * They were one pool of three. When the provider became unreachable each AI call held a slot
+   * for its full 90s timeout, so three of them locked out document uploads entirely: users saw
+   * "Three analyses are already running" while trying to attach a file, and concluded the upload
+   * was broken. A network outage must not present as a broken uploader.
+   */
+  function pool(limit: number, sameKey: string, atCapacity: string) {
+    const busy = new Set<string>();
+    return async function run<T>(key: string, work: () => Promise<T>) {
+      if (busy.has(key)) throw new HttpError(409, sameKey);
+      if (busy.size >= limit) throw new HttpError(429, atCapacity);
+      busy.add(key);
+      try {
+        return await work();
+      } finally {
+        busy.delete(key);
+      }
+    };
   }
+  const single = pool(
+    3,
+    'Analysis is already running for this item.',
+    'Three analyses are already running. Please retry when one finishes.',
+  );
+  const readUpload = pool(
+    3,
+    'That document is already being read.',
+    'Three documents are being read already. Please retry when one finishes.',
+  );
   app.get('/api/health', (_req, res) => {
     try {
       const initialized = db.prepare("SELECT 1 FROM meta WHERE key='initialized'").get();
@@ -717,7 +738,8 @@ export function createApp(options: {
       let content: string;
       let source: { id: number };
       try {
-        content = await single('document:' + req.user.id, () => readDocument(req.file!));
+        // Local extraction pool: a provider outage must never block attaching a document.
+        content = await readUpload('document:' + req.user.id, () => readDocument(req.file!));
         source = addSource(
           project,
           {

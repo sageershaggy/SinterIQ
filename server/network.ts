@@ -46,6 +46,14 @@ export async function publicRequest(
     headers?: Record<string, string>;
     body?: string;
     timeout?: number;
+    /**
+     * Separate, much shorter deadline for establishing the TCP connection. `timeout` covers the
+     * whole exchange, which a model answer legitimately needs 90s of; reaching the host does not.
+     * Without this, a destination with no route holds the connection in SYN-retry for the entire
+     * `timeout` — and because callers hold a concurrency slot meanwhile, one unreachable provider
+     * stalls unrelated work. Reaching a host either happens quickly or is not going to.
+     */
+    connectTimeout?: number;
     maxBytes?: number;
     /** False for a request carrying credentials: a redirect must never receive them. */
     followRedirects?: boolean;
@@ -106,6 +114,25 @@ export async function publicRequest(
         );
       },
     );
+    // Fail fast when the host cannot be reached at all, rather than sitting in SYN-retry until
+    // the full `timeout` expires. Cleared as soon as the socket connects.
+    const connectMs = options.connectTimeout ?? 10000;
+    request.on('socket', (socket) => {
+      if (!socket.connecting) return;
+      const deadline = setTimeout(() => {
+        request.destroy(
+          new HttpError(
+            504,
+            'Could not reach ' + url.hostname + ' (no response within ' + Math.round(connectMs / 1000) +
+              's of connecting). Check the provider URL and this server\'s outbound network.',
+          ),
+        );
+      }, connectMs);
+      const clear = () => clearTimeout(deadline);
+      socket.once('connect', clear);
+      socket.once('close', clear);
+      socket.once('error', clear);
+    });
     request.on('error', reject);
     request.end(options.body);
   });

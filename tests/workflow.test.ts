@@ -923,6 +923,76 @@ test('source uploads reject binary/mislabeled files and preserve original text d
     f.dispose();
   }
 });
+test('a stalled provider cannot block attaching a document', async () => {
+  // Reproduces the production failure: remote work and local document extraction shared one
+  // pool of three. With the provider unreachable, three AI/website calls each held a slot for
+  // their full timeout and uploads were refused with "Three analyses are already running" —
+  // so users reported the uploader as broken when the real fault was the network.
+  let releaseRemote!: () => void;
+  let remoteBusy!: () => void;
+  let inFlight = 0;
+  const saturated = new Promise<void>((resolve) => {
+    remoteBusy = resolve;
+  });
+  const stall = new Promise<void>((resolve) => {
+    releaseRemote = resolve;
+  });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'innovista-test-'));
+  const { app, db } = createApp({
+    dataDir: dir,
+    generate: generated,
+    // Stands in for an unreachable provider: the call never returns until released.
+    fetchWebsite: async () => {
+      if (++inFlight === 3) remoteBusy();
+      await stall;
+      return { url: 'https://stalled.example.com', content: 'unused', links: [], truncated: false };
+    },
+    extractDocument: async () =>
+      'Extracted training text long enough to pass the readable-content threshold.',
+  });
+  const admin = request.agent(app);
+  const send = (url: string, csrf: string) =>
+    admin.post('/api' + url).set('X-Requested-With', 'Innovista').set('X-CSRF-Token', csrf);
+  try {
+    const setup = await send('/auth/setup', '').send({
+      name: 'Test Administrator',
+      username: 'test-admin',
+      password: 'A-long-test-password-2026',
+    });
+    assert.equal(setup.status, 201, JSON.stringify(setup.body));
+    const csrf = setup.body.csrf_token as string;
+
+    // Three separate projects, so the website key differs and all three take a remote slot.
+    const stalling: Array<Promise<unknown>> = [];
+    for (let n = 0; n < 3; n++) {
+      const project = await send('/projects', csrf).send({ name: 'Stalled ' + n });
+      assert.equal(project.status, 201, JSON.stringify(project.body));
+      stalling.push(
+        send('/projects/' + project.body.id + '/sources/website', csrf)
+          .send({ url: 'https://stalled.example.com', revision: project.body.revision })
+          .then((r) => r),
+      );
+    }
+    await saturated; // all three remote slots held
+
+    // The upload must still go through: reading a DOCX is local work.
+    const target = await send('/projects', csrf).send({ name: 'Uploads' });
+    assert.equal(target.status, 201, JSON.stringify(target.body));
+    const upload = await send('/projects/' + target.body.id + '/sources/upload', csrf)
+      .field('revision', String(target.body.revision))
+      .attach('file', Buffer.from('placeholder'), 'brief.docx');
+    assert.equal(upload.status, 201, JSON.stringify(upload.body));
+    assert.ok(upload.body.id, 'the document was saved and given an id');
+
+    releaseRemote();
+    await Promise.all(stalling);
+  } finally {
+    releaseRemote();
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('document extraction is bounded per researcher, so colleagues never block each other', async () => {
   let release!: () => void;
   let firstStarted!: () => void;
