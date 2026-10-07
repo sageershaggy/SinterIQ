@@ -4,6 +4,7 @@ import type { JevSettings as Settings } from '../shared/types';
 import { cleanKey } from '../shared/ai-providers';
 import { api, json } from './api';
 import { Alert, Badge, Spinner } from './ui';
+import { WebSearchSetting } from './WebSearchSetting';
 import './AiProviderSettings.css';
 
 const notACredential = {
@@ -145,7 +146,7 @@ export function JevSettings({ notify }: { notify: (message: string) => void }) {
                 : sources[settings.source] +
                   ' Model ' +
                   settings.model +
-                  '. Sent only to OpenRouter’s Decisions API.'}
+                  '. Sent only to OpenRouter: its Decisions API, and its web search for research.'}
             </span>
           </label>
           <div className={'ai-connection' + (status ? (status.ok ? ' is-ok' : ' is-error') : '')} aria-live="polite">
@@ -198,6 +199,7 @@ export function JevSettings({ notify }: { notify: (message: string) => void }) {
           </div>
         </form>
       )}
+      {settings && <WebSearchSetting notify={notify} keyChanged={settings.source + settings.key_preview} />}
     </section>
   );
 }

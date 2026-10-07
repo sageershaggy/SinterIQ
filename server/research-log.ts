@@ -14,6 +14,7 @@ import {
   type ReviewEntry,
 } from '../shared/research-log';
 import type { Decision, Project, ResearchOutcome, User } from '../shared/types';
+import type { PageRead, SearchRecord } from '../shared/research';
 
 /**
  * Notes the research pass wrote itself (which domain redirected, which page did not name the
@@ -23,8 +24,17 @@ import type { Decision, Project, ResearchOutcome, User } from '../shared/types';
 function systemNotes(notes: string[]) {
   return notes
     .filter((note) => !note.startsWith('Reported while reading the page'))
-    .slice(0, 6)
+    .slice(0, 10)
     .map((note) => note.slice(0, 300));
+}
+/** A stored JSON list of objects, or [] when it is missing or unreadable. */
+function parseObjects<T>(value: unknown): T[] {
+  try {
+    const list = JSON.parse(String(value ?? '[]'));
+    return Array.isArray(list) ? list.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -47,17 +57,20 @@ export function recordResearchPass(
 ) {
   db.prepare(
     `INSERT INTO research_log_passes
-      (project_id,lead_id,website,discovered,tried_json,applied_json,notes_json,refused_count,created_at,created_by)
-    SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM leads WHERE id=? AND project_id=?)`,
+      (project_id,lead_id,website,discovered,tried_json,applied_json,notes_json,refused_count,searches_json,pages_json,created_at,created_by)
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM leads WHERE id=? AND project_id=?)`,
   ).run(
     projectId,
     lead.id,
     outcome.website || '',
     outcome.discovered ? 1 : 0,
-    JSON.stringify(outcome.tried.slice(0, 10)),
+    JSON.stringify(outcome.tried.slice(0, 12)),
     JSON.stringify(applied),
     JSON.stringify(systemNotes(outcome.notes)),
     outcome.refused.length,
+    // Which searches ran and what they returned (a profile site by name only), and the pages read.
+    JSON.stringify((outcome.searches || []).slice(0, 4)),
+    JSON.stringify((outcome.pages_read || []).slice(0, 12)),
     now(),
     actor,
     lead.id,
@@ -206,6 +219,8 @@ export function installResearchLog(
           erased,
           refused_count: Number(run.refused_count),
           notes: parseList(run.notes_json),
+          searches: parseObjects<SearchRecord>(run.searches_json),
+          pages_read: parseObjects<PageRead>(run.pages_json),
         } satisfies ResearchPassEntry);
       }
       // Citations written before passes were recorded have no pass row. Rows of one pass were
@@ -310,7 +325,7 @@ export function installResearchLog(
             .slice(0, 5)
             .map((gap) => gap.slice(0, 300)),
           // Research facts and the page itself can cite the same address; list each page once.
-          pages: [...new Set(parseList(row.pages))].slice(0, 6),
+          pages: [...new Set(parseList(row.pages))].slice(0, 10),
         } satisfies QualificationEntry);
     }
 

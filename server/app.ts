@@ -21,6 +21,9 @@ import { installDetailConflicts } from './detail-conflicts';
 import { installProjectDeletion } from './project-delete';
 import { createQualificationJobs } from './qualification-jobs';
 import { fetchWebsite, checkedUrl } from './network';
+import { crawlLimit, pagesRead, readSite } from './crawl';
+import { webSearch, type WebSearch } from './web-search';
+import { installResearchSettings, researchSearch } from './research-settings';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
 import {
@@ -314,6 +317,8 @@ export function createApp(options: {
   generate?: Generate;
   createDecision?: typeof createDecision;
   fetchWebsite?: typeof fetchWebsite;
+  /** Web search for lead research (server/web-search.ts); tests pass a stub, never OpenRouter. */
+  webSearch?: WebSearch;
   extractDocument?: typeof extractDocument;
   sendMail?: Send;
   readInbox?: ReadInbox;
@@ -417,11 +422,13 @@ export function createApp(options: {
   mailbox.install(app);
   installCalls(app, db, getProject);
   installCrm(app, db, getProject);
+  const searchWeb = options.webSearch || webSearch;
   const leadResearch = createLeadResearch({
     db,
     getProject,
     generate: callAi,
     fetchPage: readWebsite,
+    search: () => researchSearch(db, secrets, searchWeb),
   });
   leadResearch.install(app);
   // "Use website value" for a detail the latest qualification found stated differently.
@@ -476,6 +483,7 @@ export function createApp(options: {
     message: { error: 'Fast decision limit reached (200 requests per 15 minutes). Wait, then continue.' },
   });
   installJevSettings(app, { db, secrets, decide, limit: decisionLimit });
+  installResearchSettings(app, { db, secrets });
   const quickDecisions = installQuickDecisions(app, {
     db,
     secrets,
@@ -1278,14 +1286,21 @@ export function createApp(options: {
         throw new HttpError(409, 'Configure an AI provider in Settings first.');
       // Research before judging: a blank field is a reason to look, never evidence that the
       // fact does not exist. The pass writes only what it proves, so the record is re-read.
-      const { research, facts } = await leadResearch.beforeQualification({
+      const { research, facts, opportunities, pages } = await leadResearch.beforeQualification({
         project,
         lead: before,
         actor,
         config,
       });
       const lead = getLead(db, project, before.id);
-      const found = leadResearch.qualificationContext(project, lead, research, facts, 'E0');
+      const found = leadResearch.qualificationContext(
+        project,
+        lead,
+        research,
+        facts,
+        'E0',
+        opportunities,
+      );
       const evidence: Evidence[] = [
         {
           id: 'E1',
@@ -1310,29 +1325,28 @@ export function createApp(options: {
           captured_at: now(),
           content: listed.map(([label, value]) => label + ': ' + value).join('\n'),
         });
+      // The company's own site: the home page and up to seven about, services, products,
+      // industries, careers, news, case-study and contact pages (server/crawl.ts). The pages the
+      // research pass just read are used as they are rather than fetched a second time.
       const fetchFailures: string[] = [];
-      if (lead.website) {
-        const urls = [lead.website];
-        for (let index = 0; index < Math.min(urls.length, 3); index++) {
-          const url = urls[index];
-          try {
-            const page = await readWebsite(url);
-            if (index === 0)
-              urls.push(...(page.links || []).filter((link) => link !== url).slice(0, 2));
-            if (!evidence.some((item) => item.content === page.content))
-              evidence.push({
-                id: 'E' + (evidence.length + 1),
-                kind: 'website',
-                title: new URL(page.url).hostname + new URL(page.url).pathname,
-                url: page.url,
-                content: page.content.slice(0, 15000),
-                captured_at: now(),
-              });
-          } catch {
-            fetchFailures.push(url);
-          }
-        }
-      }
+      const reading = !lead.website
+        ? null
+        : pages.length && websiteKey(pages[0].page.url) === websiteKey(lead.website)
+          ? { pages, failures: [], notes: [] }
+          : await readSite(lead.website, readWebsite, { limit: crawlLimit });
+      fetchFailures.push(...(reading?.failures || []));
+      for (const [index, { page }] of (reading?.pages || []).entries())
+        if (!evidence.some((item) => item.content === page.content))
+          evidence.push({
+            id: 'E' + (evidence.length + 1),
+            kind: 'website',
+            title: new URL(page.url).hostname + new URL(page.url).pathname,
+            url: page.url,
+            // The home page in full, the others shorter: eight pages cost about what four did.
+            content: page.content.slice(0, index === 0 ? 15000 : 7000),
+            captured_at: now(),
+          });
+      const read = reading ? pagesRead(reading) : [];
       const previous = previousResearchContext(
         lead.legacy_json,
         preservedRecords(db, project.id, lead.id),
@@ -1352,9 +1366,13 @@ export function createApp(options: {
         origin: found.origin,
         // A website on record that could not be read is a blocker, not a low score.
         unreadable: fetchFailures,
+        // Nothing found at all is a blocker too; it says what research searched and checked.
+        searched: leadResearch.searchedSummary(research),
       });
       if (fetchFailures.length)
         qualified.next_steps.push('Some pages were unavailable: ' + fetchFailures.join(', '));
+      // Which pages this verdict rests on, each with the kind of page it was read as.
+      if (read.length) qualified.pages_read = read;
       if (research) {
         qualified.research = research;
         // "Impossible to assess" is not an answer when nobody looked. When the website could

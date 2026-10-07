@@ -48,6 +48,10 @@ export interface ResearchPassEntry extends EntryBase {
   refused_count: number;
   /** What the pass checked and why it stopped, in the system's own words. */
   notes: string[];
+  /** The web searches it ran and what they returned. Older passes have none. */
+  searches?: import('./research').SearchRecord[];
+  /** The company pages it read, with the kind of page each was. Older passes have none. */
+  pages_read?: import('./research').PageRead[];
 }
 /** One qualification run against published training. */
 export interface QualificationEntry extends EntryBase {

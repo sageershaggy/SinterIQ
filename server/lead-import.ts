@@ -180,7 +180,12 @@ export function importLeads(
         .get(result.duplicate.id, project.id) as Omit<Lead, 'list_data'> & { list_data: string };
       const stored = storedListData(current.list_data);
       const merged = {
-        website: lead.website || current.website,
+        // The same site written another way ("acme.de" for the "https://www.acme.de/" research
+        // found) is not a change: it must not make the lead look new and send it back to research.
+        website:
+          lead.website && websiteKey(lead.website) !== websiteKey(current.website)
+            ? lead.website
+            : current.website,
         country: lead.country || current.country,
         industry: lead.industry || current.industry,
         notes: lead.notes || current.notes,

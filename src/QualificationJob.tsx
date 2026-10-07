@@ -343,6 +343,9 @@ function StartJob({
   onStarted: (state: QualificationJobState) => void;
 }) {
   const { requalify, raw, total } = state.counts;
+  // Leads already Qualified on this training keep their result unless chosen explicitly.
+  const qualified = state.counts.qualified ?? 0;
+  const [includeQualified, setIncludeQualified] = useState(false);
   const options: Array<{
     scope: QualificationJobScope;
     label: string;
@@ -363,9 +366,16 @@ function StartJob({
     },
     {
       scope: 'all',
-      label: 'Every lead in the project (' + total + ') — after changing the rules',
-      hint: 'Current results are redone too, so every lead is judged by the same rules.',
-      count: total,
+      label:
+        'Every lead in the project (' +
+        (includeQualified ? total : total - qualified) +
+        ') — after changing the rules',
+      hint: includeQualified
+        ? 'Current results are redone too, including leads already Qualified on this training.'
+        : 'Current results are redone too, except ' +
+          leads(qualified) +
+          ' already Qualified on this training. Research already done is reused.',
+      count: includeQualified ? total : total - qualified,
     },
   ];
   const [scope, setScope] = useState<QualificationJobScope>(
@@ -381,7 +391,14 @@ function StartJob({
     setBusy(true);
     setError('');
     try {
-      onStarted(await api<QualificationJobState>(base, { method: 'POST', body: json({ scope }) }));
+      onStarted(
+        await api<QualificationJobState>(base, {
+          method: 'POST',
+          body: json(
+            scope === 'all' && includeQualified ? { scope, include_qualified: true } : { scope },
+          ),
+        }),
+      );
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -413,6 +430,17 @@ function StartJob({
             </label>
           ))}
         </div>
+        {scope === 'all' && qualified > 0 && (
+          <label className="job-include">
+            <input
+              type="checkbox"
+              checked={includeQualified}
+              disabled={busy}
+              onChange={(event) => setIncludeQualified(event.target.checked)}
+            />
+            <span>Also redo the {leads(qualified)} already Qualified on this training</span>
+          </label>
+        )}
         {error && <Alert>{error}</Alert>}
         <div className="form-actions">
           <button type="button" className="button secondary" disabled={busy} onClick={onClose}>

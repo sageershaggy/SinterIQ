@@ -15,7 +15,8 @@ import type { JevSettings } from '../shared/types';
  *
  * Kept like every provider key: encrypted at rest, never returned (only its last four
  * characters), administrator-only, and sent nowhere but OpenRouter's fixed Decisions address
- * (server/decisions.ts). In order of use: the saved Jev key, OPENROUTER_API_KEY on the server,
+ * (server/decisions.ts) and, for web search in research, its fixed chat completions address
+ * (server/web-search.ts). In order of use: the saved Jev key, OPENROUTER_API_KEY on the server,
  * then a saved OpenRouter chat key.
  */
 export function getJevKey(db: DB, secrets: Secrets) {

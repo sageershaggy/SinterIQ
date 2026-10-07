@@ -264,7 +264,11 @@ test('a free-mail or provider email domain is never fetched as the company websi
       contact_email: 'dmaww@emirates.net.ae',
     });
     const outcome = (await f.post(base + '/research')).body as ResearchOutcome;
-    assert.deepEqual(outcome.tried, []);
+    // Only likely addresses for the name itself are tried, never a shared provider.
+    assert.ok(
+      outcome.tried.every((domain) => !isSharedMailDomain(domain)),
+      JSON.stringify(outcome.tried),
+    );
     assert.equal(outcome.discovered, false);
     assert.ok(!f.fetched.includes('https://emirates.net.ae'));
     assert.ok(!f.fetched.includes('https://gmail.com'));
@@ -389,15 +393,20 @@ test('when research verifies nothing, the result says what was checked', async (
     assert.ok(checked, JSON.stringify(result.gaps));
     assert.match(checked, /shared email provider/);
     assert.match(checked, /parked, for-sale or placeholder/);
-    // Researched properly and nothing found: missing information lowers the score, it is not a
-    // reason for review. The record alone proves no rule, so nothing is met and nothing blocks.
-    assert.equal(result.decision, 'NOT_A_TARGET');
+    // Researched properly and nothing at all found — no page, no list data: that is not a verdict
+    // on the company (Phase 3 R1/R6). It goes to a person, saying what was searched and checked.
+    assert.equal(result.decision, 'NEEDS_REVIEW');
     assert.equal(result.score, 0);
-    assert.deepEqual(result.blockers, []);
+    assert.equal(result.blockers?.length, 1, JSON.stringify(result.blockers));
+    assert.match(result.blockers![0], /^Not enough found to judge: /);
+    assert.match(result.blockers![0], /amusement-whitewater\.example\.com/);
+    assert.match(result.blockers![0], /No OpenRouter key is set up for web search/i);
     assert.ok(
       result.gaps.some((gap) => gap.startsWith('No retrieved source for: Manufactures pumps')),
       JSON.stringify(result.gaps),
     );
+    const lead = (await f.get(base)).body as Lead;
+    assert.equal(lead.status, 'NEEDS_REVIEW');
   } finally {
     f.dispose();
   }

@@ -9,7 +9,8 @@ import type { Decision } from './types';
  *   ("Requalification needed").
  * - raw: leads never analysed.
  * - stale_and_raw: both.
- * - all: every lead, for when the rules themselves changed and every verdict should be redone.
+ * - all: every lead, for when the rules themselves changed and every verdict should be redone —
+ *   except leads already Qualified on the current training, unless include_qualified is set.
  * - ids: an explicit list, e.g. the leads an import has just added.
  *
  * Archived leads are never included. Every scope but 'ids' spends AI credits across the whole
@@ -63,8 +64,11 @@ export interface QualificationJob {
 export interface QualificationJobState {
   /** The running job, or else the most recent finished one; null before the first. */
   job: QualificationJob | null;
-  /** Non-archived leads in each state, as the start dialog offers them. */
-  counts: { requalify: number; raw: number; total: number };
+  /**
+   * Non-archived leads in each state, as the start dialog offers them. `qualified` are current
+   * and Qualified on this training: 'all' leaves them out unless include_qualified is set.
+   */
+  counts: { requalify: number; raw: number; total: number; qualified: number };
   /** The published training is current, so a job could start now. */
   ready: boolean;
   training_version: number | null;

@@ -1,0 +1,60 @@
+/* Settings → Fast decisions → "Use web search in research" (src/WebSearchSetting.tsx). */
+.web-search-setting {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+/* Checkbox, text and state badge on one row; on a phone the badge moves under the text. */
+.web-search-toggle {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 10px;
+  row-gap: 6px;
+  font-weight: 400;
+  cursor: pointer;
+}
+/* The global text-input rule would otherwise stretch a checkbox across the row. */
+.web-search-toggle input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  padding: 0;
+  accent-color: #567845;
+}
+.web-search-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.web-search-toggle strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.web-search-toggle small {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.web-search-toggle .badge {
+  justify-self: start;
+}
+.web-search-cost {
+  margin: 0 0 0 26px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6c7564;
+}
+@media (max-width: 640px) {
+  .web-search-toggle {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+  .web-search-toggle .badge {
+    grid-column: 2;
+  }
+}

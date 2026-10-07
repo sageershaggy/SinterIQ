@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { fetchWebsite, type WebsitePage } from './network';
 import type { AiConfig, Generate } from './ai';
+import { HttpError } from './validation';
+import { categorize, crawlLimit, pagesRead, readSite, type CrawledPage } from './crawl';
+import type { SearchHit } from './web-search';
 import type { Lead, ResearchOutcome, ResearchableField } from '../shared/types';
-import { classifyRole, rolesSought } from '../shared/research';
+import { classifyRole, rolesSought, type SearchRecord } from '../shared/research';
 
 /**
  * Filling in what a lead record is missing, from the company's own website.
@@ -13,9 +16,11 @@ import { classifyRole, rolesSought } from '../shared/research';
  *    fetched AND that sentence itself contains the value. Checking only the quote is not
  *    enough: the page text is in the prompt, so quoting it is free, and a model can pair an
  *    invented phone number with a real "Contact us today" and be believed.
- * 2. A website is never taken on the model's word. A proposed domain is fetched through the
- *    same public-network guard as any other site and kept only if the page names the company.
- *    There is no search provider here, so when nothing verifies we say so rather than guess.
+ * 2. A website is never taken on the model's word, nor on a search's. A candidate — from the
+ *    record's email domain, a web search result (server/web-search.ts), a model's suggestion or
+ *    a likely address for the name — is fetched through the same public-network guard as any
+ *    other site and kept only if the page names the company. When nothing verifies we say so,
+ *    with what was searched and checked, rather than guess.
  *
  * Anything refused is reported back, not dropped silently: "we looked and could not confirm"
  * is a research result, and hiding it would invite someone to re-run the same lead forever.
@@ -98,13 +103,29 @@ const extractionSchema = z
       )
       .max(16)
       .default([]),
+    opportunities: z
+      .array(
+        z.object({
+          rule: z.string().trim().max(800),
+          quote: z.string().trim().max(800),
+          page_url: loose(2000),
+        }),
+      )
+      .max(12)
+      .default([]),
     notes: z.array(z.string().trim().max(300)).max(12).default([]),
   })
   .strict();
 /** A long list is cut to the limit rather than throwing the whole reading away. */
 function clipLists(raw: unknown) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-  const limits: Record<string, number> = { fields: 12, contacts: 20, facts: 16, notes: 12 };
+  const limits: Record<string, number> = {
+    fields: 12,
+    contacts: 20,
+    facts: 16,
+    opportunities: 12,
+    notes: 12,
+  };
   const copy: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
   for (const [key, limit] of Object.entries(limits))
     if (Array.isArray(copy[key])) copy[key] = (copy[key] as unknown[]).slice(0, limit);
@@ -339,13 +360,25 @@ export function sameSite(candidate: string, finalUrl: string) {
 }
 
 /**
+ * Page text without email addresses and web addresses that spell words out. A site prints its
+ * own domain everywhere ("info@kestrel-pump-works.com", "© kestrel-pump-works.com"), and once
+ * flattened a hyphenated domain IS the company's name: a guessed domain would verify itself.
+ */
+export function withoutAddresses(text: string) {
+  return text
+    .replace(/[^\s@<>()"']+@[^\s@<>()"']+/g, ' ')
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ')
+    .replace(/[\w-]*-[\w-]*(?:\.[\w-]+)*\.[a-z]{2,}(?:\/\S*)?/gi, ' ');
+}
+
+/**
  * Does this page belong to this company? Requires the name's identifying words to appear, not
  * merely a plausible-looking domain: a parked page or a namesake in another country would
  * otherwise become a "verified" website and poison every later qualification.
  */
 export function pageNamesCompany(name: string, pageText: string) {
   const words = identifyingWords(name);
-  const page = ' ' + flatten(pageText) + ' ';
+  const page = ' ' + flatten(withoutAddresses(pageText)) + ' ';
   // Whole words only. Matching substrings let "maintenance" inside "maintenancefree" count,
   // and a compound logo spelling simply fails to verify, which is the safe direction to err.
   const hasWord = (word: string) =>
@@ -360,6 +393,155 @@ export function pageNamesCompany(name: string, pageText: string) {
   // must match both words; a longer one must match most of them.
   const needed = words.length <= 2 ? words.length : Math.ceil(words.length * 0.6);
   return present.length >= needed;
+}
+
+/** Legal forms only: the words a company's own pages often leave out of its name. */
+const legalForms = new Set([
+  'llc',
+  'ltd',
+  'limited',
+  'inc',
+  'gmbh',
+  'mbh',
+  'bv',
+  'nv',
+  'sa',
+  'sas',
+  'sarl',
+  'srl',
+  'spa',
+  'ag',
+  'kg',
+  'oy',
+  'ab',
+  'as',
+  'plc',
+  'pte',
+  'pvt',
+  'est',
+  'co',
+  'corp',
+  'corporation',
+  'wll',
+  'fzco',
+  'fze',
+  'fzc',
+  'fzllc',
+]);
+/** The name as a phrase, legal form and single letters ("L.L.C") left out. */
+export function namePhrase(name: string) {
+  return flatten(name)
+    .split(' ')
+    .filter((word) => word.length > 1 && !legalForms.has(word))
+    .join(' ');
+}
+/** Does the page print this exact phrase as whole words, outside its own addresses? */
+export function pageNamesPhrase(phrase: string, pageText: string) {
+  return (
+    phrase.length >= 4 && (' ' + flatten(withoutAddresses(pageText)) + ' ').includes(' ' + phrase + ' ')
+  );
+}
+
+/** The likely web endings of a country, most likely first; .com is always tried as well. */
+const countryEndings: Array<[RegExp, string]> = [
+  [/^(germany|deutschland|de)$/, 'de'],
+  [/^(austria|osterreich|oesterreich|at)$/, 'at'],
+  [/^(switzerland|schweiz|suisse|ch)$/, 'ch'],
+  [/^((the )?netherlands|holland|nl)$/, 'nl'],
+  [/^(belgium|be)$/, 'be'],
+  [/^(france|fr)$/, 'fr'],
+  [/^(italy|italia|it)$/, 'it'],
+  [/^(spain|espana|es)$/, 'es'],
+  [/^(portugal|pt)$/, 'pt'],
+  [/^(united kingdom|uk|gb|great britain|england|scotland|wales)$/, 'co.uk'],
+  [/^(ireland|ie)$/, 'ie'],
+  [/^(sweden|se)$/, 'se'],
+  [/^(denmark|dk)$/, 'dk'],
+  [/^(norway|no)$/, 'no'],
+  [/^(finland|fi)$/, 'fi'],
+  [/^(poland|pl)$/, 'pl'],
+  [/^(czech republic|czechia|cz)$/, 'cz'],
+  [/^(turkey|turkiye|tr)$/, 'com.tr'],
+  [/^(united arab emirates|uae|ae|dubai|abu dhabi|sharjah)$/, 'ae'],
+  [/^(saudi arabia|ksa|sa)$/, 'com.sa'],
+  [/^(qatar|qa)$/, 'qa'],
+  [/^(oman|om)$/, 'om'],
+  [/^(bahrain|bh)$/, 'bh'],
+  [/^(kuwait|kw)$/, 'com.kw'],
+  [/^(india|in)$/, 'in'],
+  [/^(singapore|sg)$/, 'com.sg'],
+  [/^(australia|au)$/, 'com.au'],
+  [/^(new zealand|nz)$/, 'co.nz'],
+  [/^(canada|ca)$/, 'ca'],
+  [/^(japan|jp)$/, 'co.jp'],
+  [/^(south africa|za)$/, 'co.za'],
+  [/^(brazil|brasil|br)$/, 'com.br'],
+  [/^(mexico|mx)$/, 'com.mx'],
+];
+/**
+ * Likely addresses for a company with nothing else to go on: its name joined and hyphenated,
+ * under the country's ending and .com. Only a fallback, and each one is verified more strictly
+ * than a suggested domain: the page has to print the whole name.
+ */
+export function domainGuesses(name: string, country: string) {
+  const words = namePhrase(name)
+    .split(' ')
+    .filter((word) => word && !legalSuffixes.has(word));
+  const joined = words.join('');
+  if (!words.length || joined.length < 4 || joined.length > 40) return [];
+  const place = flatten(country);
+  const ending = countryEndings.find(([pattern]) => pattern.test(place))?.[1];
+  const endings = [...new Set([...(ending ? [ending] : []), 'com'])];
+  const labels = [...new Set([joined, words.join('-')])];
+  return labels.flatMap((label) => endings.map((end) => label + '.' + end)).slice(0, 4);
+}
+
+/** Words that make a name a business, not a person. */
+const businessWords =
+  /\b(gmbh|mbh|ltd|llc|l\.l\.c|inc|corp|co|company|group|holdings?|systems?|solutions?|technolog(y|ies)|tech|industr(y|ies|ial)|engineering|consult(ing|ants?)|services?|partners|labs?|studios?|media|digital|global|international|ventures?|capital|bank|hotels?|schools?|universit(y|ies)|college|hospital|clinic|foundation|association|trading|pumps?|works|manufactur\w*|enterprises?|agency|store|shop|restaurant|cent(er|re)|software|logistics|energy|motors?|electric\w*|chemicals?|foods?|pharma\w*|construction|est|sa|ag|bv|plc|pvt|pte|wll|fz\w*|contracting|projects?|products?|machinery|equipment|steel|plastics?|textiles?|furniture|design|marketing|insurance|realty|properties|investments?|automation|electronics|metals?|water|oil|gas|power|marine|aviation|transport|travel|events?|security|health|care|dental|medical|labs?)\b/i;
+/**
+ * Does the record name a person rather than a company? A sparse import is often a contact list:
+ * "Hannah Weber, Germany". Then the useful search is for the person's employer, not for a
+ * website called "Hannah Weber". Deliberately conservative: two to four capitalised words, no
+ * business word, no digits or symbols, and no website or industry — or the contact's own name
+ * entered as the company.
+ */
+export function looksLikePerson(lead: Pick<Lead, 'name' | 'website' | 'industry' | 'contact_name'>) {
+  const name = lead.name.replace(/\s+/g, ' ').trim();
+  if (!name || lead.website) return false;
+  if (lead.contact_name && flatten(lead.contact_name) === flatten(name)) return true;
+  if (lead.industry || /[0-9@&/()+,]/.test(name) || businessWords.test(name)) return false;
+  const words = name.split(' ');
+  return (
+    words.length >= 2 &&
+    words.length <= 4 &&
+    // Capitalised words (O'Brien, McDonald, Jean-Luc, J.), and not an all-capitals acronym list.
+    words.every((word) => /^\p{Lu}[\p{L}'’.-]*$/u.test(word) && word.length <= 20) &&
+    /\p{Ll}/u.test(name)
+  );
+}
+/** Does the page print the person's whole name, outside its own addresses? */
+export function pageNamesPerson(name: string, pageText: string) {
+  const phrase = flatten(name);
+  return phrase.split(' ').length >= 2 && pageNamesPhrase(phrase, pageText);
+}
+
+/** Sites that list or mention companies and people but are nobody's own company website. */
+const notCompanySites =
+  /(^|\.)(linkedin\.com|xing\.com|facebook\.com|fb\.com|instagram\.com|twitter\.com|x\.com|youtube\.com|tiktok\.com|pinterest\.com|threads\.net|wikipedia\.org|wikidata\.org|crunchbase\.com|zoominfo\.com|dnb\.com|bloomberg\.com|reuters\.com|kompass\.com|yelp\.[a-z.]+|yellowpages\.[a-z.]+|gelbeseiten\.de|dasoertliche\.de|opencorporates\.com|northdata\.(com|de)|company-information\.service\.gov\.uk|rocketreach\.co|apollo\.io|signalhire\.com|contactout\.com|lusha\.com|theorg\.com|glassdoor\.[a-z.]+|indeed\.[a-z.]+|stepstone\.[a-z.]+|google\.[a-z.]+|bing\.com|duckduckgo\.com|github\.com|medium\.com|reddit\.com|quora\.com|amazon\.[a-z.]+|trustpilot\.com|europages\.[a-z.]+|alibaba\.com|made-in-china\.com|indiamart\.com|cylex\.[a-z.]+|hotfrog\.[a-z.]+|manta\.com|bbb\.org|owler\.com|craft\.co|cbinsights\.com|pitchbook\.com|f6s\.com|wellfound\.com|angel\.co|tripadvisor\.[a-z.]+|booking\.com|maps\.apple\.com)$/i;
+/** Profiles that need a sign-in to read: found, listed, never fetched, never evidence. */
+const profileSites =
+  /(^|\.)(linkedin\.com|xing\.com|facebook\.com|instagram\.com|twitter\.com|x\.com|tiktok\.com|theorg\.com)$/i;
+/** A company's own page about itself or its people, as opposed to a news story that names someone. */
+function aboutOrPeoplePage(url: string) {
+  try {
+    const path = new URL(url).pathname;
+    if (path === '/' || path === '') return true;
+  } catch {
+    return false;
+  }
+  const kind = categorize(url);
+  return kind === 'contact' || kind === 'about';
 }
 
 const discoverSystem = [
@@ -384,8 +566,15 @@ const extractSystem = [
   'list customers, quoted third parties or people from other companies.',
   'In "facts", quote up to eight sentences that bear on the qualification_criteria or exclusion_rules, each with',
   'the rule it concerns, whether the sentence supports the rule or counts against it. Company statements only.',
+  'In "opportunities", quote up to six sentences — usually from the services, products, industries, careers, news',
+  'or case-study pages — that show an activity, plan or need the project could serve, as its service_categories and',
+  'qualification_criteria describe what the project offers (a new product line, an expansion, open engineering jobs,',
+  'a project or market it is entering), each with the category or criterion it bears on. Company statements only;',
+  'leave it empty when no page shows one.',
+  'When person_in_record is given, the lead record names that person rather than the company: if a page names them,',
+  'return their name as contact_name and their role as contact_role with the sentence that names them.',
   'Return {"fields":[{"field","value","evidence","page_url"}],"contacts":[{"name","role","email","phone","evidence","page_url"}],',
-  '"facts":[{"rule","quote","page_url"}],"notes":[string]}.',
+  '"facts":[{"rule","quote","page_url"}],"opportunities":[{"rule","quote","page_url"}],"notes":[string]}.',
 ].join(' ');
 
 /** The hostname a page was served from, for keeping linked pages on the same site. */
@@ -417,6 +606,8 @@ export interface ResearchTraining {
   summary: string;
   criteria: string[];
   exclusions: string[];
+  /** The services the project sells, so research can look for an opportunity for them. */
+  categories?: Array<{ name: string; description: string }>;
 }
 
 export async function researchMissing(options: {
@@ -428,6 +619,14 @@ export async function researchMissing(options: {
   training?: ResearchTraining;
   /** Look for the company's people as well as its blank fields (default true). */
   findContacts?: boolean;
+  /**
+   * Web search (server/web-search.ts), already bound to its key. Absent when no OpenRouter key
+   * is set up or an administrator turned search off; `searchOff` then says which.
+   */
+  search?: (query: string) => Promise<SearchHit[]>;
+  searchOff?: string;
+  /** Receives the company pages read, so a qualification right after can use them unfetched. */
+  onPages?: (pages: CrawledPage[]) => void;
 }): Promise<ResearchOutcome> {
   const { lead, config, generate } = options;
   const fetchPage = options.fetchPage || fetchWebsite;
@@ -435,6 +634,7 @@ export async function researchMissing(options: {
   const missing = researchableFields.filter(
     (field) => !String(lead[field] ?? '').trim(),
   ) as ResearchableField[];
+  const person = looksLikePerson(lead);
   const outcome: ResearchOutcome = {
     website: lead.website,
     discovered: false,
@@ -444,7 +644,11 @@ export async function researchMissing(options: {
     notes: [],
     contacts: [],
     facts: [],
+    opportunities: [],
     pages: [],
+    pages_read: [],
+    searches: [],
+    ...(person ? { person_record: true } : {}),
   };
   // With every field filled there is still something to read for: the company's people. With
   // no website there is not, and no field to find one for either.
@@ -455,9 +659,14 @@ export async function researchMissing(options: {
 
   /**
    * The checks every candidate domain has to pass, whoever suggested it: it must answer on the
-   * guessed domain itself, not be a placeholder, fit the field, and name the company.
+   * guessed domain itself, not be a placeholder, fit the field, and name the company. A guessed
+   * address must print the whole name; the email domain of a person in the record is their
+   * employer's by the record's own word, so there is no company name to check it against.
    */
-  async function verify(domain: string): Promise<WebsitePage | null> {
+  async function verify(
+    domain: string,
+    mode: 'candidate' | 'guess' | 'employer' = 'candidate',
+  ): Promise<WebsitePage | null> {
     outcome.tried.push(domain);
     try {
       const candidate = await fetchPage('https://' + domain);
@@ -477,7 +686,11 @@ export async function researchMissing(options: {
         outcome.notes.push(domain + ' resolved to an address too long to store.');
         return null;
       }
-      if (!pageNamesCompany(lead.name, candidate.content)) {
+      if (
+        mode !== 'employer' &&
+        (!pageNamesCompany(lead.name, candidate.content) ||
+          (mode === 'guess' && !pageNamesPhrase(namePhrase(lead.name), candidate.content)))
+      ) {
         outcome.notes.push(domain + ' was reachable but its page does not name this company.');
         return null;
       }
@@ -485,6 +698,101 @@ export async function researchMissing(options: {
     } catch {
       // A candidate that cannot be fetched is simply not evidence of anything.
       outcome.notes.push(domain + ' could not be read.');
+      return null;
+    }
+  }
+
+  /**
+   * One web search, recorded whatever happens. Only the addresses the search returned are
+   * kept; a profile site (LinkedIn and the like) is listed by name only, because it cannot be
+   * read and so proves nothing.
+   */
+  async function runSearch(query: string, purpose: SearchRecord['purpose']) {
+    const record: SearchRecord = { query, purpose, results: [], verified: '' };
+    outcome.searches!.push(record);
+    try {
+      const hits = await options.search!(query);
+      record.results = [
+        ...new Set(
+          hits.map((hit) =>
+            profileSites.test(hostOf(hit.url))
+              ? hostOf(hit.url) + ' (profile; cannot be read)'
+              : hit.url.slice(0, 300),
+          ),
+        ),
+      ].slice(0, 10);
+      return { record, hits };
+    } catch (error) {
+      record.error =
+        error instanceof HttpError ? error.message : 'The search could not be completed.';
+      outcome.notes.push('A web search could not be completed: ' + record.error);
+      return { record, hits: [] as SearchHit[] };
+    }
+  }
+  /** The result hosts worth checking as a company's own site, each once, in result order. */
+  function companyHosts(hits: SearchHit[]) {
+    const hosts: string[] = [];
+    let elsewhere = 0;
+    for (const hit of hits) {
+      const host = hostOf(hit.url);
+      if (!host || hosts.includes(host) || outcome.tried.includes(host)) continue;
+      if (notCompanySites.test(host) || isSharedMailDomain(host)) {
+        elsewhere++;
+        continue;
+      }
+      hosts.push(host);
+    }
+    if (elsewhere)
+      outcome.notes.push(
+        elsewhere === 1
+          ? 'One search result was a directory, social network or search site, not a company website, so it was not used.'
+          : elsewhere +
+              ' search results were directories, social networks or search sites, not company websites, so they were not used.',
+      );
+    return hosts.slice(0, 5);
+  }
+
+  /** A page that names the person in the record, on a company site that verifies as a site. */
+  const employer: { confirming: WebsitePage | null } = { confirming: null };
+  /**
+   * The employer of the person the record names. A page counts only when it is that company's
+   * own home, about, team or contact page, it prints the person's whole name, and the site it
+   * is on answers as a real site. A news story or a directory naming someone proves nothing
+   * about where they work, and a social profile cannot be read at all.
+   */
+  async function verifyEmployer(url: string): Promise<WebsitePage | null> {
+    const host = hostOf(url);
+    outcome.tried.push(host);
+    try {
+      const found = await fetchPage(url);
+      if (!sameSite(host, found.url) || notACompanySite.test(found.content.slice(0, 4000))) {
+        outcome.notes.push(host + ' did not answer as a company website.');
+        return null;
+      }
+      if (!aboutOrPeoplePage(found.url)) {
+        outcome.notes.push(
+          'A page on ' + host + ' was found, but it is not one of the site’s own about, team or contact pages, so it does not show who works there.',
+        );
+        return null;
+      }
+      if (!pageNamesPerson(lead.name, found.content)) {
+        outcome.notes.push('The page found on ' + host + ' does not name the person in this record.');
+        return null;
+      }
+      const home = found.url.replace(/^(https?:\/\/[^/]+).*$/, '$1');
+      const root = home === found.url.replace(/\/+$/, '') ? found : await fetchPage(home);
+      if (!sameSite(host, root.url) || notACompanySite.test(root.content.slice(0, 4000))) {
+        outcome.notes.push(host + ' did not answer as a company website.');
+        return null;
+      }
+      if (root.url.length > limits.website) return null;
+      employer.confirming = found;
+      outcome.notes.push(
+        'A page on ' + host + ' names the person in this record, so ' + host + ' was taken as their employer’s website.',
+      );
+      return root;
+    } catch {
+      outcome.notes.push(host + ' could not be read.');
       return null;
     }
   }
@@ -501,6 +809,10 @@ export async function researchMissing(options: {
       );
     }
   } else {
+    if (person)
+      outcome.notes.push(
+        'The record names a person rather than a company, so research looked for their employer.',
+      );
     // The record's own clues first. A business email address names the company's domain more
     // reliably than any guess; a free-mail or provider address names nobody's.
     const fromEmail = emailDomainCandidate(lead.contact_email);
@@ -514,8 +826,55 @@ export async function researchMissing(options: {
       outcome.notes.push(
         fromEmail.domain + ' was checked first because the contact email address uses it.',
       );
-      page = await verify(fromEmail.domain);
+      page = await verify(fromEmail.domain, person ? 'employer' : 'candidate');
     }
+    // The web, when a key is set up: the company's official site, or the person's employer.
+    if (!page && options.search) {
+      if (person) {
+        const where = lead.country || lead.city;
+        const { record, hits } = await runSearch(
+          '"' + lead.name + '"' + (where ? ' ' + where : '') + ' company',
+          'person',
+        );
+        let profiles = 0;
+        for (const hit of hits) {
+          const host = hostOf(hit.url);
+          if (!host || outcome.tried.includes(host)) continue;
+          if (notCompanySites.test(host) || isSharedMailDomain(host)) {
+            if (profileSites.test(host)) profiles++;
+            continue;
+          }
+          page = await verifyEmployer(hit.url);
+          if (page) {
+            record.verified = host;
+            break;
+          }
+          if (outcome.tried.length >= 8) break;
+        }
+        if (profiles)
+          outcome.notes.push(
+            'A professional profile was found, but profiles cannot be read, so it does not count as evidence of an employer.',
+          );
+        if (!page && !hits.length && !record.error)
+          outcome.notes.push('The web search found nothing for this person.');
+      } else {
+        const where = [lead.city, lead.country].filter(Boolean).join(' ');
+        const { record, hits } = await runSearch(
+          lead.name + (where ? ' ' + where : '') + ' official website',
+          'website',
+        );
+        const hosts = companyHosts(hits);
+        for (const host of hosts) {
+          page = await verify(host);
+          if (page) {
+            record.verified = host;
+            break;
+          }
+        }
+        if (!hosts.length && !record.error)
+          outcome.notes.push('The web search found no candidate company website.');
+      }
+    } else if (!page && options.searchOff) outcome.notes.push(options.searchOff);
     if (!page) {
       const proposed = candidateSchema.safeParse(
         await generate(config, discoverSystem, {
@@ -560,6 +919,21 @@ export async function researchMissing(options: {
         if (page) break;
       }
     }
+    // Last, the addresses a company with this name would most likely have. Never for a person:
+    // a site called after someone's name is not where they work.
+    if (!page && !person) {
+      const guesses = domainGuesses(lead.name, lead.country || lead.city).filter(
+        (domain) => !outcome.tried.includes(domain),
+      );
+      if (guesses.length)
+        outcome.notes.push(
+          'Likely addresses for this name were checked: ' + guesses.join(', ') + '.',
+        );
+      for (const domain of guesses) {
+        page = await verify(domain, 'guess');
+        if (page) break;
+      }
+    }
     if (page) {
       outcome.website = page.url;
       outcome.discovered = true;
@@ -571,26 +945,24 @@ export async function researchMissing(options: {
     return outcome;
   }
 
-  // The company's own contact, team, imprint and about pages, found by the same link
-  // discovery the qualification uses, and kept only while they stay on this site.
-  const pages: WebsitePage[] = [page];
-  const site = hostOf(page.url);
-  const linked = [...new Set([...(page.contact_links || []), ...(page.links || [])])]
-    .filter((url) => url !== page.url && hostOf(url) === site)
-    .slice(0, 3);
-  for (const url of linked) {
-    try {
-      const extra = await fetchPage(url);
-      if (!sameSite(site, extra.url)) {
-        outcome.notes.push(url + ' redirected off the company site, so it was not read.');
-        continue;
-      }
-      if (!pages.some((known) => known.content === extra.content)) pages.push(extra);
-    } catch {
-      outcome.notes.push('A linked page could not be read: ' + url + '.');
-    }
-  }
+  // More than the home page: the about, services, products, industries, careers, news,
+  // case-study and contact pages it links to (server/crawl.ts), the same reading the
+  // qualification does, kept only while they stay on this site. A contact or team page keeps
+  // its place when people are being looked for.
+  const reading = await readSite(page, fetchPage, {
+    limit: crawlLimit,
+    ensure: findContacts ? ['contact'] : [],
+  });
+  outcome.notes.push(...reading.notes);
+  for (const url of reading.failures) outcome.notes.push('A linked page could not be read: ' + url + '.');
+  const crawled: CrawledPage[] = [...reading.pages];
+  const confirming = employer.confirming as WebsitePage | null;
+  if (confirming && !crawled.some((item) => item.page.content === confirming.content))
+    crawled.splice(1, 0, { page: confirming, category: categorize(confirming.url) });
+  const pages: WebsitePage[] = crawled.map((item) => item.page);
   outcome.pages = pages.map((item) => item.url);
+  outcome.pages_read = pagesRead({ pages: crawled });
+  options.onPages?.(crawled);
   const flatPages = pages.map((item) => ({ page: item, flat: flatten(item.content) }));
   /** The fetched page a quote really appears on, preferring the one the model named. */
   const pageWith = (quote: string, preferred?: string) => {
@@ -613,14 +985,21 @@ export async function researchMissing(options: {
           company: lead.name,
           page_url: page.url,
           requested_fields: wanted,
+          // The home page in full and the others shorter, so reading eight pages costs about
+          // what reading four did.
           pages: pages.map((item, index) => ({
             url: item.url,
-            text: item.content.slice(0, index === 0 ? 20000 : 8000),
+            text: item.content.slice(0, index === 0 ? 20000 : 6000),
           })),
           qualification_criteria: training?.criteria ?? [],
           exclusion_rules: training?.exclusions ?? [],
+          service_categories: (training?.categories ?? []).map(({ name, description }) => ({
+            name,
+            description: description.slice(0, 300),
+          })),
           contact_roles_sought: [...roles.phrases, ...roles.categories],
           find_contacts: findContacts,
+          ...(person ? { person_in_record: lead.name } : {}),
         }),
       ),
     );
@@ -746,6 +1125,22 @@ export async function researchMissing(options: {
         if (!source) continue;
         outcome.facts!.push({
           rule: fact.rule.replace(/\s+/g, ' ').slice(0, 300),
+          quote: quote.slice(0, 500),
+          source_url: source.url,
+        });
+      }
+      // What the company is doing that the project could serve, held to the same test: a
+      // sentence really on one of its pages, with nobody's contact details in it. The
+      // qualification is given these first, when it looks for the opportunity.
+      for (const item of extracted.data.opportunities) {
+        if ((outcome.opportunities?.length || 0) >= 6) break;
+        const quote = item.quote.replace(/\s+/g, ' ').trim();
+        if (!item.rule || personalDetail.test(quote)) continue;
+        if (outcome.opportunities!.some((known) => flatten(known.quote) === flatten(quote))) continue;
+        const source = pageWith(quote, item.page_url);
+        if (!source) continue;
+        outcome.opportunities!.push({
+          rule: item.rule.replace(/\s+/g, ' ').slice(0, 300),
           quote: quote.slice(0, 500),
           source_url: source.url,
         });
