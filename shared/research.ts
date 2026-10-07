@@ -108,6 +108,67 @@ export interface ResearchFact {
   quote: string;
   source_url: string;
 }
+
+/**
+ * The kinds of company page research and qualification read besides the home page, in the
+ * owner's priority order (server/crawl.ts chooses one page per kind before a second of any).
+ */
+export const crawlCategories = [
+  'about',
+  'services',
+  'products',
+  'industries',
+  'careers',
+  'news',
+  'cases',
+  'contact',
+] as const;
+export type CrawlCategory = (typeof crawlCategories)[number];
+export const crawlCategoryLabels: Record<CrawlCategory | 'home' | 'other', string> = {
+  home: 'Home page',
+  about: 'About / company',
+  services: 'Services / solutions',
+  products: 'Products',
+  industries: 'Industries / markets',
+  careers: 'Careers / jobs',
+  news: 'News / press / blog',
+  cases: 'Case studies / references',
+  contact: 'Contact / imprint / team',
+  other: 'Other page',
+};
+/** A company page that was read, and the kind of page it was chosen as. */
+export interface PageRead {
+  url: string;
+  category: CrawlCategory | 'home' | 'other';
+}
+
+/**
+ * One web search a research pass ran (server/web-search.ts): what was asked, the addresses the
+ * search itself returned — never anything the model wrote — and what came of checking them.
+ * A social profile is listed by its site only: it cannot be read, so it proves nothing.
+ */
+export interface SearchRecord {
+  query: string;
+  /** website: the company's official site. person: the employer of a person named in the record. */
+  purpose: 'website' | 'person';
+  results: string[];
+  /** The site that verified from these results, or '' when none did. */
+  verified: string;
+  /** Why the search itself failed, in the system's own words, when it did. */
+  error?: string;
+}
+
+/** Settings → Fast decisions → "Use web search in research" (server/research-settings.ts). */
+export interface ResearchSearchSettings {
+  /** The administrator's choice; on unless turned off. */
+  enabled: boolean;
+  /** An OpenRouter key is available (the Jev key, OPENROUTER_API_KEY or an OpenRouter chat key). */
+  has_key: boolean;
+  /** Searches will run: enabled and a key. */
+  active: boolean;
+  model: string;
+  max_results: number;
+}
 /** A field value on the record that came from research, with the sentence behind it. */
 export interface FieldCitation {
   field: ResearchableField;
@@ -134,6 +195,14 @@ export interface ResearchRunSummary {
   notes: string[];
   contacts_added: number;
   facts: ResearchFact[];
+  /** Sentences that show an opportunity for the project's offering. Older runs lack them. */
+  opportunities?: ResearchFact[];
+  /** The web searches this pass ran. Older runs lack them. */
+  searches?: SearchRecord[];
+  /** The company pages read, with their category. Older runs lack them. */
+  pages_read?: PageRead[];
+  /** The record named a person, and research looked for their employer. */
+  person_record?: boolean;
 }
 /** Everything the lead page shows about where a lead's details came from. */
 export interface ResearchProfile {
@@ -152,6 +221,12 @@ export interface QualificationResearch {
   filled: ResearchableField[];
   contacts_added: number;
   checked: string[];
+  /** The web searches the pass ran (none without an OpenRouter key or with search turned off). */
+  searches?: SearchRecord[];
+  /** Opportunity sentences research quoted from the company's own pages. */
+  opportunities?: number;
+  /** The record named a person rather than a company. */
+  person_record?: boolean;
 }
 
 /** The owner's outcome words for a rule evaluation. */

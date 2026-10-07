@@ -9,6 +9,7 @@ import { installOutreachSchema } from './outreach-schema';
 import { installWorkspaceSchema } from './workspace-schema';
 import { adoptWorkspaceMailbox, installMailboxSchema } from './mailbox-schema';
 import { installResearchSchema } from './research-schema';
+import { installResearchSearchSchema } from './research-search-schema';
 import { installQuickDecisionSchema } from './quick-decision-schema';
 import { installCrmSchema } from './crm-schema';
 import { installActivitySchema } from './activity-schema';
@@ -171,6 +172,7 @@ export function openDatabase(dataDir: string, legacyPath?: string) {
   installServiceFitSchema(db);
   installListDataSchema(db);
   installDedupeSchema(db);
+  installResearchSearchSchema(db);
   if (!db.prepare("SELECT 1 FROM meta WHERE key='initialized'").get())
     initialize(db, secrets, legacyPath);
   preserveLegacyResearch(db, legacyPath);

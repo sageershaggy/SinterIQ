@@ -4,6 +4,8 @@ import { audit, now, websiteKey, type DB } from './database';
 import { researchMissing, researchableFields, type ResearchTraining } from './enrich';
 import type { AiConfig, Generate, ResearchContext } from './ai';
 import type { WebsitePage } from './network';
+import type { CrawledPage } from './crawl';
+import type { ResearchSearch } from './research-settings';
 import { HttpError, leadSchema, positiveId } from './validation';
 import { recordResearchPass } from './research-log';
 import { stopContactSequences } from './funnels';
@@ -45,6 +47,8 @@ export function createLeadResearch(deps: {
   getProject: (db: DB, id: number, user?: User) => Project;
   generate: Generate;
   fetchPage?: (url: string) => Promise<WebsitePage>;
+  /** Web search for this pass, read when it starts (the key or the setting may have changed). */
+  search?: () => ResearchSearch;
 }) {
   const { db } = deps;
 
@@ -58,7 +62,12 @@ export function createLeadResearch(deps: {
     const rubric = row
       ? (JSON.parse(row.snapshot_json) as TrainingSnapshot).rubric
       : project.rubric;
-    return { summary: rubric.summary, criteria: rubric.criteria, exclusions: rubric.exclusions };
+    return {
+      summary: rubric.summary,
+      criteria: rubric.criteria,
+      exclusions: rubric.exclusions,
+      categories: rubric.categories ?? [],
+    };
   }
   function readLead(projectId: number, leadId: number) {
     const row = db
@@ -107,14 +116,20 @@ export function createLeadResearch(deps: {
     actor: string;
     origin: 'manual' | 'qualification';
     config: AiConfig;
+    /** Receives the pages read, for a qualification that follows straight away. */
+    onPages?: (pages: CrawledPage[]) => void;
   }) {
     const { project, lead, actor, origin, config } = options;
+    const searching = deps.search?.() ?? { off: '' };
     const outcome: ResearchOutcome = await researchMissing({
       lead,
       config,
       generate: deps.generate,
       fetchPage: deps.fetchPage,
       training: trainingFor(project),
+      search: searching.search,
+      searchOff: searching.off,
+      onPages: options.onPages,
     });
     const applied: ResearchableField[] = [];
     let contactsAdded = 0;
@@ -151,6 +166,9 @@ export function createLeadResearch(deps: {
           outcome.notes.push(
             'The people named on that website were not saved either, for the same reason.',
           );
+        // Nor is anything it says kept for the qualification: it describes the other lead.
+        outcome.facts = [];
+        outcome.opportunities = [];
       } else {
         for (const proposal of outcome.proposals) {
           // The column name comes from this closed list, never from the response.
@@ -289,6 +307,10 @@ export function createLeadResearch(deps: {
           notes: outcome.notes.filter((note) => !note.startsWith('Reported while reading')),
           contacts_added: contactsAdded,
           facts: outcome.facts || [],
+          opportunities: outcome.opportunities || [],
+          searches: outcome.searches || [],
+          pages_read: outcome.pages_read || [],
+          ...(outcome.person_record ? { person_record: true } : {}),
         }),
         now(),
         actor,
@@ -303,15 +325,36 @@ export function createLeadResearch(deps: {
   function summarize(
     pass: Pick<
       ResearchRunSummary,
-      'website' | 'discovered' | 'applied' | 'contacts_added' | 'tried' | 'notes'
+      | 'website'
+      | 'discovered'
+      | 'applied'
+      | 'contacts_added'
+      | 'tried'
+      | 'notes'
+      | 'searches'
+      | 'opportunities'
+      | 'person_record'
     >,
     ran: boolean,
     origin: 'manual' | 'qualification',
   ): QualificationResearch {
     const checked = [
       ...(pass.tried.length ? ['Candidate websites checked: ' + pass.tried.join(', ') + '.'] : []),
+      ...(pass.searches || []).map(
+        (search) =>
+          'Searched the web for “' +
+          search.query +
+          '”: ' +
+          (search.error
+            ? 'the search failed.'
+            : search.verified
+              ? search.verified + ' verified.'
+              : search.results.length
+                ? search.results.length + ' result(s), none verified.'
+                : 'no results.'),
+      ),
       ...pass.notes,
-    ].slice(0, 8);
+    ].slice(0, 10);
     return {
       ran,
       origin,
@@ -320,26 +363,47 @@ export function createLeadResearch(deps: {
       filled: pass.applied,
       contacts_added: pass.contacts_added,
       checked,
+      searches: pass.searches || [],
+      opportunities: pass.opportunities?.length || 0,
+      ...(pass.person_record ? { person_record: true } : {}),
     };
   }
 
   /**
    * Research before judging. A record with blank fields is researched first, once per revision:
    * a pass that already ran on this exact version of the record is reused rather than repeated,
-   * because it would read the same pages and find the same things.
+   * because it would read the same pages and find the same things. That includes the revision
+   * the pass itself created by filling a field (lead_research_runs.result_revision), so a new
+   * qualification run or job never starts the same research over.
    */
   async function beforeQualification(options: {
     project: Project;
     lead: Lead;
     actor: string;
     config: AiConfig;
-  }): Promise<{ research: QualificationResearch | null; facts: ResearchFact[] }> {
+  }): Promise<{
+    research: QualificationResearch | null;
+    facts: ResearchFact[];
+    opportunities: ResearchFact[];
+    /** The company pages this pass read just now, when it ran. */
+    pages: CrawledPage[];
+  }> {
     const { project, lead } = options;
     const previous = researchedAt(project.id, lead.id, lead.revision);
     if (previous)
-      return { research: summarize(previous, false, previous.origin), facts: previous.facts };
-    if (!blank(lead).length) return { research: null, facts: [] };
-    const outcome = await run({ ...options, origin: 'qualification' });
+      return {
+        research: summarize(previous, false, previous.origin),
+        facts: previous.facts,
+        opportunities: previous.opportunities || [],
+        pages: [],
+      };
+    if (!blank(lead).length) return { research: null, facts: [], opportunities: [], pages: [] };
+    let pages: CrawledPage[] = [];
+    const outcome = await run({
+      ...options,
+      origin: 'qualification',
+      onPages: (read) => (pages = read),
+    });
     return {
       research: summarize(
         {
@@ -349,12 +413,46 @@ export function createLeadResearch(deps: {
           contacts_added: outcome.contacts_added,
           tried: outcome.tried,
           notes: outcome.notes.filter((note) => !note.startsWith('Reported while reading')),
+          searches: outcome.searches,
+          opportunities: outcome.opportunities,
+          person_record: outcome.person_record,
         },
         true,
         'qualification',
       ),
       facts: outcome.facts || [],
+      opportunities: outcome.opportunities || [],
+      pages,
     };
+  }
+
+  /**
+   * What research did, in one sentence, for a lead it could not find anything for: the blocker
+   * "Not enough found to judge" says what was searched, so nobody has to wonder whether anyone
+   * looked.
+   */
+  function searchedSummary(research: QualificationResearch | null) {
+    if (!research) return 'no research could be run and the record has no website or list data.';
+    const parts: string[] = [];
+    for (const search of research.searches || [])
+      parts.push(
+        'searched the web for “' +
+          search.query +
+          '”' +
+          (search.error ? ' (the search failed)' : search.results.length ? '' : ' (no results)'),
+      );
+    const tried = research.checked.find((line) => line.startsWith('Candidate websites checked:'));
+    if (tried) parts.push(tried.replace(/^Candidate websites checked: /, 'checked ').replace(/\.$/, ''));
+    if (!(research.searches || []).length) {
+      const off = research.checked.find((line) => /web search/i.test(line));
+      parts.push(off ? off.replace(/\.$/, '').toLowerCase() : 'no web search was run');
+    }
+    return (
+      'no company website could be verified and there is no list data. Research ' +
+      (research.ran ? '' : '(already run on this version of the record) ') +
+      parts.join('; ') +
+      '.'
+    ).slice(0, 600);
   }
 
   /** The research citations behind the values the record holds now, newest first. */
@@ -383,6 +481,7 @@ export function createLeadResearch(deps: {
     research: QualificationResearch | null,
     facts: ResearchFact[],
     nextId: string,
+    opportunities: ResearchFact[] = [],
   ): {
     origin: Record<string, 'record' | 'research'>;
     evidence: Evidence | null;
@@ -399,7 +498,12 @@ export function createLeadResearch(deps: {
       origin[field] = fromResearch ? 'research' : 'record';
       if (!fromResearch && !field.startsWith('contact_')) recordOnly[field] = value;
     }
+    // Opportunity first: the evaluation looks for what the project could do for the company
+    // before it weighs an exclusion, and these are the company's own words about it.
     const lines = [
+      ...opportunities.map(
+        (item) => 'Opportunity (' + item.rule + '): “' + item.quote + '” (' + item.source_url + ')',
+      ),
       ...cited.map(
         (item) =>
           item.field +
@@ -414,7 +518,12 @@ export function createLeadResearch(deps: {
         (fact) => 'On "' + fact.rule + '": “' + fact.quote + '” (' + fact.source_url + ')',
       ),
     ];
-    const url = lead.website || cited[0]?.source_url || facts[0]?.source_url || '';
+    const url =
+      lead.website ||
+      cited[0]?.source_url ||
+      opportunities[0]?.source_url ||
+      facts[0]?.source_url ||
+      '';
     return {
       origin,
       recordOnly,
@@ -435,6 +544,8 @@ export function createLeadResearch(deps: {
             website_found: research.website_found,
             filled: research.filled,
             checked: research.checked,
+            opportunities_found: opportunities.length,
+            ...(research.person_record ? { record_names_person: true } : {}),
           }
         : undefined,
     };
@@ -524,5 +635,5 @@ export function createLeadResearch(deps: {
     });
   }
 
-  return { run, beforeQualification, qualificationContext, install };
+  return { run, beforeQualification, qualificationContext, searchedSummary, install };
 }

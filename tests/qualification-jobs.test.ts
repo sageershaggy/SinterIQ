@@ -399,18 +399,24 @@ test('scopes pick their leads, never archived ones; one job runs per project and
       assert.equal(archived.status, 200, archived.text);
     }
     const state = await f.state(project);
-    assert.deepEqual(state.counts, { requalify: 1, raw: 1, total: 3 });
+    assert.deepEqual(state.counts, { requalify: 1, raw: 1, total: 3, qualified: 1 });
     assert.equal(state.ready, true);
     assert.equal(state.can_start_project_wide, true);
 
-    const expected: Record<string, string[]> = {
-      stale: ['Stale Pumps'],
-      raw: ['Raw Pumps'],
-      stale_and_raw: ['Raw Pumps', 'Stale Pumps'],
-      all: ['Current Pumps', 'Raw Pumps', 'Stale Pumps'],
+    // Every lead means every lead that is not already Qualified on this training, unless the
+    // qualified ones are asked for explicitly (Phase 3 R7: no repeat work on a current result).
+    const expected: Record<string, [object, string[]]> = {
+      stale: [{ scope: 'stale' }, ['Stale Pumps']],
+      raw: [{ scope: 'raw' }, ['Raw Pumps']],
+      stale_and_raw: [{ scope: 'stale_and_raw' }, ['Raw Pumps', 'Stale Pumps']],
+      all: [{ scope: 'all' }, ['Raw Pumps', 'Stale Pumps']],
+      all_with_qualified: [
+        { scope: 'all', include_qualified: true },
+        ['Current Pumps', 'Raw Pumps', 'Stale Pumps'],
+      ],
     };
-    for (const [scope, leads] of Object.entries(expected)) {
-      const started = await f.start(project, { scope });
+    for (const [scope, [body, leads]] of Object.entries(expected)) {
+      const started = await f.start(project, body);
       assert.equal(started.status, 201, scope + ': ' + started.text);
       const job = (started.body as QualificationJobState).job!;
       assert.deepEqual(names(f.items(job.id)).sort(), leads, scope);
@@ -541,7 +547,11 @@ test('requalifying every lead redoes current results once, skipping only leads q
     const second = await f.lead(project, 'Second Pumps');
     await f.qualify(project, first);
     await f.qualify(project, second);
-    const started = await f.start(project, { scope: 'all' });
+    // Both are Qualified on this training, so "every lead" leaves them alone unless asked.
+    const nothing = await f.start(project, { scope: 'all' });
+    assert.equal(nothing.status, 409, nothing.text);
+    assert.match(nothing.body.error, /already Qualified on this training/);
+    const started = await f.start(project, { scope: 'all', include_qualified: true });
     assert.equal(started.status, 201, started.text);
     const job = (started.body as QualificationJobState).job!;
     // Qualified by hand after the job started: already on the rules this job is applying.

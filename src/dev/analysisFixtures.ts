@@ -113,7 +113,7 @@ function state(projectId: number): QualificationJobState {
   const fixture = fixtures.find((f) => f.project_id === projectId);
   return {
     job: fixture ? view(fixture) : null,
-    counts: { requalify: 0, raw: 198, total: 198 },
+    counts: { requalify: 0, raw: 198, total: 198, qualified: 0 },
     ready: true,
     training_version: 10,
     can_start_project_wide: true,

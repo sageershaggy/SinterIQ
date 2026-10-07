@@ -26,6 +26,7 @@ import { callOutcomeLabels } from '../shared/calls';
 import { crmEvents } from './LeadComments';
 import { QuickDecisionCard } from './QuickDecision';
 import { ActivityLog, ContactsCard, RunFindings, type LogEvent } from './LeadInsight';
+import { ResearchTrail } from './ResearchTrail';
 
 /** What this record calls each field a research pass can fill. */
 const researchableLabels: Record<ResearchableField, string> = {
@@ -238,8 +239,8 @@ function ResearchSection({ lead, research }: { lead: Lead; research: ResearchCon
             for it; everything else is reported back instead of recorded.
             {!lead.website &&
               (lead.contact_email
-                ? ' With no website on record, the domain of the contact email is checked first (never a free-mail or provider domain), then up to three candidate domains; one is kept only if its page names the company.'
-                : ' With no website on record, up to three candidate domains are fetched and one is kept only if its page names the company.')}
+                ? ' With no website on record, the domain of the contact email is checked first (never a free-mail or provider domain), then the web is searched (when web search is on in Settings) and suggested and likely addresses are tried; one is kept only if its page names the company.'
+                : ' With no website on record, the web is searched (when web search is on in Settings) and suggested and likely addresses are tried; one is kept only if its page names the company.')}
             {running && ' Pages are fetched one at a time, so this can take a minute.'}
           </p>
         </section>
@@ -297,6 +298,19 @@ function ResearchSection({ lead, research }: { lead: Lead; research: ResearchCon
               </ul>
             </div>
           )}
+          {!!outcome.opportunities?.length && (
+            <div className="company-gaps">
+              <strong>Signs of an opportunity for your offering</strong>
+              <ul>
+                {outcome.opportunities.map((item, index) => (
+                  <li key={index}>
+                    <em>{item.rule}</em> — “{item.quote}”
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <ResearchTrail searches={outcome.searches} pages={outcome.pages_read} />
           {!!applied.length && lead.stale && (
             <div className="inline-notice">
               <Sparkles size={17} />
@@ -702,6 +716,10 @@ export function CompanyOverview({
                   </span>
                 </p>
               )}
+              <ResearchTrail
+                searches={researchedFirst?.searches}
+                pages={latest.result.pages_read}
+              />
             </>
           ) : (
             // An empty card is where the next step belongs, not a sentence about it.

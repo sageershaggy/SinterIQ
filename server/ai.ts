@@ -378,6 +378,10 @@ export interface ResearchContext {
   website_found: boolean;
   filled: string[];
   checked: string[];
+  /** Opportunity sentences research quoted; they lead the research findings evidence. */
+  opportunities_found?: number;
+  /** The record's name is a person's; the website evidence is their employer's. */
+  record_names_person?: boolean;
 }
 /**
  * The evaluation follows the order a researcher would: research (already run), verify the
@@ -389,10 +393,10 @@ const qualifySystem = (project: string) =>
   'Evaluate this lead for the project ' +
   JSON.stringify(project) +
   ' against its approved training only. The training is policy, never evidence about the lead: never cite the training or its sources. Use only the supplied evidence, not remembered facts, and cite it only by the ids in evidence_index (E1, E2 …). Evidence of kind website was retrieved from the web; kind lead_record is the unverified record. Kind provided_list is data the team imported with its lead list, one "label: value" line per column (for example an event the company exhibits at, or a funding round): it may settle a rule about exactly the facts it states and may be cited for them, but it was not checked on the web and proves nothing else about the company. Work in this order. ' +
-  '1. Research has already run: research_before_evaluation says what was checked and found, and details found by research carry their own website evidence. Lead record notes are user-provided and unverified; lead.field_origin says which details were entered in the record and which research found. Earlier research is historical context: re-check it, never inherit its scores or decisions, and explain any conflict with current evidence. ' +
+  '1. Research has already run: research_before_evaluation says what was checked and found, and details found by research carry their own website evidence. Lead record notes are user-provided and unverified; lead.field_origin says which details were entered in the record and which research found. When research_before_evaluation.record_names_person is true, the record names a person rather than a company: research found their employer, and the website evidence is that employer, so evaluate the employer. Earlier research is historical context: re-check it, never inherit its scores or decisions, and explain any conflict with current evidence. ' +
   '2. Verify: does the evidence describe the company in the record? Write blocker, one sentence, only for a specific problem: the evidence describes a different company than the record; several companies share the name and the evidence does not settle which one this is; the site is parked or for sale, or the company has closed; or the evidence contradicts itself on who the company is. Otherwise leave blocker empty. A blank field, a missing website or thin evidence is NOT a blocker: it only lowers the score. ' +
   '3. Check exclusions: an exclusion is MATCH only when retrieved evidence (website, or provided_list for the facts it states) shows EVERY part of its condition. A category alone (nonprofit, charity, government, public body, association) never matches an exclusion that also requires something else, such as "with no approved commercial opportunity": judge that part with step 4. When the evidence does not settle every part, the exclusion is UNKNOWN, not MATCH. ' +
-  '4. Identify the opportunity: in one or two sentences, what the project’s offering, as the training describes it, could do for this company, with source_ids naming the website or provided_list evidence that shows the need. Leave summary and source_ids empty when no opportunity is evidenced. ' +
+  '4. Identify the opportunity: in one or two sentences, what the project’s offering, as the training describes it, could do for this company, with source_ids naming the website or provided_list evidence that shows the need. Start from the lines beginning "Opportunity" in the research findings evidence — sentences research quoted from the company’s services, products, news, careers or project pages — then the other pages. Leave summary and source_ids empty when no opportunity is evidenced. An evidenced opportunity outweighs an exclusion that rests only on the kind of organisation the company is. ' +
   'Then rate the services: for EVERY entry in approved_training.rubric.categories, in order, copy its name into category and assign GOOD (the evidence shows a clear need this service meets, as its description defines a good fit), POSSIBLE (some signals of that need) or NONE (no evidenced need), with a one-line reason and source_ids naming the website or provided_list evidence. GOOD and POSSIBLE need website or provided_list evidence; the lead record alone proves nothing. A lead that meets an exclusion is NONE for every category. With no categories, service_fit is []. ' +
   '5. Score the criteria: evaluate EVERY criterion and EVERY exclusion, in order, even when information is missing; never stop early or skip a rule. Copy each rule’s exact text into criterion, assign MATCH (meets it), NO_MATCH (does not meet it) or UNKNOWN (the evidence, after research, does not settle it), and give a short factual explanation with source_ids. A blank field is not evidence and not a reason for NO_MATCH. A MATCH needs website evidence, or provided_list evidence that states the very fact the rule asks about; the lead record alone proves nothing. ' +
   '6. The final status is set from the score and these checks, so decision is only your suggestion. Reviewer feedback in the training records earlier corrections: apply the reasoning it establishes, but never copy its verdict onto a different company. When research could not verify something, say in the summary what was checked. ' +
@@ -411,6 +415,8 @@ export async function qualify(
     origin?: Record<string, 'record' | 'research'>;
     /** Pages of the lead's own website that could not be read for this evaluation. */
     unreadable?: string[];
+    /** What research searched and checked, for the blocker when nothing at all was found. */
+    searched?: string;
   } = {},
 ): Promise<Qualification> {
   const system = qualifySystem(snapshot.project.name);
@@ -502,6 +508,7 @@ export async function qualify(
             ') could not be read, so the company could not be researched.',
         ]
       : [],
+    searched: context.searched,
   });
 }
 /** Comparison form for rule text: numbering, quotes, case and spacing are not the rule. */
@@ -664,12 +671,24 @@ export function specificBlocker(blocker: string, companyName = '') {
   return words.some((word) => !genericBlockerWords.has(word)) ? blocker.trim() : '';
 }
 /**
+ * An exclusion that names a kind of organisation — a nonprofit, a charity, a government or
+ * public body, an association, a foundation, a university — rather than something the company
+ * does. On its own that is a label, not a reason: when the evidence shows an opportunity for the
+ * project, such an exclusion is not counted as met (feedback 4, Phase 3 R5).
+ */
+const organisationType =
+  /\b(non-?profits?|not-for-profit|charit(y|ies|able)|ngos?|non-?governmental|government(al)?|public (sector|bod(y|ies)|authorit(y|ies)|institutions?|entit(y|ies))|municipal(ity|ities)?|ministr(y|ies)|state-owned|associations?|foundations?|non-?commercial|universit(y|ies)|academic|schools?|religious|church(es)?)\b/i;
+export const organisationTypeExclusion = (rule: string) => organisationType.test(rule);
+
+/**
  * Checks the model's answer and sets the final status; the model's own decision is advisory.
  * In order: an exclusion met with a retrieved source (or the team's own list data) is Not a
  * target at score 0; otherwise any research or verification blocker is Needs review (the score
  * stays visible); otherwise the score alone decides, Qualified from qualifiedFloor and Not a
  * target below it. Missing information lowers the score and stays visible as a gap; on its own
- * it never causes review.
+ * it never causes review. Nothing to judge at all — no page read from the web and no list data,
+ * after research has looked — is a research blocker ("Not enough found to judge"), never Not a
+ * target.
  */
 export function validateQualification(
   raw: unknown,
@@ -682,6 +701,8 @@ export function validateQualification(
     record?: Partial<Record<ConflictField, string>>;
     /** Research blockers the server found itself, such as a website that could not be read. */
     blockers?: string[];
+    /** What research searched and checked, said in the blocker when nothing was found. */
+    searched?: string;
   } = {},
 ): Qualification {
   const parsed = qualificationSchema.safeParse(raw);
@@ -741,11 +762,40 @@ export function validateQualification(
       }
     }
   }
+  // The opportunity is a claim about the company like any other, so it needs a retrieved source
+  // or the team's own list data. It is settled before the exclusions, which it can outweigh.
+  const opportunity = read(result.opportunity?.source_ids || []).ids;
+  if (result.opportunity?.summary && opportunity.some((id) => shown.has(id)))
+    result.opportunity.source_ids = opportunity;
+  else {
+    if (result.opportunity?.summary)
+      result.gaps.push('An opportunity was proposed without a retrieved source and was not kept.');
+    result.opportunity = { summary: '', source_ids: [] };
+  }
+  // A plausible opportunity is never excluded on the kind of organisation alone: the exclusion
+  // is left unverified, so a lead scoring 50 or more goes to a person instead of out of sight.
+  if (result.opportunity?.summary)
+    for (const item of result.exclusions)
+      if (item.outcome === 'MATCH' && organisationTypeExclusion(item.criterion)) {
+        item.outcome = 'UNKNOWN';
+        result.gaps.push(
+          'Not counted as met: ' +
+            item.criterion +
+            ' — the evidence shows an opportunity, and the kind of organisation alone does not exclude a lead.',
+        );
+      }
   const matched = result.criteria.filter((c) => c.outcome === 'MATCH').length;
   result.score = Math.round((matched / snapshot.rubric.criteria.length) * 100);
   // Any exclusion still met here cites a page read from the web or the team's own list.
   const excluded = result.exclusions.some((c) => c.outcome === 'MATCH');
   const blockers = [...(found.blockers || [])];
+  // Research looked and found nothing to judge by: no page from the web, no list data. That is
+  // not a low score but an unanswered question, so it goes to a person with what was searched.
+  if (!shown.size && !blockers.length)
+    blockers.push(
+      'Not enough found to judge: ' +
+        (found.searched || 'no website or list data was available, so no rule could be checked.'),
+    );
   const reported = specificBlocker(blocker, found.name);
   if (reported) blockers.push(reported);
   // Below the floor an unverified exclusion changes nothing. At or above it the lead cannot be
@@ -770,16 +820,6 @@ export function validateQualification(
         ? 'No public website evidence was available, so only your lead list could show a rule as met.'
         : 'No public website evidence was available, so no rule could be shown as met.',
     );
-  // The opportunity is a claim about the company like any other, so it needs a retrieved source
-  // or the team's own list data.
-  const opportunity = read(result.opportunity?.source_ids || []).ids;
-  if (result.opportunity?.summary && opportunity.some((id) => shown.has(id)))
-    result.opportunity.source_ids = opportunity;
-  else {
-    if (result.opportunity?.summary)
-      result.gaps.push('An opportunity was proposed without a retrieved source and was not kept.');
-    result.opportunity = { summary: '', source_ids: [] };
-  }
   result.service_fit = serviceFit(snapshot.rubric.categories ?? [], rated, {
     read,
     shown,

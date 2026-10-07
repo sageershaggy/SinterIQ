@@ -16,6 +16,7 @@ import type { CallOutcome } from '../../shared/types';
 import { shellRoutes } from './shell-fixtures';
 import { contactEnrollments, emailRoutes, emailWrites } from './emailFixtures';
 import { settingsRoutes, settingsWrites } from './settingsFixtures';
+import { harnessPagesRead, harnessSearches } from './researchFixtures';
 import { importWrite } from './importFixtures';
 import { analysisRoutes, analysisWrite } from './analysisFixtures';
 import { libraryRoutes } from './libraryFixtures';
@@ -501,7 +502,9 @@ const researched = {
           filled: ['website', 'industry', 'city'],
           contacts_added: 3,
           checked: ['Candidate websites checked: amusement-whitewater.example.com.'],
+          searches: harnessSearches(site),
         },
+        pages_read: harnessPagesRead(site),
       },
     },
   ],

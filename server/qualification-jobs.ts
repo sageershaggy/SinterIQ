@@ -94,6 +94,11 @@ const startSchema = z
   .object({
     scope: z.enum(qualificationJobScopes),
     lead_ids: z.array(z.number().int().positive()).min(1).max(maxJobLeadIds).optional(),
+    /**
+     * 'all' only: also redo leads already Qualified on the current training. Off by default —
+     * their research and verdict are current, and redoing them spends credits for nothing.
+     */
+    include_qualified: z.boolean().default(false),
   })
   .strict()
   .refine((input) => (input.scope === 'ids') === Boolean(input.lead_ids), {
@@ -190,13 +195,20 @@ export function createQualificationJobs(deps: {
   }
 
   /** The non-archived leads a scope covers, most promising first so they are current soonest. */
-  function scopeLeads(project: Project, scope: QualificationJobScope, ids: number[]) {
+  function scopeLeads(
+    project: Project,
+    scope: QualificationJobScope,
+    ids: number[],
+    includeQualified = false,
+  ) {
     const where = ['l.project_id=?', 'l.archived_at IS NULL'];
     const params: number[] = [project.id];
     const state = qualificationStateSql(project);
     if (scope === 'stale') where.push(state + "='REQUALIFY'");
     else if (scope === 'raw') where.push(state + "='RAW'");
     else if (scope === 'stale_and_raw') where.push(state + " IN ('REQUALIFY','RAW')");
+    // A lead already Qualified on this training keeps its result unless asked for explicitly.
+    else if (scope === 'all' && !includeQualified) where.push(state + "<>'QUALIFIED'");
     else if (scope === 'ids') {
       where.push('l.id IN (' + ids.map(() => '?').join(',') + ')');
       params.push(...ids);
@@ -227,11 +239,21 @@ export function createQualificationJobs(deps: {
           409,
           'A qualification job is already running in this project. Stop it or wait for it to finish.',
         );
-      const leads = scopeLeads(project, input.scope, [...new Set(input.lead_ids || [])]);
+      const leads = scopeLeads(
+        project,
+        input.scope,
+        [...new Set(input.lead_ids || [])],
+        input.include_qualified,
+      );
       if (!leads.length)
         throw input.scope === 'ids'
           ? new HttpError(404, 'No matching leads in this project.')
-          : new HttpError(409, 'There are no ' + scopeLabels[input.scope] + ' to qualify.');
+          : input.scope === 'all'
+            ? new HttpError(
+                409,
+                'Every lead is already Qualified on this training. Include the qualified leads to redo them anyway.',
+              )
+            : new HttpError(409, 'There are no ' + scopeLabels[input.scope] + ' to qualify.');
       const at = now();
       const jobId = Number(
         db
@@ -600,7 +622,12 @@ export function createQualificationJobs(deps: {
     const ready = Boolean(project.active_version && project.revision === project.trained_revision);
     return {
       job: job ? view(job, viewer) : null,
-      counts: { requalify: counts.requalify, raw: counts.raw, total: counts.total },
+      counts: {
+        requalify: counts.requalify,
+        raw: counts.raw,
+        total: counts.total,
+        qualified: counts.qualified,
+      },
       ready,
       training_version: project.active_version,
       can_start_project_wide: viewer.role === 'admin',

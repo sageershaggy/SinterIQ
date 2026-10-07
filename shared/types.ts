@@ -168,6 +168,8 @@ export interface Qualification {
   conflicts?: DetailConflict[];
   /** The research pass that ran (or was reused) before this evaluation. */
   research?: import('./research').QualificationResearch;
+  /** The company pages read as evidence for this run, with their category (server/crawl.ts). */
+  pages_read?: import('./research').PageRead[];
 }
 export interface Evidence {
   id: string;
@@ -380,8 +382,16 @@ export interface ResearchOutcome {
   contacts_added?: number;
   /** Sentences from the site that bear on the qualification rules. */
   facts?: import('./research').ResearchFact[];
+  /** Sentences from the site that show an opportunity for the project's offering. */
+  opportunities?: import('./research').ResearchFact[];
   /** The company pages that were read. */
   pages?: string[];
+  /** The same pages with the category each was read as (server/crawl.ts). */
+  pages_read?: import('./research').PageRead[];
+  /** Web searches run for this pass, with the addresses they returned (server/web-search.ts). */
+  searches?: import('./research').SearchRecord[];
+  /** The record named a person, so research looked for their employer. */
+  person_record?: boolean;
 }
 /** One project's mailbox. The password is never returned to the browser. */
 export interface EmailSettings {

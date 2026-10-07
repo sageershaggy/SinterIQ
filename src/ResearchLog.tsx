@@ -13,6 +13,7 @@ import {
 import { api, safeHref } from './api';
 import { leadLink } from './navigation';
 import { Alert, Badge, Empty, Spinner } from './ui';
+import { ResearchTrail } from './ResearchTrail';
 import './ResearchLog.css';
 
 const kinds: Array<{ id: 'all' | ResearchLogKind; label: string }> = [
@@ -103,6 +104,7 @@ function ResearchDetails({ entry }: { entry: ResearchPassEntry }) {
           ))}
         </dl>
       )}
+      <ResearchTrail searches={entry.searches} pages={entry.pages_read} />
       {entry.tried.length > 0 && <p className="log-meta-line">Checked: {entry.tried.join(', ')}</p>}
       {entry.notes.length > 0 && (
         <ul className="log-notes">

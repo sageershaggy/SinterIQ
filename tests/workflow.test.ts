@@ -523,7 +523,7 @@ test('malformed and incomplete-rule AI results cannot change leads; an invented 
     f.dispose();
   }
 });
-test('low confidence and a missing website lower the score; they do not route to review', async () => {
+test('low confidence never routes to review; nothing found at all does, saying what was searched', async () => {
   const f = fixture(async (...args) => {
     const result = (await generated(...args)) as Qualification;
     if (!result.criteria) return result; // a research prompt, answered by the stub
@@ -544,11 +544,14 @@ test('low confidence and a missing website lower the score; they do not route to
     );
     assert.equal(response.status, 200);
     const result = response.body.result as Qualification;
-    // The record alone proves no rule, so nothing is met: Not a target, with the reasons shown.
-    assert.equal(result.decision, 'NOT_A_TARGET');
+    // The record alone proves no rule, so nothing is met. With no page and no list data after
+    // research, that is not a verdict (Phase 3 R6): one blocker, saying what was looked for.
+    // Low confidence is reported, never a reason of its own.
+    assert.equal(result.decision, 'NEEDS_REVIEW');
     assert.equal(result.score, 0);
     assert.equal(result.confidence, 50);
-    assert.deepEqual(result.blockers, []);
+    assert.equal(result.blockers?.length, 1, JSON.stringify(result.blockers));
+    assert.match(result.blockers![0], /^Not enough found to judge: no company website could be verified/);
     assert.ok(result.gaps.some((g) => g.startsWith('No public website evidence was available')));
     assert.ok(result.gaps.some((g) => g.startsWith('No retrieved source for:')));
   } finally {
@@ -1455,7 +1458,8 @@ test('an unverifiable website is left blank, and the notes say which way it fail
     assert.equal(first.website, '');
     assert.deepEqual(first.applied, []);
     assert.deepEqual(first.proposals, []);
-    assert.deepEqual(first.tried, ['parked-holding.example.com']);
+    // The model's candidate first, then the likely addresses for the name (none answers here).
+    assert.deepEqual(first.tried, ['parked-holding.example.com', 'parkedpumps.com', 'parked-pumps.com']);
     assert.ok(
       first.notes.some(
         (note) =>
@@ -1474,7 +1478,8 @@ test('an unverifiable website is left blank, and the notes say which way it fail
     const none = await f.post(silentBase + '/research', {});
     assert.equal(none.status, 200, JSON.stringify(none.body));
     const second = none.body as ResearchOutcome;
-    assert.deepEqual(second.tried, []);
+    // Nothing proposed, so only the likely addresses for the name were tried, and none answered.
+    assert.deepEqual(second.tried, ['silentvalveworks.com', 'silent-valve-works.com']);
     assert.deepEqual(second.applied, []);
     assert.equal(second.discovered, false);
     assert.ok(

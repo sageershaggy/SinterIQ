@@ -1,0 +1,82 @@
+/* Where research looked: web searches and pages read (src/ResearchTrail.tsx). */
+.research-trail {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #4b5545;
+}
+.research-trail-block > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: #2f3a2b;
+}
+.research-trail ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.research-trail li {
+  overflow-wrap: anywhere;
+}
+.research-trail .research-query {
+  font-weight: 600;
+}
+.research-trail .research-outcome {
+  color: #6c7564;
+}
+.research-trail details {
+  margin-top: 2px;
+}
+.research-trail summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #567845;
+}
+/* The pages list folds under a heading styled like the searches' heading. */
+.research-trail .research-pages-block > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2f3a2b;
+  overflow-wrap: anywhere;
+}
+.research-trail .research-pages-block[open] > summary {
+  margin-bottom: 6px;
+}
+.research-trail .research-results {
+  font-size: 12px;
+  color: #6c7564;
+}
+.research-trail .research-pages {
+  list-style: none;
+  padding-left: 0;
+  display: grid;
+  gap: 3px;
+}
+.research-trail .research-pages li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+.research-trail .research-page-kind {
+  flex: 0 0 auto;
+  min-width: 150px;
+  font-size: 12px;
+  color: #6c7564;
+}
+.research-trail .research-pages a {
+  min-width: 0;
+  color: #3f6230;
+}
+@media (max-width: 640px) {
+  .research-trail .research-page-kind {
+    min-width: 0;
+  }
+}

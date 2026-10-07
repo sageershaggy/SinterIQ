@@ -4,6 +4,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import ipaddr from 'ipaddr.js';
 import { HttpError } from './validation';
+import { categorize } from './crawl';
 
 export function isPublicIp(address: string): boolean {
   try {
@@ -178,10 +179,32 @@ export function researchLinks(
   }
   return [...links].slice(0, limit);
 }
+/**
+ * Same-site links a crawl may choose from (server/crawl.ts): every link to a page of a known
+ * kind — about, services, products, industries, careers, news, case studies, contact — in the
+ * order the page carries them. The crawl, not this list, decides which are read.
+ */
+export function siteLinks(html: string, base: string, limit = 40): string[] {
+  const links = new Set<string>();
+  const origin = new URL(base);
+  for (const match of html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
+    if (links.size >= limit) break;
+    try {
+      const url = new URL(match[1].replace(/&amp;/g, '&'), origin);
+      url.hash = '';
+      if (url.origin === origin.origin && url.href !== origin.href && categorize(url.href) !== 'other')
+        links.add(url.href);
+    } catch {
+      /* Ignore malformed links in untrusted HTML. */
+    }
+  }
+  return [...links];
+}
 export interface WebsitePage {
   url: string;
   content: string;
   truncated: boolean;
+  /** Same-site links to pages of a known kind (siteLinks), for the crawl to choose from. */
   links?: string[];
   /** Same-site contact, team, imprint and about pages, for finding the company's people. */
   contact_links?: string[];
@@ -220,7 +243,7 @@ export async function fetchWebsite(raw: string): Promise<WebsitePage> {
     url: response.url,
     content: text.slice(0, 30000),
     truncated: text.length > 30000,
-    links: researchLinks(response.text, response.url),
+    links: siteLinks(response.text, response.url),
     contact_links: researchLinks(response.text, response.url, contactLinkPattern, 3),
   };
 }
