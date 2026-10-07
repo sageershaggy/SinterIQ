@@ -183,19 +183,44 @@ export function fitBandFor(score: number | null) {
   return fitBands.find((band) => score >= band.min) || fitBands[fitBands.length - 1];
 }
 
-/** A training document upload attempt, kept whether it was read or refused. */
+/**
+ * A training document upload attempt, kept whether it was read or refused. READING is an attempt
+ * still being read: it is not logged yet and not in the library, and it carries a negative id.
+ */
 export interface SourceUpload {
   id: number;
   project_id: number;
   source_id: number | null;
   filename: string;
   size: number;
-  status: 'READ' | 'FAILED';
+  status: 'READ' | 'FAILED' | 'READING';
   characters: number;
   words: number;
   reason: string;
   created_at: string;
   created_by: string;
+  /** SHA-256 of the uploaded file; '' for attempts logged before it was kept. */
+  file_sha256?: string;
+  /** The library source this attempt was refused as a copy of, while that source exists. */
+  duplicate_of?: number | null;
+  /**
+   * The library source that holds this attempt's content now: the one it was read into, the one
+   * it duplicated, or a later upload of the same file. Null when its content is not in the library.
+   */
+  in_library?: { id: number; title: string } | null;
+}
+
+/**
+ * A library source that repeats an earlier one. 'content': the same file or the same text, which
+ * "Remove duplicates" removes, keeping the oldest copy. 'name': the same title with different
+ * content, pointed out only, since it may be a newer edition.
+ */
+export interface SourceDuplicate {
+  id: number;
+  title: string;
+  created_at: string;
+  kind: 'content' | 'name';
+  duplicate_of: { id: number; title: string; created_at: string };
 }
 
 /** How a published training version played out across the leads qualified against it. */

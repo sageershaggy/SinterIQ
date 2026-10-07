@@ -17,6 +17,7 @@ import { shellRoutes } from './shell-fixtures';
 import { contactEnrollments, emailRoutes, emailWrites } from './emailFixtures';
 import { settingsRoutes, settingsWrites } from './settingsFixtures';
 import { importWrite } from './importFixtures';
+import { libraryRoutes } from './libraryFixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -688,6 +689,8 @@ const signedInAs = {
 };
 
 const routes: Array<[RegExp, (route: string) => unknown]> = [
+  // The training library's copies and reads; ?library-copies swaps in the duplicated library.
+  ...libraryRoutes({ project, sources, versions, uploads }),
   ...shellRoutes,
   ...settingsRoutes,
   [

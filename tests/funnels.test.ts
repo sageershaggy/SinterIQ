@@ -1833,6 +1833,11 @@ test('the funnel list searches, filters and sorts by what the server counted', (
       name: 'Valve follow-up',
       audience: 'Valve makers',
       fit_band: 'EMAIL',
+      steps: [
+        { delay_days: 0, subject: 'Hello', body: '' },
+        { delay_days: 3, subject: 'Following up', body: '' },
+        { delay_days: 7, subject: 'Closing the loop', body: '' },
+      ],
       status: 'ACTIVE',
       enrolled_count: 10,
       queued_count: 4,
@@ -1876,8 +1881,26 @@ test('the funnel list searches, filters and sorts by what the server counted', (
   assert.deepEqual(ids({ status: 'COMPLETED' }), [3]);
   assert.deepEqual(ids({ status: 'PAUSED' }), [4]);
   assert.deepEqual(ids({ status: 'DRAFT' }), [1]);
-  assert.deepEqual(ids({ type: 'HIGH' }), [1]);
-  assert.deepEqual(ids({ type: 'ANY' }), [4, 3]);
+  // Type: one email, or a sequence with follow-ups.
+  assert.deepEqual(ids({ type: 'SEQUENCE' }), [2]);
+  assert.deepEqual(ids({ type: 'SINGLE' }), [4, 3, 1]);
+  // Campaign: the fit-score band the composer files the funnel under.
+  assert.deepEqual(ids({ campaign: 'HIGH' }), [1]);
+  assert.deepEqual(ids({ campaign: 'EMAIL' }), [2]);
+  assert.deepEqual(ids({ campaign: 'ANY' }), [4, 3]);
+  assert.deepEqual(ids({ search: 'high-quality' }), [1]);
+  assert.deepEqual(ids({ type: 'SINGLE', campaign: 'ANY', status: 'PAUSED' }), [4]);
+  // Performance bands read the server's rates; nothing sent has no rate and matches neither.
+  assert.deepEqual(ids({ performance: 'REPLY_RATE_HIGH' }), [3, 2]);
+  assert.deepEqual(ids({ performance: 'OPEN_RATE_HIGH' }), [2]);
+  assert.deepEqual(ids({ performance: 'NO_REPLIES' }), []);
+  assert.deepEqual(
+    filterFunnels(
+      [make(5, { counts: { enrolled: 3, sent: 3, open_rate: 0, reply_rate: 0 } })],
+      { ...emptyFunnelFilters, performance: 'NO_REPLIES' },
+    ).map((funnel) => funnel.id),
+    [5],
+  );
   assert.deepEqual(funnelAudiences(funnels), ['', 'Pump manufacturers', 'Valve makers']);
   assert.deepEqual(ids({ audience: '' }), [3]);
   assert.deepEqual(ids({ audience: 'Pump manufacturers' }), [4, 1]);
@@ -1903,5 +1926,14 @@ test('the funnel list searches, filters and sorts by what the server counted', (
       sort: 'OLDEST',
     }),
     2,
+  );
+  assert.equal(
+    activeFunnelFilterCount({
+      ...emptyFunnelFilters,
+      type: 'SEQUENCE',
+      campaign: 'HIGH',
+      performance: 'OPEN_RATE_HIGH',
+    }),
+    3,
   );
 });

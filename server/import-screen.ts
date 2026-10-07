@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { AiConfig, Generate } from './ai';
 import type { Rubric } from '../shared/types';
@@ -69,6 +70,39 @@ function screenRow(lead: ImportLead, id: number) {
       ]),
     ),
   };
+}
+
+/**
+ * What a row is, for the screen: a SHA-256 of every field either screen (the chat model or Jev)
+ * reads, so two rows with the same fingerprint are the same question and get the same answer
+ * (server/screen-cache.ts). Full values rather than the shortened ones the model is sent, so a
+ * difference anywhere makes a different row. The contact's name, email and phone stay out, as
+ * they stay out of the screen; only the email's domain, which Jev reads, is part of it. Spacing
+ * and the order of the list's columns are not the row.
+ */
+export function screenFingerprint(lead: ImportLead) {
+  const clean = (value: string | undefined) => (value ?? '').replace(/\s+/g, ' ').trim();
+  const domain = /@([^@\s]+)$/.exec(clean(lead.contact_email))?.[1]?.toLowerCase() ?? '';
+  const listed = Object.entries(lead.list_data ?? {})
+    .map(([label, value]) => [clean(label), clean(String(value))])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify([
+        clean(lead.name),
+        clean(lead.website),
+        clean(lead.industry),
+        clean(lead.country),
+        clean(lead.city),
+        clean(lead.employee_count),
+        clean(lead.contact_role),
+        clean(lead.notes),
+        domain,
+        listed,
+      ]),
+    )
+    .digest('hex');
 }
 
 const verdictSchema = z.object({
@@ -154,7 +188,13 @@ export async function screenRows(
     exclusions: rubric.exclusions,
   };
   const ids = new Set(rows.map((row) => row.id));
-  const answers = readVerdicts(await call(config, screenSystem, { training, rows }), ids, rubric);
+  // Temperature 0: the same rows against the same training must come back the same way.
+  const deterministic = { temperature: 0 };
+  const answers = readVerdicts(
+    await call(config, screenSystem, { training, rows }, deterministic),
+    ids,
+    rubric,
+  );
   const missing = rows.filter((row) => !answers.has(row.id)).map((row) => row.id);
   if (missing.length) {
     // Counts only: the rows are the uploader's data, not ours to log.
@@ -172,6 +212,7 @@ export async function screenRows(
         screenSystem +
           ' Your previous answer did not answer every row exactly once. missing_ids lists the rows it left out or answered more than once: answer exactly those rows, once each.',
         { training, rows: rows.filter((row) => asked.has(row.id)), missing_ids: missing },
+        deterministic,
       );
       for (const [id, answer] of readVerdicts(retry, asked, rubric)) answers.set(id, answer);
     } catch {

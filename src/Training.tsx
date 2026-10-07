@@ -17,8 +17,14 @@ import {
   CircleHelp,
 } from 'lucide-react';
 import type { Project, Source, Rubric, ServiceCategory, TrainingSnapshot } from '../shared/types';
-import type { SourceUpload, TrainingGraph } from '../shared/research';
+import type { SourceDuplicate, SourceUpload, TrainingGraph } from '../shared/research';
 import { api, date, json } from './api';
+import {
+  DuplicateFlag,
+  DuplicateSources,
+  NotAddedAgain,
+  ReadingNow,
+} from './TrainingLibraryStatus';
 import { Alert, Badge, Empty, ExternalLink, GrowingTextarea, Modal, Spinner } from './ui';
 import {
   SourceStatus,
@@ -111,6 +117,8 @@ export default function Training({
     [published, setPublished] = useState<TrainingSnapshot | null>(null),
     [trained, setTrained] = useState(false);
   const graphRef = useRef<HTMLElement>(null);
+  // Sources that repeat another, for the flag on each row and "Remove duplicates".
+  const [duplicates, setDuplicates] = useState<SourceDuplicate[]>([]);
   useEffect(() => {
     let cancelled = false;
     api<SourceUpload[]>(base + '/training/uploads')
@@ -120,6 +128,26 @@ export default function Training({
       cancelled = true;
     };
   }, [project.id, project.revision, uploadsKey]);
+  useEffect(() => {
+    let cancelled = false;
+    api<SourceDuplicate[]>(base + '/training/duplicates')
+      .then((data) => !cancelled && setDuplicates(data))
+      .catch(() => !cancelled && setDuplicates([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, project.revision]);
+  // While a document is being read — here or in another tab — check again every few seconds,
+  // and reload the library when a read has finished, so it shows up only once it really is read.
+  const readingNow = uploads.filter((item) => item.status === 'READING').length;
+  const readingBefore = useRef(0);
+  useEffect(() => {
+    if (readingNow < readingBefore.current) onChange();
+    readingBefore.current = readingNow;
+    if (!readingNow) return;
+    const timer = window.setTimeout(() => setUploadsKey((n) => n + 1), 3000);
+    return () => window.clearTimeout(timer);
+  }, [readingNow, uploads]);
   useEffect(() => {
     let cancelled = false;
     api<TrainingGraph>(base + '/training/graph')
@@ -416,6 +444,22 @@ export default function Training({
               PDFs
             </p>
             {busy === 'upload' && <Spinner text="Reading your document…" />}
+            {busy !== 'upload' && <ReadingNow uploads={uploads} />}
+            <DuplicateSources
+              duplicates={duplicates}
+              busy={!!busy}
+              onRemove={async (ids) => {
+                await api(base + '/training/duplicates/remove', {
+                  method: 'POST',
+                  body: json({ revision: project.revision, ids }),
+                });
+                onChange();
+                notify(
+                  (ids.length === 1 ? 'One duplicate source' : ids.length + ' duplicate sources') +
+                    ' removed. The oldest copy of each is kept.',
+                );
+              }}
+            />
             {loading ? (
               <Spinner text="Loading source library…" />
             ) : sources.length ? (
@@ -444,6 +488,7 @@ export default function Training({
                         publishedHashes={publishedHashes}
                         activeVersion={project.active_version}
                       />
+                      <DuplicateFlag duplicate={duplicates.find((item) => item.id === source.id)} />
                       <span className="source-date">Added {date(source.created_at)}</span>
                     </div>
                     <button
@@ -465,6 +510,7 @@ export default function Training({
               </Empty>
             )}
             <UploadProblems uploads={uploads} sources={sources} />
+            <NotAddedAgain uploads={uploads} />
             <div className="source-library-footer">
               <Globe size={15} />
               <ExternalLink url={project.website} />

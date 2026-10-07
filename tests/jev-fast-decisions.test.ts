@@ -348,3 +348,47 @@ test('with a Jev key the import quick screen runs on Jev, not the chat model', a
     f.dispose();
   }
 });
+
+test('Jev screens a row once per training version; screening the same rows again reuses it', async () => {
+  // Answers drift between calls, as a model's can: only the remembered verdict keeps them steady.
+  let calls = 0;
+  const f = fixture(() => (++calls === 1 ? allMet() : { ...allMet(), x1: { type: 'choice', choice: 'applies', probabilities: { applies: 0.95 } } }));
+  try {
+    await f.setup();
+    const project = await publishedProject(f);
+    await f.put('/settings/jev', { api_key: jevKey });
+    const row = {
+      name: 'Rotor Pump Works',
+      website: '',
+      country: '',
+      city: '',
+      industry: 'Pump manufacturing',
+      employee_count: '',
+      contact_name: 'Private Person',
+      contact_role: '',
+      contact_email: 'private@rotor.example',
+      contact_phone: '',
+      notes: '',
+    };
+    const screen = async () => {
+      const response = await f.post('/projects/' + project.id + '/leads/import/screen', { rows: [row] });
+      assert.equal(response.status, 200, response.text);
+      return response.body.verdicts as Array<{ verdict: string; reason: string; reused?: boolean }>;
+    };
+    const first = await screen();
+    assert.equal(f.calls.length, 1);
+    const second = await screen();
+    assert.equal(f.calls.length, 1, 'Jev is not asked again about the same row');
+    assert.deepEqual(
+      second.map((v) => [v.verdict, v.reason]),
+      first.map((v) => [v.verdict, v.reason]),
+    );
+    assert.equal(second[0].reused, true);
+    // A different contact person at the same company is the same row for the screen.
+    row.contact_name = 'Someone Else';
+    await screen();
+    assert.equal(f.calls.length, 1);
+  } finally {
+    f.dispose();
+  }
+});

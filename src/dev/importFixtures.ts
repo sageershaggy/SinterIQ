@@ -58,6 +58,8 @@ const rows = Array.from({ length: 120 }, (_, i) => {
       i % 4 ? '' : '=HYPERLINK("x")',
     ],
     duplicate: i === 7 || i === 30 ? { id: 900 + i, name: lead.name + ' LLC' } : null,
+    // The same leads added to the file again: counted once, with the row they repeat.
+    repeat_of: i === 60 || i === 61 ? i - 58 : null,
   };
 });
 const preview: ImportPreview = {
@@ -136,7 +138,13 @@ export async function importWrite(method: string, route: string, init?: RequestI
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
   if (route.endsWith('/screen')) {
     await new Promise((resolve) => setTimeout(resolve, 900));
-    return json({ verdicts: (body.rows as ImportLead[]).map(verdict) });
+    // Every third row was screened before against this training and keeps its verdict.
+    return json({
+      verdicts: (body.rows as ImportLead[]).map((lead, index) => ({
+        ...verdict(lead, index),
+        ...(index % 3 === 0 ? { reused: true } : {}),
+      })),
+    });
   }
   if (route.endsWith('/rows')) {
     const leads = body.leads as ImportLead[];

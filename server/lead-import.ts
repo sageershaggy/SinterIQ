@@ -6,7 +6,8 @@ import { getAiConfig, type Generate } from './ai';
 import { notifyProject } from './notifications';
 import { checkedUrl } from './network';
 import { importLimits, listData, mapImportRows, readImportRows, storedListData } from './import';
-import { screenRows, type ScreenResult } from './import-screen';
+import { screenFingerprint, screenRows, type ScreenResult } from './import-screen';
+import { createScreenCache } from './screen-cache';
 import { HttpError, leadSchema, positiveId } from './validation';
 import {
   screenBatchSize,
@@ -111,6 +112,22 @@ export function findDuplicate(db: DB, projectId: number, lead: { name: string; w
           .get(projectId, value) as { id: number; name: string } | undefined)
       : undefined;
   return byKey('name_key', nameKey(lead.name)) || byKey('website_key', websiteKey(lead.website));
+}
+/**
+ * For each row, the file line of an earlier row in the same file that is the same company by the
+ * import's own matching (name key or website domain), or null. The import would skip that row as
+ * a duplicate of the one before it, so the preview counts it once, the same way every time.
+ */
+export function repeatedRows(leads: ImportLead[], lines: number[]) {
+  const first = new Map<string, number>();
+  return leads.map((lead, i) => {
+    const keys = ['name:' + nameKey(lead.name), 'site:' + websiteKey(lead.website)].filter(
+      (key) => !key.endsWith(':'),
+    );
+    const earlier = keys.map((key) => first.get(key)).find((line) => line !== undefined) ?? null;
+    for (const key of keys) if (!first.has(key)) first.set(key, lines[i]);
+    return earlier;
+  });
 }
 export function insertLead(db: DB, projectId: number, lead: ImportLead) {
   const duplicate = findDuplicate(db, projectId, lead);
@@ -308,6 +325,7 @@ export function installLeadImport(
       const { leads, lines, problems, warnings } = mapImportRows(raw, checkImportLead);
       requireImportable(leads.length, problems);
       const columns = [...new Set(raw.flatMap((row) => Object.keys(row)))].filter(Boolean);
+      const repeats = repeatedRows(leads, lines);
       const preview: ImportPreview = {
         total: raw.length,
         columns,
@@ -317,6 +335,7 @@ export function installLeadImport(
           // Header is line 1, so line n is raw row n - 2.
           cells: columns.map((column) => raw[lines[i] - 2][column] ?? ''),
           duplicate: findDuplicate(db, project.id, lead) || null,
+          repeat_of: repeats[i],
         })),
         problems,
         warnings,
@@ -337,11 +356,14 @@ export function installLeadImport(
     },
   );
 
+  const screenCache = createScreenCache(db);
   /**
    * Quick-screens one batch of rows against the published training. The browser sends the
-   * file in batches so it can show progress and stop; the server keeps nothing. A row that is
-   * already in this project is answered from the project's own duplicate matching and never
-   * reaches the AI.
+   * file in batches so it can show progress and stop. A row that is already in this project is
+   * answered from the project's own duplicate matching and never reaches the AI. A row screened
+   * before against this published version keeps the verdict it got then (server/screen-cache.ts),
+   * and identical rows in one batch are asked about once, so the same rows always give the same
+   * counts. Nothing about the row itself is stored: only its fingerprint and verdict.
    */
   app.post('/api/projects/:projectId/leads/import/screen', screenLimit, async (req, res) => {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
@@ -360,10 +382,16 @@ export function installLeadImport(
       .prepare('SELECT snapshot_json FROM training_versions WHERE project_id=? AND version=?')
       .get(project.id, project.active_version) as { snapshot_json: string };
     const snapshot = JSON.parse(version.snapshot_json) as TrainingSnapshot;
+    const trainingVersion = project.active_version!;
     const verdicts: ScreenVerdict[] = [];
-    const pending: Array<{ index: number; lead: ImportLead }> = [];
+    const fingerprints = input.rows.map(screenFingerprint);
+    const remembered = screenCache.read(project.id, trainingVersion, fingerprints);
+    // One question per distinct row: identical rows in a batch share one answer.
+    const pending = new Map<string, { lead: ImportLead; indexes: number[] }>();
     input.rows.forEach((lead, index) => {
       const duplicate = findDuplicate(db, project.id, lead);
+      const fingerprint = fingerprints[index];
+      const known = remembered.get(fingerprint);
       if (duplicate)
         verdicts[index] = {
           index,
@@ -372,17 +400,30 @@ export function installLeadImport(
           rule: '',
           duplicate,
         };
-      else pending.push({ index, lead });
+      else if (known) verdicts[index] = { index, ...known, reused: true };
+      else {
+        const entry = pending.get(fingerprint) ?? { lead, indexes: [] };
+        entry.indexes.push(index);
+        pending.set(fingerprint, entry);
+      }
     });
-    if (pending.length) {
-      const rows = pending.map((item) => item.lead);
+    if (pending.size) {
+      const asked = [...pending.values()];
+      const rows = asked.map((item) => item.lead);
       // Jev answers each row in about a second; without a Jev key the chat model screens.
       const fast = await options.screenWithJev?.(snapshot.rubric, rows);
       if (!fast && !options.aiReady())
         throw new HttpError(409, 'Configure an AI provider or a Jev key in Settings first.');
       const results =
         fast ?? (await screenRows(getAiConfig(db, options.secrets), snapshot.rubric, rows, options.generate));
-      pending.forEach((item, i) => (verdicts[item.index] = { index: item.index, ...results[i] }));
+      const answers = screenCache.write(
+        project.id,
+        trainingVersion,
+        new Map([...pending.keys()].map((fingerprint, i) => [fingerprint, results[i]])),
+      );
+      for (const [fingerprint, item] of pending)
+        for (const index of item.indexes)
+          verdicts[index] = { index, ...answers.get(fingerprint)! };
     }
     res.json({ verdicts });
   });

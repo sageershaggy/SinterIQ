@@ -147,6 +147,11 @@
   margin: 0;
   color: var(--ink);
 }
+.import-screen-reused {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+}
 .import-group {
   display: flex;
   flex-direction: column;

@@ -2,6 +2,13 @@
 
 Innovista Research AI replaces the previous sales CRM with project-specific training analysis, lead research and evidence-based qualification, plus per-lead calling assignment and call logging. The work is merged to main.
 
+## Phase 3: one copy per document, steady screen counts, funnel filters
+
+- **Training library.** A document already in the library — the same file, or the same text — is refused as "Already in the library as … (added …)" and logged, without being read again; a copy sent while the first is still being read is refused too. The library flags existing copies ("Duplicate of …") and "Remove duplicates" keeps the oldest. A document being read is shown as reading, never as read, and an upload whose content did reach the library is no longer listed as missing. Train AI runs once per project at a time.
+- **Import quick screen.** The same rows give the same verdicts and counts every time: each row's verdict is remembered per published training version (a new version screens afresh), the chat model is asked at temperature 0, and a company repeated within the same file is counted once.
+- **Email funnels.** Filters by status (Completed: started, with leads, nobody left waiting), type (single email or sequence), campaign (high-quality, email or any fit score), audience, creation date and performance (reply rate 10%+, open rate 30%+, replies, no replies yet, opens, bounces, nothing sent), with search and the sort orders.
+- Deploy: additive only — a new table `import_screen_verdicts` and columns `sources.file_sha256`, `source_uploads.file_sha256` and `source_uploads.duplicate_of`, created on startup (existing sources get their file fingerprint from the stored original once).
+
 ## Latest change: feedback 4 — status follows the score, evidence for every claim
 
 - **Status mapping.** The server decides the status from the fit score: 50–100 Qualified, 0–49 Not a target, and an exclusion met with a source is Not a target at 0. Needs review is kept for a research or verification blocker only — a website on record that could not be read, evidence about a different company, or an unverified exclusion on a lead scoring 50 or more — and the lead page lists it. Missing details lower the score instead of sending a lead to review. The old override (no website, confidence under 70, any gap or a score under 70 meant review) is gone. The "C1, C2…" in the training graph are only the numbers of the current criteria.

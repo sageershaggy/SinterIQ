@@ -533,7 +533,7 @@ export function createApp(options: {
   );
   const readUpload = pool(
     3,
-    'That document is already being read.',
+    'Your previous document is still being read. Upload the next one when it has finished.',
     'Three documents are being read already. Please retry when one finishes.',
   );
   app.get('/api/health', (_req, res) => {
@@ -616,6 +616,8 @@ export function createApp(options: {
       filename?: string;
       original?: Buffer;
       mime?: string;
+      /** SHA-256 of the uploaded file's bytes, so the same file is refused before it is read. */
+      fileHash?: string;
     },
     actor: string,
   ) {
@@ -633,12 +635,15 @@ export function createApp(options: {
           'A project supports 30 sources and 120,000 characters of training text. Remove or shorten a source first.',
         );
       const digest = hash(source.content);
-      if (existing.some((item) => item.sha256 === digest))
-        throw new HttpError(409, 'This source content is already attached.');
+      // The same file or the same text is refused, naming the copy already in the library.
+      trainingLibrary.refuseCopy(project.id, {
+        content: source.content,
+        fileHash: source.fileHash,
+      });
       const id = Number(
         db
           .prepare(
-            'INSERT INTO sources (project_id,kind,title,url,content,filename,original,mime,sha256,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO sources (project_id,kind,title,url,content,filename,original,mime,sha256,created_at,file_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
           )
           .run(
             project.id,
@@ -651,6 +656,7 @@ export function createApp(options: {
             source.mime || 'text/plain',
             digest,
             now(),
+            source.fileHash || '',
           ).lastInsertRowid,
       );
       changed(db, project.id);
@@ -734,12 +740,18 @@ export function createApp(options: {
         filename,
         size: req.file.size,
         actor: req.user.name,
+        fileHash: hash(req.file.buffer),
       };
       let content: string;
       let source: { id: number };
       try {
+        // A file already in the library is refused before it is read again, and so is a copy of
+        // one still being read (readOnce): neither takes a reading slot.
+        trainingLibrary.refuseCopy(project.id, { fileHash: attempt.fileHash });
         // Local extraction pool: a provider outage must never block attaching a document.
-        content = await readUpload('document:' + req.user.id, () => readDocument(req.file!));
+        content = await trainingLibrary.readOnce(project.id, attempt, () =>
+          readUpload('document:' + req.user.id, () => readDocument(req.file!)),
+        );
         source = addSource(
           project,
           {
@@ -749,6 +761,7 @@ export function createApp(options: {
             original: req.file.buffer,
             content,
             mime: 'application/octet-stream',
+            fileHash: attempt.fileHash,
           },
           req.user.name,
         ) as { id: number };
@@ -833,8 +846,9 @@ export function createApp(options: {
     if (!snapshot.sources.length)
       throw new HttpError(400, 'Attach at least one source before analyzing training.');
     const config = getAiConfig(db, secrets);
-    const result = await single('training:' + project.id, () =>
-      analyzeTraining(config, snapshot, callAi),
+    // One Train AI per project: a second request is refused before it can take a remote slot.
+    const result = await trainingLibrary.analysisOnce(project.id, req.user.name, () =>
+      single('training:' + project.id, () => analyzeTraining(config, snapshot, callAi)),
     );
     assertRevision(getProject(db, project.id).revision, project.revision);
     db.prepare(

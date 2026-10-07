@@ -721,6 +721,147 @@ test('the one-shot file import is unchanged', async () => {
   }
 });
 
+test('the same rows always get the same verdicts: the AI is asked once per row and training version', async () => {
+  // A model that never answers the same way twice, the way an unpinned temperature behaves:
+  // only a remembered verdict can keep the counts steady.
+  const asked: Array<{ names: string[]; temperature: number | undefined }> = [];
+  const flip: Generate = async (_config, system, input, options) => {
+    if (system.includes('proposed qualification rubric')) return rubric;
+    const rows = (input as ScreenCall['input']).rows;
+    asked.push({ names: rows.map((row) => String(row.name)), temperature: options?.temperature });
+    const verdict = asked.length % 2 ? 'PASS' : 'REJECT';
+    return {
+      verdicts: rows
+        // "Left Out" is never answered, so it comes back Not screened.
+        .filter((row) => row.name !== 'Left Out')
+        .map((row) => ({ id: row.id, verdict, reason: verdict + ' on call ' + asked.length })),
+    };
+  };
+  const f = fixture(flip);
+  try {
+    await f.setup();
+    let project = await publishedProject(f);
+    const screen = async (rows: ImportLead[]) => {
+      const response = await f.post('/projects/' + project.id + '/leads/import/screen', { rows });
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      return response.body.verdicts as ScreenVerdict[];
+    };
+    const count = (verdicts: ScreenVerdict[]) =>
+      verdicts.reduce<Record<string, number>>(
+        (tally, v) => ({ ...tally, [v.verdict]: (tally[v.verdict] || 0) + 1 }),
+        {},
+      );
+    const alpha = lead({
+      name: 'Alpha Pumps',
+      industry: 'Pumps',
+      list_data: { Event: 'Hannover Messe', Stand: 'B12' },
+    });
+    const beta = lead({ name: 'Beta Works', industry: 'Machining' });
+    // The same company pasted in twice: one question, one answer for both.
+    const first = await screen([alpha, { ...alpha }, beta]);
+    assert.equal(asked.length, 1);
+    assert.deepEqual(asked[0].names, ['Alpha Pumps', 'Beta Works']);
+    assert.equal(asked[0].temperature, 0, 'the chat-model screen asks for temperature 0');
+    assert.equal(first[0].verdict, first[1].verdict);
+    assert.ok(first.every((v) => !v.reused));
+    // The same rows again — reordered, re-spaced, list columns in another order — are not asked
+    // again and come back exactly as before.
+    const again = await screen([
+      beta,
+      { ...alpha, name: ' Alpha  Pumps ', list_data: { Stand: 'B12', Event: 'Hannover Messe' } },
+    ]);
+    assert.equal(asked.length, 1, 'no second AI call for rows already screened');
+    assert.deepEqual(
+      again.map((v) => [v.verdict, v.reason]),
+      [
+        [first[2].verdict, first[2].reason],
+        [first[0].verdict, first[0].reason],
+      ],
+    );
+    assert.ok(again.every((v) => v.reused));
+    assert.deepEqual(count([...again, again[1]]), count(first));
+    // Anything that changes what the screen reads is a different row.
+    await screen([{ ...beta, employee_count: '250' }]);
+    assert.equal(asked.length, 2);
+    // A row the AI did not answer is asked again next time, not remembered as unanswered.
+    const missing = await screen([lead({ name: 'Left Out' })]);
+    assert.equal(missing[0].reason, 'Not screened');
+    assert.equal(asked.length, 4, 'the first call and its one repair');
+    await screen([lead({ name: 'Left Out' })]);
+    assert.equal(asked.length, 6, 'an unanswered row is asked again next time');
+    // Only the fingerprint and the verdict are kept, never the row.
+    const stored = JSON.stringify(f.db.prepare('SELECT * FROM import_screen_verdicts').all());
+    assert.ok(!stored.includes('Alpha Pumps') && !stored.includes('Hannover'));
+
+    // A newly published training version is a new question: the rows are screened afresh.
+    const saved = await f.put('/projects/' + project.id + '/training/rubric', {
+      revision: project.revision,
+      rubric: { ...rubric, criteria: [...rubric.criteria, 'Exports to Europe'] },
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const republished = await f.post('/projects/' + project.id + '/training/publish', {
+      revision: saved.body.revision,
+    });
+    assert.equal(republished.status, 200, JSON.stringify(republished.body));
+    project = republished.body as Project;
+    const before = asked.length;
+    const fresh = await screen([alpha, beta]);
+    assert.equal(asked.length, before + 1);
+    assert.ok(fresh.every((v) => !v.reused));
+    // The earlier version's answers are dropped once the new version screens.
+    const versions = f.db
+      .prepare('SELECT DISTINCT training_version v FROM import_screen_verdicts WHERE project_id=?')
+      .all(project.id) as Array<{ v: number }>;
+    assert.deepEqual(
+      versions.map((row) => row.v),
+      [project.active_version],
+    );
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a company repeated in the same file is counted once, the same way on every upload', async () => {
+  const calls: ScreenCall[] = [];
+  const f = fixture(screenModel(calls));
+  try {
+    await f.setup();
+    const project = await publishedProject(f);
+    const csv =
+      'name,website,industry\n' +
+      'Alpha Pumps,https://alpha.example,Pump manufacturing\n' +
+      'Beta Staffing,https://beta.example,Staffing\n' +
+      // The same leads added to the file again: by name, and by website domain.
+      'Alpha Pumps GmbH,,Pump manufacturing\n' +
+      'Beta Renamed,https://www.beta.example/jobs,Staffing\n' +
+      'Gamma Ltd,,\n';
+    const read = async () => {
+      const response = await f.upload('/projects/' + project.id + '/leads/import/preview', csv);
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      return response.body as ImportPreview;
+    };
+    const first = await read();
+    assert.deepEqual(
+      first.rows.map((row) => [row.row, row.repeat_of]),
+      [
+        [2, null],
+        [3, null],
+        [4, 2],
+        [5, 3],
+        [6, null],
+      ],
+    );
+    assert.deepEqual(
+      (await read()).rows.map((row) => row.repeat_of),
+      first.rows.map((row) => row.repeat_of),
+    );
+    // A row of the same file is not a lead in the project: it is not marked as a duplicate.
+    assert.ok(first.rows.every((row) => row.duplicate === null));
+  } finally {
+    f.dispose();
+  }
+});
+
 test('the rejected-rows download neutralizes spreadsheet formulas the way the export does', () => {
   assert.equal(csvCell('=SUM(A1)'), '"\'=SUM(A1)"');
   assert.equal(csvCell(' +1'), '"\' +1"');

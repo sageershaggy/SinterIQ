@@ -25,7 +25,11 @@ const plural = (count: number, one: string, many = one + 's') =>
 /** Lists stay readable on a phone; the CSV download carries every row. */
 const listLimit = 300;
 
-/** Where each previewed row stands. Duplicates are always their own group: never screened. */
+/**
+ * Where each previewed row stands. Duplicates are always their own group: never screened. A row
+ * that repeats an earlier row of the same file is counted once, with that earlier row: never
+ * screened and never imported a second time, so adding the same leads again keeps the counts.
+ */
 function groupRows(preview: ImportPreview, verdicts: Verdicts, screened: boolean) {
   const groups = {
     ready: [] as PreviewRow[],
@@ -34,10 +38,12 @@ function groupRows(preview: ImportPreview, verdicts: Verdicts, screened: boolean
     rejected: [] as PreviewRow[],
     unscreened: [] as PreviewRow[],
     duplicate: [] as PreviewRow[],
+    repeated: [] as PreviewRow[],
   };
   for (const row of preview.rows) {
     const verdict = verdicts[row.row]?.verdict;
     if (row.duplicate || verdict === 'DUPLICATE') groups.duplicate.push(row);
+    else if (row.repeat_of) groups.repeated.push(row);
     else if (!screened) groups.ready.push(row);
     else if (!verdict) groups.unscreened.push(row);
     else if (verdict === 'PASS') groups.pass.push(row);
@@ -227,6 +233,8 @@ export function ImportModal({
       const kept = [number(imported.created) + ' imported'];
       if (imported.updated) kept.push(number(imported.updated) + ' updated');
       if (imported.skipped) kept.push(number(imported.skipped) + ' already in this project');
+      if (groups.repeated.length)
+        kept.push(plural(groups.repeated.length, 'repeated row') + ' counted once');
       const out = [
         leftOut.rejected.length ? number(leftOut.rejected.length) + ' rejected' : '',
         leftOut.unclear.length ? number(leftOut.unclear.length) + ' not enough information' : '',
@@ -261,7 +269,11 @@ export function ImportModal({
   const reasonOf = (row: PreviewRow) =>
     row.duplicate
       ? 'Matches ' + row.duplicate.name + ' in this project.'
-      : verdicts[row.row]?.reason || '';
+      : row.repeat_of
+        ? 'Same company as row ' + row.repeat_of + ' of this file.'
+        : verdicts[row.row]?.reason || '';
+  // Rows answered from an earlier screen of the same rows against the same published training.
+  const reused = Object.values(verdicts).filter((verdict) => verdict.reused).length;
   const downloadButton = leftOutRows.length > 0 && preview && file && (
     <button
       className="text-button"
@@ -402,6 +414,12 @@ export function ImportModal({
                     : 'Quick screen stopped. ' +
                       plural(groups.unscreened.length, 'row was', 'rows were') +
                       ' not screened.'}
+                  {reused > 0 && (
+                    <small className="import-screen-reused">
+                      {plural(reused, 'row was', 'rows were')} screened before against this
+                      training version and kept the same verdict.
+                    </small>
+                  )}
                   {screenState === 'stopped' && (
                     <button
                       className="text-button"
@@ -484,6 +502,15 @@ export function ImportModal({
                   <option value="update">Update them with the details in this file</option>
                 </select>
               </ImportGroup>
+            )}
+            {groups.repeated.length > 0 && screenState !== 'running' && (
+              <ImportGroup
+                tone="duplicate"
+                title="Repeated in this file"
+                hint="The same company as an earlier row (name or website domain). Counted, screened and imported once, with that row."
+                rows={groups.repeated}
+                reasonOf={reasonOf}
+              />
             )}
             {screenState === 'off' && (
               <label className="import-screen-option">
