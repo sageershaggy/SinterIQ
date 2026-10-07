@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
+  BadgeCheck,
   CircleAlert,
   Flag,
   Mail,
@@ -18,8 +19,10 @@ import type {
   ResearchOutcome,
   ResearchableField,
 } from '../shared/types';
-import type { FieldCitation, LeadContact, ResearchProfile } from '../shared/research';
+import type { LeadContact, ResearchProfile } from '../shared/research';
 import type { LeadTab } from './navigation';
+import { CompanyFact } from './CompanyFacts';
+import { fieldProvenance } from '../shared/field-history';
 import { api, date, json, label } from './api';
 import { Alert, Badge, ExternalLink, Spinner } from './ui';
 import { callOutcomeLabels } from '../shared/calls';
@@ -70,61 +73,6 @@ export interface ResearchControls {
   onQualify: () => void;
 }
 
-/**
- * Where a detail came from: typed or imported into the record, or found by research on the
- * company's own website — in which case the sentence and the page are one click away.
- */
-function Origin({ citations }: { citations: FieldCitation[] }) {
-  if (!citations.length) return <span className="fact-origin">In the lead record</span>;
-  return (
-    <details className="fact-origin-details">
-      <summary className="fact-origin is-research" title="Show the sentence this came from">
-        Found by research
-      </summary>
-      <div>
-        {citations.map((item) => (
-          <div key={item.field}>
-            {item.evidence ? (
-              <blockquote>“{item.evidence}”</blockquote>
-            ) : (
-              <p>
-                Verified as the company’s own site: it answered on this domain and names the
-                company.
-              </p>
-            )}
-            <ExternalLink url={item.source_url} />
-          </div>
-        ))}
-      </div>
-    </details>
-  );
-}
-function Fact({
-  lead,
-  fields,
-  citations,
-  children,
-  empty,
-  conflicts,
-}: {
-  lead: Lead;
-  fields: ResearchableField[];
-  citations: FieldCitation[];
-  children: ReactNode;
-  empty: string;
-  /** What the website says instead, from the latest qualification. */
-  conflicts?: ReactNode;
-}) {
-  const present = fields.some((field) => String(lead[field] ?? '').trim());
-  if (!present) return <dd>{blank(empty)}</dd>;
-  return (
-    <dd>
-      {children}
-      <Origin citations={citations.filter((item) => fields.includes(item.field))} />
-      {conflicts}
-    </dd>
-  );
-}
 /** What a conflict is called in a row that shows more than one field. */
 const conflictNames: Record<ConflictField, string> = {
   city: 'city',
@@ -133,14 +81,17 @@ const conflictNames: Record<ConflictField, string> = {
   employee_count: 'company size',
 };
 /**
- * The latest qualification found the company's own website stating this detail differently. The
- * record keeps its value until someone chooses the website's; the page is linked and the sentence
- * shows on hover and on "Show the sentence", so the choice is made against the evidence.
+ * The latest qualification found the company's own website stating this detail differently from
+ * a value a PERSON typed. Research replaces imported values on its own (the card then shows the
+ * website's value as verified), but never a typed one: that stays until someone chooses the
+ * website's. The page is linked and the sentence shows on hover and on "Show the sentence", so
+ * the choice is made against the evidence.
  */
 function ConflictNote({
   conflict,
   url,
   named,
+  typed,
   busy,
   onApply,
 }: {
@@ -148,6 +99,8 @@ function ConflictNote({
   url: string;
   /** Say which field, where the row shows more than one (Location is city and country). */
   named: boolean;
+  /** The record's value was typed by a person (lead_field_history), which is why it stayed. */
+  typed: boolean;
   busy: boolean;
   onApply: () => void;
 }) {
@@ -156,10 +109,15 @@ function ConflictNote({
       <p title={'“' + conflict.quote + '”'}>
         <CircleAlert size={14} aria-hidden="true" />
         <span>
-          Website says{named ? ' (' + conflictNames[conflict.field] + ')' : ''}:{' '}
+          The company website gives{named ? ' a different ' + conflictNames[conflict.field] : ''}:{' '}
           <strong>{conflict.found_value}</strong>
         </span>
         {url && <ExternalLink url={url} />}
+      </p>
+      <p className="fact-conflict-why">
+        {typed
+          ? 'Your team entered the value above, so research did not replace it.'
+          : 'Found by an analysis made before research replaced imported values: choose it now, or qualify again.'}
       </p>
       <details>
         <summary>Show the sentence</summary>
@@ -404,20 +362,25 @@ export function CompanyOverview({
     }
   }
   const citations = profile?.citations || [];
+  const history = profile?.history || [];
   // The imported list's other columns (an event, a funding round): the team's data, as entered.
   const listed = Object.entries(lead.list_data ?? {});
   const latest = lead.runs?.[0];
   const current = latest && !lead.stale ? latest : null;
-  // Conflicts from the latest run that still describe the record: a field someone has changed
-  // since, or a value already taken from the website, no longer has one.
+  // Conflicts from the latest run that still describe the record: one research applied (the
+  // value was imported) is the current value now, and a field someone has changed since, or a
+  // value already taken from the website, no longer has one. What is left is a typed value.
   const conflicts =
     latest && latest.id === lead.latest_run_id
       ? (latest.result.conflicts ?? []).filter(
           (item) =>
+            !item.applied &&
             String(lead[item.field] ?? '').trim().toLowerCase() ===
-            item.record_value.trim().toLowerCase(),
+              item.record_value.trim().toLowerCase(),
         )
       : [];
+  // What the latest run itself replaced, for the research summary.
+  const replacedByRun = (latest?.result.conflicts ?? []).filter((item) => item.applied);
   /** "Use website value": a recorded edit with its quote kept as the citation (POST .../conflicts/apply). */
   async function applyConflict(conflict: DetailConflict) {
     if (!latest) return;
@@ -445,6 +408,10 @@ export function CompanyOverview({
             conflict={item}
             url={latest?.evidence.find((entry) => item.source_ids.includes(entry.id))?.url || ''}
             named={fields.length > 1}
+            typed={
+              fieldProvenance(history, item.field, String(lead[item.field] ?? '')).origin ===
+              'person'
+            }
             busy={applying || research.busy || research.running}
             onApply={() => void applyConflict(item)}
           />
@@ -492,6 +459,18 @@ export function CompanyOverview({
       who: item.created_by,
       icon: <Search size={15} />,
     })),
+    // The research history: a value the website replaced, with the one it replaced. This is
+    // where the original imported value is read in passing; the card itself shows the current.
+    ...history
+      .filter((item) => item.origin === 'research' && item.previous_value)
+      .map((item) => ({
+        key: 'field-' + item.id,
+        when: item.changed_at,
+        title: 'Research updated the ' + (conflictNames[item.field as ConflictField] || item.field),
+        detail: '“' + item.previous_value + '” replaced by “' + item.new_value + '”, as the company website states.',
+        who: item.changed_by,
+        icon: <BadgeCheck size={15} />,
+      })),
     ...(lead.calls || []).map((item) => ({
       key: 'call-' + item.id,
       when: item.created_at,
@@ -600,39 +579,48 @@ export function CompanyOverview({
           </div>
           <dl className="company-facts">
             <dt>Website</dt>
-            <Fact lead={lead} fields={['website']} citations={citations} empty="Not found yet">
+            <CompanyFact
+              lead={lead}
+              fields={['website']}
+              citations={citations}
+              history={history}
+              empty="Not found yet"
+            >
               <ExternalLink url={lead.website} />
-            </Fact>
+            </CompanyFact>
             <dt>Industry</dt>
-            <Fact
+            <CompanyFact
               lead={lead}
               fields={['industry']}
               citations={citations}
+              history={history}
               empty="Not found yet"
               conflicts={conflictNotes(['industry'])}
             >
               {lead.industry}
-            </Fact>
+            </CompanyFact>
             <dt>Location</dt>
-            <Fact
+            <CompanyFact
               lead={lead}
               fields={['city', 'country']}
               citations={citations}
+              history={history}
               empty="Not found yet"
               conflicts={conflictNotes(['city', 'country'])}
             >
               {[lead.city, lead.country].filter(Boolean).join(', ')}
-            </Fact>
+            </CompanyFact>
             <dt>Company size</dt>
-            <Fact
+            <CompanyFact
               lead={lead}
               fields={['employee_count']}
               citations={citations}
+              history={history}
               empty="Not found yet"
               conflicts={conflictNotes(['employee_count'])}
             >
               {lead.employee_count}
-            </Fact>
+            </CompanyFact>
             <dt>Assigned to</dt>
             <dd>{lead.assigned_to_name || blank('Unassigned')}</dd>
           </dl>
@@ -657,10 +645,11 @@ export function CompanyOverview({
             </section>
           )}
           <p className="fine-print">
-            “In the lead record” was typed or imported; “Found by research” was read from the
-            company’s own website and shows the sentence it came from.
+            “Verified by research” was read on the company’s own website; Source evidence shows
+            the sentence and the page. Research replaces an imported value and keeps the original
+            under “Original imported value”; it never replaces one your team typed.
             {conflicts.length > 0 &&
-              ' “Website says” is what the last analysis found the website stating instead; the record keeps its value until you choose the website’s.'}
+              ' Where the website gives something else for a value your team typed, both are shown until you choose.'}
           </p>
         </section>
         <section className="company-card">
@@ -699,6 +688,17 @@ export function CompanyOverview({
                       : 'This version of the record had already been researched, so that research was used.'}
                     {!researchedFirst.website_found &&
                       ' No company website could be verified; what was checked is listed below.'}
+                  </span>
+                </p>
+              )}
+              {replacedByRun.length > 0 && (
+                <p className="research-before">
+                  <BadgeCheck size={14} />
+                  <span>
+                    Updated from the company website:{' '}
+                    {replacedByRun.map((item) => conflictNames[item.field]).join(', ')}. The
+                    imported {replacedByRun.length === 1 ? 'value is' : 'values are'} kept in this
+                    lead’s history.
                   </span>
                 </p>
               )}

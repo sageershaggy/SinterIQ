@@ -50,7 +50,20 @@ export interface PreviewRow {
   /** The row as it was in the file, in the order of ImportPreview.columns. */
   cells: string[];
   /** The lead already in this project that the import would match this row to. */
-  duplicate: { id: number; name: string } | null;
+  duplicate: ExistingLead | null;
+}
+/**
+ * A lead already in the project, with where it stands now. An import never creates a second lead
+ * for it and never changes its status, score or run, so the preview shows what is kept.
+ */
+export interface ExistingLead {
+  id: number;
+  name: string;
+  status?: 'UNREVIEWED' | 'QUALIFIED' | 'NOT_A_TARGET' | 'NEEDS_REVIEW';
+  score?: number | null;
+  /** Its result predates the current training or record (shown "out of date", never hidden). */
+  stale?: boolean;
+  archived?: boolean;
 }
 export interface ImportPreview {
   /** Data rows read from the file. */

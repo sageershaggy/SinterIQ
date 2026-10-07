@@ -1,0 +1,86 @@
+/* One company detail on the Company card (CompanyFact in CompanyFacts.tsx): the value first,
+   then a quiet marker of where it came from, then the evidence and any original imported value
+   behind their own disclosures, so neither ever sits beside the value. */
+.company-fact-value {
+  overflow-wrap: anywhere;
+}
+/* Its own line under the value, so a long value never pushes the marker into an odd wrap. */
+.company-fact-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 4px;
+}
+.company-fact-meta:empty {
+  display: none;
+}
+.company-fact .fact-origin {
+  margin-left: 0;
+}
+.fact-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px 1px 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.6;
+  background: #e5f0d8;
+  color: #2f5224;
+  white-space: nowrap;
+}
+.fact-verified svg {
+  flex-shrink: 0;
+  color: #3d6b2f;
+}
+.fact-disclosure {
+  margin-top: 5px;
+  font-size: 11.5px;
+}
+/* Small, unlike the app's full-width disclosures (index.css gives summary 12px padding and
+   rules a line between neighbouring details). */
+.fact-disclosure summary {
+  width: fit-content;
+  padding: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  cursor: pointer;
+  font-weight: 600;
+  color: #56614f;
+}
+.fact-disclosure + .fact-disclosure {
+  border-top: 0;
+}
+.fact-disclosure[open] > div {
+  margin: 6px 0 2px;
+  padding: 8px 11px;
+  border-left: 3px solid #cfe0bd;
+  background: #fafbf7;
+  color: #56614f;
+}
+.company-card .fact-disclosure p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.fact-disclosure blockquote {
+  margin: 0 0 4px;
+  font-style: italic;
+  line-height: 1.55;
+}
+.fact-source + .fact-source {
+  margin-top: 8px;
+}
+.fact-original[open] > div {
+  border-left-color: #e2e5dc;
+}
+.company-card .fact-original-note {
+  margin-top: 2px;
+  color: var(--muted);
+}
+/* Under a conflict over a typed value: why the website's value was not taken on its own. */
+.company-card .fact-conflict > p.fact-conflict-why {
+  font-size: 11.5px;
+  color: #7a6630;
+}

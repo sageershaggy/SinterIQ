@@ -745,8 +745,10 @@ export function FitQualification({ lead }: { lead: Lead }) {
           <i style={{ width: (lead.score ?? 0) + '%' }} />
         </span>
       </span>
+      {/* A superseded result keeps its decision on show, marked out of date: requalifying is
+          the next step, but the earlier rating is never hidden. */}
       <Badge value={lead.stale ? 'stale' : lead.status}>
-        {lead.stale ? 'Requalification needed' : label(lead.status)}
+        {lead.stale ? label(lead.status) + ' · out of date' : label(lead.status)}
       </Badge>
       <small className="fit-meta" title={meta}>
         {lead.reviewed && <ShieldCheck size={11} aria-hidden="true" />}

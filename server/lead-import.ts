@@ -8,6 +8,7 @@ import { checkedUrl } from './network';
 import { importLimits, listData, mapImportRows, readImportRows, storedListData } from './import';
 import { screenRows, type ScreenResult } from './import-screen';
 import { HttpError, leadSchema, positiveId } from './validation';
+import { importMayReplace, recordFieldChanges } from './field-history';
 import {
   screenBatchSize,
   type ImportLead,
@@ -112,7 +113,52 @@ export function findDuplicate(db: DB, projectId: number, lead: { name: string; w
       : undefined;
   return byKey('name_key', nameKey(lead.name)) || byKey('website_key', websiteKey(lead.website));
 }
-export function insertLead(db: DB, projectId: number, lead: ImportLead) {
+/**
+ * Where a lead already in the project stands, for an import row that matches it: an import never
+ * creates a second lead for it and never touches its qualification, so the preview says what is
+ * kept. Stale is the same test the lead list makes (serializeLead in server/app.ts).
+ */
+export function existingStanding(db: DB, project: Project, match: { id: number; name: string }) {
+  const row = db
+    .prepare(
+      'SELECT status,score,latest_run_id,training_version,qualified_revision,revision,archived_at FROM leads WHERE id=? AND project_id=?',
+    )
+    .get(match.id, project.id) as
+    | {
+        status: Lead['status'];
+        score: number | null;
+        latest_run_id: number | null;
+        training_version: number | null;
+        qualified_revision: number | null;
+        revision: number;
+        archived_at: string | null;
+      }
+    | undefined;
+  if (!row) return match;
+  return {
+    ...match,
+    status: row.status,
+    score: row.score,
+    stale: Boolean(
+      row.latest_run_id &&
+      (row.training_version !== project.active_version ||
+        row.qualified_revision !== row.revision ||
+        project.revision !== project.trained_revision),
+    ),
+    archived: Boolean(row.archived_at),
+  };
+}
+/**
+ * Creates a lead unless the company is already in the project. `provenance` says who supplied the
+ * values — the list ('import') or a person on the lead form — and goes into lead_field_history,
+ * which decides later whether research may replace a value (server/field-history.ts).
+ */
+export function insertLead(
+  db: DB,
+  projectId: number,
+  lead: ImportLead,
+  provenance: { origin: 'import' | 'person'; actor: string },
+) {
   const duplicate = findDuplicate(db, projectId, lead);
   if (duplicate) return { duplicate };
   const id = Number(
@@ -140,6 +186,14 @@ export function insertLead(db: DB, projectId: number, lead: ImportLead) {
         now(),
       ).lastInsertRowid,
   );
+  recordFieldChanges(db, {
+    projectId,
+    leadId: id,
+    before: {},
+    after: lead,
+    origin: provenance.origin,
+    actor: provenance.actor,
+  });
   return { id };
 }
 /**
@@ -165,11 +219,13 @@ export function importLeads(
     const createdIds: number[] = [];
     const duplicates: string[] = [];
     for (const lead of leads) {
-      const result = insertLead(db, project.id, lead);
+      const result = insertLead(db, project.id, lead, { origin: 'import', actor: options.actor });
       if (!result.duplicate) {
         createdIds.push(result.id);
         continue;
       }
+      // A company already in the project is never created twice, and nothing here touches its
+      // status, score, run or review: re-importing a list keeps every earlier qualification.
       if (options.onDuplicate !== 'update') {
         duplicates.push(lead.name);
         continue;
@@ -179,10 +235,17 @@ export function importLeads(
         .prepare('SELECT * FROM leads WHERE id=? AND project_id=?')
         .get(result.duplicate.id, project.id) as Omit<Lead, 'list_data'> & { list_data: string };
       const stored = storedListData(current.list_data);
+      // A value research verified on the company's website, or one a person typed, outranks the
+      // list: the same file imported again must not put the old imported value back.
+      const fromList = (field: 'website' | 'country' | 'industry') =>
+        lead[field] &&
+        (!current[field] || importMayReplace(db, project.id, current.id, field, current[field]))
+          ? lead[field]
+          : current[field];
       const merged = {
-        website: lead.website || current.website,
-        country: lead.country || current.country,
-        industry: lead.industry || current.industry,
+        website: fromList('website'),
+        country: fromList('country'),
+        industry: fromList('industry'),
         notes: lead.notes || current.notes,
         // The list's columns merge: a new value replaces the same column, the others stay.
         list_data: JSON.stringify(listData({ ...stored, ...lead.list_data })),
@@ -210,6 +273,14 @@ export function importLeads(
         result.duplicate.id,
         project.id,
       );
+      recordFieldChanges(db, {
+        projectId: project.id,
+        leadId: current.id,
+        before: current,
+        after: { website: merged.website, country: merged.country, industry: merged.industry },
+        origin: 'import',
+        actor: options.actor,
+      });
       updated++;
     }
     const created = createdIds.length;
@@ -311,13 +382,17 @@ export function installLeadImport(
       const preview: ImportPreview = {
         total: raw.length,
         columns,
-        rows: leads.map((lead, i) => ({
-          row: lines[i],
-          lead,
-          // Header is line 1, so line n is raw row n - 2.
-          cells: columns.map((column) => raw[lines[i] - 2][column] ?? ''),
-          duplicate: findDuplicate(db, project.id, lead) || null,
-        })),
+        rows: leads.map((lead, i) => {
+          const duplicate = findDuplicate(db, project.id, lead);
+          return {
+            row: lines[i],
+            lead,
+            // Header is line 1, so line n is raw row n - 2.
+            cells: columns.map((column) => raw[lines[i] - 2][column] ?? ''),
+            // With its current status and score, which the import keeps.
+            duplicate: duplicate ? existingStanding(db, project, duplicate) : null,
+          };
+        }),
         problems,
         warnings,
         screening: !trainingReady(project)

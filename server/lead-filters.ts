@@ -94,7 +94,10 @@ export function staleSql(project: Project) {
     ')'
   );
 }
-/** Mirrors the table badge: a superseded result is "Requalification needed", whatever it said. */
+/**
+ * Mirrors the table badge: a superseded result is "Requalification needed", whatever it said (the
+ * badge still shows what it said, marked out of date).
+ */
 export function qualificationStateSql(project: Project) {
   return (
     "(CASE WHEN l.latest_run_id IS NULL THEN 'RAW' WHEN " +

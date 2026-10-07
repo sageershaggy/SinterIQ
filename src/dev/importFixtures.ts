@@ -57,7 +57,13 @@ const rows = Array.from({ length: 120 }, (_, i) => {
       lead.list_data.Stand ?? '',
       i % 4 ? '' : '=HYPERLINK("x")',
     ],
-    duplicate: i === 7 || i === 30 ? { id: 900 + i, name: lead.name + ' LLC' } : null,
+    // Where the existing lead stands, which the import keeps (one qualified, one not yet).
+    duplicate:
+      i === 7
+        ? { id: 907, name: lead.name + ' LLC', status: 'QUALIFIED' as const, score: 80 }
+        : i === 30
+          ? { id: 930, name: lead.name + ' LLC', status: 'UNREVIEWED' as const, score: null }
+          : null,
   };
 });
 const preview: ImportPreview = {

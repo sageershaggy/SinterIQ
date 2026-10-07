@@ -17,6 +17,7 @@ import { shellRoutes } from './shell-fixtures';
 import { contactEnrollments, emailRoutes, emailWrites } from './emailFixtures';
 import { settingsRoutes, settingsWrites } from './settingsFixtures';
 import { importWrite } from './importFixtures';
+import { fieldHistoryRoutes, lead8History } from './fieldHistoryFixtures';
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -575,6 +576,8 @@ const researchProfile = {
     },
   ],
   roles_sought: { categories: ['purchasing', 'marketing'], phrases: ['marketing assistant'] },
+  // Where each company detail came from (fieldHistoryFixtures.ts).
+  history: lead8History(site),
 };
 const emptyProfile = {
   citations: [],
@@ -725,6 +728,8 @@ const routes: Array<[RegExp, (route: string) => unknown]> = [
   [/^\/projects\/2\/leads\/7\/research-profile$/, () => emptyProfile],
   [/^\/projects\/2\/leads\/8\/research-profile$/, () => researchProfile],
   [/^\/projects\/2\/leads\/8\/contacts$/, () => researchProfile.contacts],
+  // Lead 9: imported values replaced by what research verified (fieldHistoryFixtures.ts).
+  ...fieldHistoryRoutes(researched, researchProfile),
   [/^\/projects\/2\/training\/uploads$/, () => uploads],
   [/^\/projects\/2\/training\/graph$/, () => graph],
   [

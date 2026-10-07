@@ -58,7 +58,10 @@ export const conflictFields = ['city', 'country', 'industry', 'employee_count'] 
 export type ConflictField = (typeof conflictFields)[number];
 /**
  * The company's own website states a different value for a detail than the lead record holds.
- * Reported with the sentence that states it; nothing is written until a person chooses it.
+ * Reported with the sentence that states it. Research wins over imported data: when the record's
+ * value was imported (or came with the original record), the website's value is written when the
+ * run is saved (applied). A value a person typed is never replaced; it stays a visible conflict
+ * until someone chooses "Use website value".
  */
 export interface DetailConflict {
   field: ConflictField;
@@ -69,6 +72,8 @@ export interface DetailConflict {
   quote: string;
   /** The one website evidence item the quote was found in. */
   source_ids: string[];
+  /** Written to the record when the run was saved (server/detail-conflicts.ts). */
+  applied?: boolean;
 }
 /** A qualification criteria document a project can add to its library (server/criteria-templates.ts). */
 export interface CriteriaTemplate {

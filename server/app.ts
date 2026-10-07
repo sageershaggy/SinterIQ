@@ -17,7 +17,8 @@ import { installResearchLog, recordResearchPass } from './research-log';
 import { installCompose } from './compose';
 import { installEmailFiles } from './email-files';
 import { installArchive } from './archive';
-import { installDetailConflicts } from './detail-conflicts';
+import { applyFoundConflicts, installDetailConflicts } from './detail-conflicts';
+import { recordFieldChanges } from './field-history';
 import { installProjectDeletion } from './project-delete';
 import { createQualificationJobs } from './qualification-jobs';
 import { fetchWebsite, checkedUrl } from './network';
@@ -962,7 +963,8 @@ export function createApp(options: {
     const project = getProject(db, positiveId(req.params.projectId), req.user);
     const input = leadSchema.parse(req.body);
     if (input.website) checkedUrl(input.website);
-    const result = insertLead(db, project.id, input);
+    // Typed by a person, so research never replaces these values on its own.
+    const result = insertLead(db, project.id, input, { origin: 'person', actor: req.user.name });
     if (result.duplicate)
       return res.status(409).json({
         error: 'This lead already exists in this project: ' + result.duplicate.name,
@@ -1231,6 +1233,16 @@ export function createApp(options: {
       lead.id,
       project.id,
     );
+    // The details this person changed are theirs now: research never replaces them on its own.
+    // Synchronous with the update above, so no other request can run between the two.
+    recordFieldChanges(db, {
+      projectId: project.id,
+      leadId: lead.id,
+      before: lead,
+      after: input,
+      origin: 'person',
+      actor: req.user.name,
+    });
     audit(
       db,
       project.id,
@@ -1380,6 +1392,16 @@ export function createApp(options: {
             409,
             'Training, lead data or a review changed during analysis. Retry against the latest version.',
           );
+        // Research wins over imported data: what the website states replaces an imported detail
+        // now, in this transaction, and the run is saved as current against the new revision.
+        const found = applyFoundConflicts(db, {
+          project,
+          lead: currentLead,
+          conflicts: qualified.conflicts ?? [],
+          evidence,
+          actor,
+        });
+        qualified.conflicts = found.conflicts;
         const id = Number(
           db
             .prepare(
@@ -1414,7 +1436,7 @@ export function createApp(options: {
           qualified.confidence,
           id,
           project.active_version,
-          lead.revision,
+          found.revision,
           JSON.stringify(leadServiceFit(qualified.service_fit)),
           qualified.outreach.contact_name,
           qualified.outreach.contact_name,
