@@ -95,8 +95,9 @@ export function FitScore({ lead }: { lead: Lead }) {
         {!scored ? 'Not scored yet' : lead.stale ? 'Out of date' : band?.label}
       </p>
       <div className="lead-fit-badges">
+        {/* The earlier decision stays on show; the band line above already says out of date. */}
         <Badge value={lead.stale ? 'stale' : lead.status}>
-          {lead.stale ? 'Requalification needed' : label(lead.status)}
+          {lead.stale ? label(lead.status) + ' · requalify' : label(lead.status)}
         </Badge>
         {lead.reviewed && <Badge value="ready">Human reviewed</Badge>}
       </div>

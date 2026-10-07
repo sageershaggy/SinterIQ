@@ -14,8 +14,8 @@ import { pipelineStatusLabels, pipelineStatuses, type PipelineStatus } from './c
 
 /**
  * Where a lead stands in qualification. A partition: every lead is in exactly one state, and it
- * is the same state the table's badge shows (a superseded result reads "Requalification needed"
- * whatever its old decision was).
+ * is the same state the table's badge shows (a superseded result counts as "Requalification
+ * needed" whatever its old decision was; its badge keeps that decision, marked "out of date").
  */
 export const qualificationStates = [
   'RAW',

@@ -21,6 +21,7 @@ import { installQualificationJobSchema } from './qualification-job-schema';
 import { installServiceFitSchema } from './service-fit-schema';
 import { installListDataSchema } from './list-data-schema';
 import { installDedupeSchema } from './dedupe-schema';
+import { installFieldHistorySchema } from './field-history-schema';
 
 export const now = () => new Date().toISOString();
 export const hash = (value: string | Buffer) =>
@@ -173,6 +174,7 @@ export function openDatabase(dataDir: string, legacyPath?: string) {
   installListDataSchema(db);
   installDedupeSchema(db);
   installResearchSearchSchema(db);
+  installFieldHistorySchema(db);
   if (!db.prepare("SELECT 1 FROM meta WHERE key='initialized'").get())
     initialize(db, secrets, legacyPath);
   preserveLegacyResearch(db, legacyPath);

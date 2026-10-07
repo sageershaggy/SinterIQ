@@ -9,14 +9,17 @@ import type { ResearchSearch } from './research-settings';
 import { HttpError, leadSchema, positiveId } from './validation';
 import { recordResearchPass } from './research-log';
 import { stopContactSequences } from './funnels';
-import type {
-  Evidence,
-  Lead,
-  Project,
-  ResearchOutcome,
-  ResearchableField,
-  TrainingSnapshot,
-  User,
+import { currentOrigin, leadFieldHistory, recordFieldChanges } from './field-history';
+import {
+  conflictFields,
+  type ConflictField,
+  type Evidence,
+  type Lead,
+  type Project,
+  type ResearchOutcome,
+  type ResearchableField,
+  type TrainingSnapshot,
+  type User,
 } from '../shared/types';
 import {
   rolesSought,
@@ -132,6 +135,7 @@ export function createLeadResearch(deps: {
       onPages: options.onPages,
     });
     const applied: ResearchableField[] = [];
+    const replaced: string[] = [];
     let contactsAdded = 0;
     const fieldSchemas = leadSchema.shape as Record<string, z.ZodTypeAny>;
     db.transaction(() => {
@@ -173,13 +177,29 @@ export function createLeadResearch(deps: {
         for (const proposal of outcome.proposals) {
           // The column name comes from this closed list, never from the response.
           if (!researchableFields.includes(proposal.field)) continue;
-          if (String(current[proposal.field] ?? '').trim()) {
-            outcome.refused.push({
-              field: proposal.field,
-              value: proposal.value,
-              reason: 'This was filled in while the research was running, so it was left alone.',
-            });
-            continue;
+          const previous = String(current[proposal.field] ?? '');
+          if (previous.trim()) {
+            // Filled while the pass ran (it researches blanks only). Research wins over imported
+            // data, never over a person: a company detail the import wrote (or earlier research)
+            // is replaced by what the site states; one a person typed, or one nothing recorded
+            // the origin of, is left alone. A website or a contact is never replaced.
+            const detail = (conflictFields as readonly string[]).includes(proposal.field)
+              ? (proposal.field as ConflictField)
+              : null;
+            const origin = detail && currentOrigin(db, project.id, lead.id, detail, previous);
+            const held = previous.trim().toLowerCase() === proposal.value.trim().toLowerCase();
+            if (held || (origin !== 'import' && origin !== 'research')) {
+              outcome.refused.push({
+                field: proposal.field,
+                value: proposal.value,
+                reason: held
+                  ? 'The record already holds this value.'
+                  : origin === 'person'
+                    ? 'A person entered this value, so research left it alone.'
+                    : 'This was filled in while the research was running, so it was left alone.',
+              });
+              continue;
+            }
           }
           // The same validator the edit form uses, so research can never write a value a
           // person could not have typed, and the lead stays saveable afterwards.
@@ -222,6 +242,18 @@ export function createLeadResearch(deps: {
             now(),
             actor,
           );
+          // And the value it replaced, so an imported value research overwrote stays on record.
+          recordFieldChanges(db, {
+            projectId: project.id,
+            leadId: lead.id,
+            before: { [proposal.field]: previous },
+            after: { [proposal.field]: value },
+            origin: 'research',
+            actor,
+            evidence: proposal.evidence,
+            sourceUrl: proposal.source_url,
+          });
+          if (previous.trim()) replaced.push(proposal.field + ' (was "' + previous + '")');
           applied.push(proposal.field);
         }
         // People are kept only from the site that is now this lead's own website, so a page
@@ -262,7 +294,15 @@ export function createLeadResearch(deps: {
             project.id,
             actor,
             'lead.researched',
-            'Filled ' + applied.join(', ') + ' for ' + lead.name + ' from ' + outcome.website + '.',
+            'Filled ' +
+              applied.join(', ') +
+              ' for ' +
+              lead.name +
+              ' from ' +
+              outcome.website +
+              '.' +
+              // Company details only (never a contact), so the old value may sit here.
+              (replaced.length ? ' Imported value replaced: ' + replaced.join(', ') + '.' : ''),
           );
         }
         // Counted, not named: the audit log is not a place to copy personal data into.
@@ -584,6 +624,8 @@ export function createLeadResearch(deps: {
         contacts: contactsOf(project, lead.id),
         runs: runs(project.id, lead.id),
         roles_sought: rolesSought([training.summary, ...training.criteria]),
+        // Who set each company detail, and the imported value research replaced.
+        history: leadFieldHistory(db, project.id, lead.id),
       };
       res.json(profile);
     });

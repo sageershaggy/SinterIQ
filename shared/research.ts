@@ -210,6 +210,11 @@ export interface ResearchProfile {
   contacts: LeadContact[];
   runs: ResearchRunSummary[];
   roles_sought: { categories: RoleCategory[]; phrases: string[] };
+  /**
+   * Every recorded change of the lead's company details, newest first (shared/field-history.ts):
+   * where the current value came from and the original imported value research replaced.
+   */
+  history?: import('./field-history').FieldChange[];
 }
 /** What the research pass that ran before a qualification did, stored with the run. */
 export interface QualificationResearch {

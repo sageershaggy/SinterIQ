@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2, Download, FileText, ScanLine, Sparkles, Upload } from 'lucide-react';
-import { api, json } from './api';
+import { api, json, label } from './api';
 import { Alert, Modal, Spinner } from './ui';
 import { csvCell } from '../shared/csv';
 import {
   notScreened,
   screenBatchSize,
+  type ExistingLead,
   type ImportPreview,
   type ImportProblem,
   type ImportRowsResult,
@@ -51,6 +52,22 @@ function groupRows(preview: ImportPreview, verdicts: Verdicts, screened: boolean
     else groups.unclear.push(row);
   }
   return groups;
+}
+/**
+ * What the lead already in the project holds, which an import keeps: it never creates a second
+ * lead and never changes a status, score or run.
+ */
+function standingOf(existing: ExistingLead) {
+  if (!existing.status) return '';
+  if (existing.status === 'UNREVIEWED') return ' · not qualified yet';
+  return (
+    ' · ' +
+    label(existing.status) +
+    (existing.score === null || existing.score === undefined ? '' : ', ' + existing.score + '/100') +
+    (existing.stale ? ' (out of date)' : '') +
+    (existing.archived ? ', archived' : '') +
+    ', kept as it is'
+  );
 }
 const verdictLabel = (verdict: ScreenVerdict | undefined) =>
   !verdict
@@ -268,7 +285,7 @@ export function ImportModal({
     : [];
   const reasonOf = (row: PreviewRow) =>
     row.duplicate
-      ? 'Matches ' + row.duplicate.name + ' in this project.'
+      ? 'Matches ' + row.duplicate.name + ' in this project' + standingOf(row.duplicate) + '.'
       : row.repeat_of
         ? 'Same company as row ' + row.repeat_of + ' of this file.'
         : verdicts[row.row]?.reason || '';
@@ -488,7 +505,7 @@ export function ImportModal({
               <ImportGroup
                 tone="duplicate"
                 title="Already in this project"
-                hint="Matched on company name or website domain. Never sent to the AI."
+                hint="Matched on company name or website domain. Never sent to the AI, never added twice, and their qualification and score stay as they are. Updating never replaces a value research verified or your team typed."
                 rows={groups.duplicate}
                 reasonOf={reasonOf}
               >
