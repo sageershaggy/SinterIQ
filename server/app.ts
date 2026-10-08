@@ -327,6 +327,8 @@ export function createApp(options: {
   listModels?: ListModels;
   /** False leaves qualification jobs to the caller, which steps them (tests). */
   runJobs?: boolean;
+  /** Overrides both concurrency-pool deadlines, so a test need not wait minutes for one. */
+  poolDeadlineMs?: number;
 }) {
   const production = options.production || false;
   const { db, secrets } = openDatabase(options.dataDir, options.legacyPath);
@@ -528,28 +530,64 @@ export function createApp(options: {
    * "Three analyses are already running" while trying to attach a file, and concluded the upload
    * was broken. A network outage must not present as a broken uploader.
    */
-  function pool(limit: number, sameKey: string, atCapacity: string) {
+  function pool(limit: number, sameKey: string, atCapacity: string, deadlineMs: number) {
     const busy = new Set<string>();
     return async function run<T>(key: string, work: () => Promise<T>) {
       if (busy.has(key)) throw new HttpError(409, sameKey);
       if (busy.size >= limit) throw new HttpError(429, atCapacity);
       busy.add(key);
+      const started = Date.now();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // The slot is released when the work settles — so work that never settles held it for
+      // ever. Three of those and the pool was shut permanently: every later request got "Three
+      // analyses are already running" until someone restarted the container, with nothing in
+      // the log to say why. Per-request timeouts did not cover it, because a request is only
+      // one step of a qualification (research, crawl, then the model).
+      //
+      // So the slot itself carries a deadline. Whatever hangs underneath, the slot comes back.
       try {
-        return await work();
+        // Inside the try: work() that throws synchronously must still release the slot, which is
+        // the very failure this pool exists to prevent.
+        const running = work();
+        // Past the deadline nothing awaits `running` any more, and an unhandled rejection from it
+        // would take the process down. The outcome is already reported, so it is swallowed here.
+        running.catch(() => {});
+        return await Promise.race([
+          running,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              const held = Math.round((Date.now() - started) / 1000);
+              console.error('[pool] Reclaimed a slot held ' + held + 's by ' + key);
+              reject(
+                new HttpError(
+                  504,
+                  'This took longer than ' +
+                    Math.round(deadlineMs / 60000) +
+                    ' minutes and was abandoned so other work can continue. Nothing was saved — please retry.',
+                ),
+              );
+            }, deadlineMs);
+          }),
+        ]);
       } finally {
+        clearTimeout(timer);
         busy.delete(key);
       }
     };
   }
+  // A qualification is research, crawling and then the model: around a minute in practice, so
+  // five is a ceiling for something that has gone wrong rather than a limit on honest work.
   const single = pool(
     3,
     'Analysis is already running for this item.',
     'Three analyses are already running. Please retry when one finishes.',
+    options.poolDeadlineMs ?? 5 * 60_000,
   );
   const readUpload = pool(
     3,
     'Your previous document is still being read. Upload the next one when it has finished.',
     'Three documents are being read already. Please retry when one finishes.',
+    options.poolDeadlineMs ?? 2 * 60_000,
   );
   app.get('/api/health', (_req, res) => {
     try {

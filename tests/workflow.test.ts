@@ -926,6 +926,62 @@ test('source uploads reject binary/mislabeled files and preserve original text d
     f.dispose();
   }
 });
+test('work that never finishes gives its slot back instead of shutting the pool', async () => {
+  // Production failure, twice: a qualification hung with no error and no result, its slot was
+  // never released, and after three of those every request got "Three analyses are already
+  // running" until the container was restarted. Per-request timeouts did not catch it, so the
+  // slot itself now carries a deadline.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'innovista-test-'));
+  const { app, db } = createApp({
+    dataDir: dir,
+    generate: generated,
+    // Never settles, exactly like the hung call in production.
+    fetchWebsite: () => new Promise(() => {}),
+    extractDocument: async () =>
+      'Extracted training text long enough to pass the readable-content threshold.',
+    // Keep the test quick; production allows five minutes.
+    poolDeadlineMs: 150,
+  });
+  const admin = request.agent(app);
+  const send = (url: string, csrf: string) =>
+    admin.post('/api' + url).set('X-Requested-With', 'Innovista').set('X-CSRF-Token', csrf);
+  try {
+    const setup = await send('/auth/setup', '').send({
+      name: 'Test Administrator',
+      username: 'test-admin',
+      password: 'A-long-test-password-2026',
+    });
+    assert.equal(setup.status, 201, JSON.stringify(setup.body));
+    const csrf = setup.body.csrf_token as string;
+
+    // Fill every slot with work that will never come back.
+    const hung: Array<Promise<unknown>> = [];
+    for (let n = 0; n < 3; n++) {
+      const project = await send('/projects', csrf).send({ name: 'Hung ' + n });
+      assert.equal(project.status, 201, JSON.stringify(project.body));
+      hung.push(
+        send('/projects/' + project.body.id + '/sources/website', csrf)
+          .send({ url: 'https://hangs.example.com', revision: project.body.revision })
+          .then((r) => r),
+      );
+    }
+    // Each one is abandoned at the deadline and answers 504 rather than hanging for ever.
+    for (const response of await Promise.all(hung))
+      assert.equal((response as { status: number }).status, 504, 'abandoned at the deadline');
+
+    // The pool is usable again: before the fix this was a permanent 429.
+    const after = await send('/projects', csrf).send({ name: 'After' });
+    assert.equal(after.status, 201, JSON.stringify(after.body));
+    const upload = await send('/projects/' + after.body.id + '/sources/upload', csrf)
+      .field('revision', String(after.body.revision))
+      .attach('file', Buffer.from('placeholder'), 'brief.docx');
+    assert.equal(upload.status, 201, JSON.stringify(upload.body));
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a stalled provider cannot block attaching a document', async () => {
   // Reproduces the production failure: remote work and local document extraction shared one
   // pool of three. With the provider unreachable, three AI/website calls each held a slot for
