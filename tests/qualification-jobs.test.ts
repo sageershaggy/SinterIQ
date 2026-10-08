@@ -136,6 +136,10 @@ async function fixture(options: { provider?: boolean } = {}) {
     // The runner is stepped by hand here, except where a test is about the background loop.
     runJobs,
     generate: options.provider === false ? undefined : ai.generate,
+    // Short enough to keep the suite quick, long enough that a lead released straight after a
+    // stop is still finished and kept (production: 2s poll, 30s grace).
+    haltPollMs: 20,
+    stopGraceMs: 2000,
     fetchWebsite: async (url) => ({
       url,
       content:
@@ -569,6 +573,42 @@ test('requalifying every lead redoes current results once, skipping only leads q
       ],
     );
   } finally {
+    f.dispose();
+  }
+});
+
+test('a lead that stops responding does not hold the stop open', async () => {
+  // Production: a job hung on one lead and sat "stopping after this lead in progress" for 69
+  // minutes, because the stop flag was only read between leads. Stop still finishes a lead that
+  // is going to finish (the test below), but a lead that has stopped responding is left behind.
+  const f = await fixture();
+  let held: { entered: Promise<void>; release: () => void } | undefined;
+  try {
+    const project = await f.project();
+    for (const name of ['Alpha Pumps', 'Beta Pumps', 'Gamma Pumps']) await f.lead(project, name);
+    const job = ((await f.start(project, { scope: 'raw' })).body as QualificationJobState).job!;
+    const first = f.items(job.id)[0].name;
+    held = f.ai.hold(first);
+    const step = f.jobs.runNext(project.id);
+    await held.entered;
+
+    const stopping = await f.stop(project, job.id);
+    assert.equal(stopping.status, 200, stopping.text);
+    // Deliberately never released: this lead is the one that has stopped responding.
+    assert.equal(await step, 'finished', 'the stop did not wait for the hung lead');
+
+    const stopped = (await f.state(project)).job!;
+    assert.equal(stopped.status, 'STOPPED');
+    assert.equal(stopped.done, 0, 'the hung lead was not counted as done');
+    assert.match(stopped.stop_reason, /stopped responding and was left for a later job/);
+    // Its item stays PENDING, so a later job simply picks it up again.
+    assert.deepEqual(
+      f.items(job.id).map((item) => item.status),
+      ['PENDING', 'PENDING', 'PENDING'],
+    );
+    assert.equal(await f.jobs.runNext(project.id), 'idle');
+  } finally {
+    held?.release();
     f.dispose();
   }
 });

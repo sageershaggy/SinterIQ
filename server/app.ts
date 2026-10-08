@@ -329,6 +329,10 @@ export function createApp(options: {
   runJobs?: boolean;
   /** Overrides both concurrency-pool deadlines, so a test need not wait minutes for one. */
   poolDeadlineMs?: number;
+  /** How often a lead in progress re-reads the job's stop flag. Tests shorten it. */
+  haltPollMs?: number;
+  /** How long a stop waits for the lead in progress before leaving it. Tests shorten it. */
+  stopGraceMs?: number;
 }) {
   const production = options.production || false;
   const { db, secrets } = openDatabase(options.dataDir, options.legacyPath);
@@ -1567,6 +1571,8 @@ export function createApp(options: {
     aiReady: () => Boolean(getAiConfig(db, secrets).api_key || options.generate),
     limit: expensiveLimit,
     autoRun: options.runJobs !== false,
+    haltPollMs: options.haltPollMs,
+    stopGraceMs: options.stopGraceMs,
   });
   qualificationJobs.install(app);
   app.post('/api/projects/:projectId/leads/:leadId/review', (req, res) => {

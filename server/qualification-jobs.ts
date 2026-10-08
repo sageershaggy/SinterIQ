@@ -156,6 +156,10 @@ export function createQualificationJobs(deps: {
   limit?: RequestHandler;
   /** False leaves the runner to the caller (tests step it with runNext and drain). */
   autoRun?: boolean;
+  /** How often a lead in progress re-reads the stop flag. Tests shorten it. */
+  haltPollMs?: number;
+  /** How long a stop waits for the lead in progress before leaving it. Tests shorten it. */
+  stopGraceMs?: number;
 }) {
   const { db } = deps;
   const autoRun = deps.autoRun !== false;
@@ -485,6 +489,30 @@ export function createQualificationJobs(deps: {
     }
   }
 
+  /**
+   * Resolves with a halt reason while a lead is still being qualified, so Stop does not have to
+   * wait for that lead. Stop is a row in the database, and the runner used to read it only
+   * between leads: a lead that took minutes — or hung — left Stop pending for exactly as long,
+   * and one that hung held it indefinitely. The lead's own work is abandoned, not cancelled; its
+   * item stays PENDING (settle only moves a PENDING row) so a later job simply picks it up again.
+   */
+  function watchForHalt(jobId: number) {
+    let cancel = () => {};
+    const halted = new Promise<string>((resolve) => {
+      const tick = setInterval(() => {
+        const job = jobById(jobId);
+        const reason = !job || job.status !== 'RUNNING' ? 'Stopped.' : haltReason(job);
+        if (reason) {
+          clearInterval(tick);
+          resolve(reason);
+        }
+      }, deps.haltPollMs ?? 2000);
+      tick.unref?.();
+      cancel = () => clearInterval(tick);
+    });
+    return { halted, cancel };
+  }
+
   /** One step: check the job may continue, then qualify (or skip) its next lead. */
   async function advance(projectId: number): Promise<JobStep> {
     const job = runningJob(projectId);
@@ -499,7 +527,40 @@ export function createQualificationJobs(deps: {
       finish(job.id, 'DONE', '');
       return 'finished';
     }
-    if ((await processItem(job, item)) === 'wait') return 'wait';
+    const watch = watchForHalt(job.id);
+    const lead = processItem(job, item);
+    // Once the watch wins nothing awaits this any more, and an unhandled rejection would take
+    // the process down. processItem records its own failures, so the outcome is already kept.
+    lead.catch(() => {});
+    const outcome = await Promise.race([
+      lead.then((step) => ({ reason: '', step })),
+      watch.halted.then((reason) => ({ reason, step: undefined })),
+    ]);
+    watch.cancel();
+    if (outcome.reason) {
+      // Stop still finishes the lead in progress and keeps its work — that is what the button
+      // promises and what a reviewer expects. It just no longer waits for ever: a lead that has
+      // stopped responding is left for a later job instead of holding the stop open. One hung
+      // lead kept a job "stopping" for 69 minutes before this.
+      const finished = await Promise.race([
+        lead.then(() => true),
+        new Promise<false>((resolve) => {
+          const grace = setTimeout(() => resolve(false), deps.stopGraceMs ?? 30_000);
+          grace.unref?.();
+        }),
+      ]);
+      const after = jobById(job.id);
+      if (after && after.status === 'RUNNING')
+        finish(
+          job.id,
+          'STOPPED',
+          finished
+            ? outcome.reason
+            : outcome.reason + ' The lead in progress stopped responding and was left for a later job.',
+        );
+      return 'finished';
+    }
+    if (outcome.step === 'wait') return 'wait';
     // Stop, a training change or a run of provider failures takes effect right after this lead.
     const after = jobById(job.id);
     if (!after || after.status !== 'RUNNING') return 'finished';
