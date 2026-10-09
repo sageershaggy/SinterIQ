@@ -291,6 +291,23 @@ export interface SourceUpload {
 }
 
 /**
+ * A refused upload that was nonetheless read. The library turns a document away when it already
+ * holds the same file or the same text — which it can only know by reading the upload through to
+ * its last word. Such an attempt is never a document that "was not read": it is a second copy of
+ * one that is already there, so it belongs with the copies, not with the failures.
+ *
+ * duplicate_of (and in_library through it) says so outright. Attempts logged before that column
+ * existed carry only the refusal's own wording, so the two messages the library has ever used for
+ * it are recognised too; both name the library holding the content, which no other refusal does.
+ */
+export const refusedAsCopy = (upload: SourceUpload) =>
+  upload.status === 'FAILED' &&
+  (Boolean(upload.duplicate_of) ||
+    Boolean(upload.in_library) ||
+    /^already in the library as /i.test(upload.reason) ||
+    /^this source content is already attached/i.test(upload.reason));
+
+/**
  * A library source that repeats an earlier one. 'content': the same file or the same text, which
  * "Remove duplicates" removes, keeping the oldest copy. 'name': the same title with different
  * content, pointed out only, since it may be a newer edition.

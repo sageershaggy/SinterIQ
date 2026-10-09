@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Copy, FileCheck2, LoaderCircle } from 'lucide-react';
+import { refusedAsCopy } from '../shared/research';
 import type { SourceDuplicate, SourceUpload } from '../shared/research';
 import { date } from './api';
 import { Alert, Modal, Spinner } from './ui';
@@ -41,12 +42,14 @@ export function ReadingNow({ uploads }: { uploads: SourceUpload[] }) {
 
 /**
  * Uploads that were not added because the library already holds their content, with the copy
- * that holds it. Not a problem to fix — the document is in the library — so it stays folded.
+ * that holds it where it can still be named. Not a problem to fix — the document is in the
+ * library — so it stays folded, and it is the only place such an upload is reported.
  */
 export function NotAddedAgain({ uploads }: { uploads: SourceUpload[] }) {
-  const copies = uploads
-    .filter((item) => item.status === 'FAILED' && item.in_library)
-    .slice(0, 12);
+  // Every copy the library turned away, including the ones whose holder it can no longer name:
+  // an attempt logged before duplicate_of existed still knows it was refused as a copy, and it
+  // belongs here rather than among the uploads that were never read.
+  const copies = uploads.filter(refusedAsCopy).slice(0, 12);
   if (!copies.length) return null;
   return (
     <details className="library-copies">
@@ -61,7 +64,13 @@ export function NotAddedAgain({ uploads }: { uploads: SourceUpload[] }) {
           <li key={item.id}>
             <span className="library-copy-name">{item.filename}</span>
             <span>
-              In the library as <strong>{item.in_library!.title}</strong>
+              {item.in_library ? (
+                <>
+                  In the library as <strong>{item.in_library.title}</strong>
+                </>
+              ) : (
+                'Already in the library; this upload was read and recognised as the same content'
+              )}
             </span>
             <small>
               {date(item.created_at)} · {item.created_by}

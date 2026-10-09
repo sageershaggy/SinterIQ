@@ -1,6 +1,7 @@
 import { useId, useState, type CSSProperties } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, FileWarning } from 'lucide-react';
 import type { Rubric, Source } from '../shared/types';
+import { refusedAsCopy } from '../shared/research';
 import type { SourceUpload, TrainingGraph } from '../shared/research';
 import { date } from './api';
 import './TrainingInsight.css';
@@ -51,8 +52,10 @@ export function UploadProblems({ uploads, sources }: { uploads: SourceUpload[]; 
   // A failure whose content is in the library after all — the same file uploaded again, or a
   // copy refused because the library had it — is no longer a problem; nor is one later uploaded
   // successfully under the same name (attempts logged before file fingerprints were kept).
+  // refusedAsCopy covers the copy even when the source it duplicated can no longer be named:
+  // the library read the upload in full to recognise it, so reporting it as unread is wrong.
   const failed = uploads
-    .filter((item) => item.status === 'FAILED' && !item.in_library)
+    .filter((item) => item.status === 'FAILED' && !item.in_library && !refusedAsCopy(item))
     .filter((item) => !sources.some((source) => source.filename === item.filename))
     .slice(0, 8);
   if (!failed.length) return null;

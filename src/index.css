@@ -5078,47 +5078,6 @@ label {
   margin-top: 2px;
 }
 
-/* Export menu */
-.export-menu {
-  position: relative;
-}
-.export-dropdown {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 40;
-  min-width: 268px;
-  padding: 6px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(25, 46, 38, 0.14);
-  display: flex;
-  flex-direction: column;
-}
-.export-dropdown a {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 9px 11px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--ink);
-}
-.export-dropdown a:hover {
-  background: var(--pale);
-}
-.export-dropdown a small {
-  font-weight: 450;
-  color: var(--muted);
-}
-.export-divider {
-  height: 1px;
-  margin: 5px 4px;
-  background: var(--line);
-}
-
 /* Per-row actions: qualify, open, delete */
 .row-actions {
   display: flex;

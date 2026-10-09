@@ -8,6 +8,7 @@ import { createApp } from '../server/app';
 import type { Generate } from '../server/ai';
 import { HttpError } from '../server/validation';
 import type { Project, TrainingSnapshot } from '../shared/types';
+import { refusedAsCopy } from '../shared/research';
 import type { SourceDuplicate, SourceUpload } from '../shared/research';
 
 /*
@@ -408,6 +409,54 @@ test('a removed source is gone from the library and from the next Train AI', asy
       seen.at(-1)!.sources.map((source) => source.title),
       ['Master.docx'],
     );
+  } finally {
+    f.dispose();
+  }
+});
+
+test('a copy whose original was removed is still a copy, not a document that was not read', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await f.newProject('Decision makers');
+    const research = text('Decision maker research');
+    const original = await f.upload(
+      project.id,
+      project.revision,
+      '08_Decision_Maker_Research.docx',
+      research,
+    );
+    assert.equal(original.status, 201, original.text);
+
+    // The same content again, under the name the person actually kept: read, recognised, refused.
+    let current = await f.project(project.id);
+    const copy = await f.upload(
+      project.id,
+      current.revision,
+      '08_Decision_Maker_Research _1_.docx',
+      research,
+    );
+    assert.equal(copy.status, 409);
+    assert.match(copy.body.error, /^Already in the library as 08_Decision_Maker_Research\.docx/);
+
+    // Removing the source it duplicated clears duplicate_of (ON DELETE SET NULL), so nothing in
+    // the row points at the library any more. Before, that made the Training page report the
+    // upload under "One upload was not read" — a document it had in fact read to the last word.
+    current = await f.project(project.id);
+    const removed = await f.del('/projects/' + project.id + '/sources/' + original.body.id, {
+      revision: current.revision,
+    });
+    assert.equal(removed.status, 200, removed.text);
+
+    const log = await uploadsOf(f, project.id);
+    const refused = log.find((item) => item.filename === '08_Decision_Maker_Research _1_.docx')!;
+    assert.equal(refused.status, 'FAILED');
+    assert.equal(refused.duplicate_of, null, 'the source it duplicated is gone');
+    assert.equal(refused.in_library, null, 'and so nothing holds its content now');
+    // The refusal's own wording still says why it was turned away, and that is enough to know
+    // it was read: the library could not have recognised the content otherwise.
+    assert.ok(refusedAsCopy(refused), 'a refused copy is never reported as unread');
+    assert.ok(!refusedAsCopy(log.find((item) => item.status === 'READ')!));
   } finally {
     f.dispose();
   }

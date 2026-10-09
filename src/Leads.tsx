@@ -20,7 +20,6 @@ import {
   Users,
   Pencil,
   Trash2,
-  ChevronDown,
   Phone,
   Mail,
   MessageSquareWarning,
@@ -153,15 +152,13 @@ export default function Leads({
     [importing, setImporting] = useState(false);
   const [busy, setBusy] = useState(''),
     mounted = useRef(true);
-  const exportRef = useRef<HTMLDivElement>(null);
   const detail = detailId;
   const setDetail = (id: number | null, tab: LeadTab = 'overview') => {
     window.location.hash = id
       ? leadLink(project.id, id, tab, queue)
       : `#projects/${project.id}/${queue ? 'review' : 'leads'}`;
   };
-  const [exportOpen, setExportOpen] = useState(false),
-    [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
+  const [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
     [assigning, setAssigning] = useState<number[] | null>(null),
     [enrolling, setEnrolling] = useState(false),
     [assignees, setAssignees] = useState<User[]>([]);
@@ -183,22 +180,6 @@ export default function Leads({
     }, 250);
     return () => clearTimeout(timer);
   }, [search]);
-  useEffect(() => {
-    // The Export menu closes on an outside click or Escape.
-    if (!exportOpen) return;
-    const away = (event: MouseEvent) => {
-      if (!exportRef.current?.contains(event.target as Node)) setExportOpen(false);
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setExportOpen(false);
-    };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', key);
-    };
-  }, [exportOpen]);
   useEffect(() => {
     api<User[]>(base + '/assignees')
       .then(setAssignees)
@@ -500,79 +481,46 @@ export default function Leads({
               open={filtersOpen}
               count={activeFacetCount(facets) + (status !== defaultStatus ? 1 : 0)}
               controls={filterBarId}
-              onToggle={() => {
-                setFiltersOpen((open) => !open);
-                setExportOpen(false);
-              }}
+              onToggle={() => setFiltersOpen((open) => !open)}
             />
-            <div className="export-menu" ref={exportRef}>
-              <button
-                className="button secondary"
-                aria-expanded={exportOpen}
-                aria-haspopup="true"
-                onClick={() => {
-                  setExportOpen((open) => !open);
-                }}
-              >
-                <ArrowDownToLine size={15} />
-                Export
-                <ChevronDown size={14} />
-              </button>
-              {exportOpen && (
-                <div className="export-dropdown" role="menu">
-                  <a
-                    role="menuitem"
-                    href={
-                      '/api' +
-                      base +
-                      '/leads/export?' +
-                      new URLSearchParams([
-                        ['status', status],
-                        ['search', query],
-                        // The same facets and sort as the table, from the same function.
-                        ...facetParams(facets),
-                      ])
-                    }
-                    onClick={() => setExportOpen(false)}
-                  >
-                    <strong>This view</strong>
-                    <small>
-                      {statusFilters(queue).find((o) => o.value === status)?.label}
-                      {query ? ' · matching “' + query + '”' : ''}
-                      {activeFacetCount(facets)
-                        ? ' · ' +
-                          activeFacetCount(facets) +
-                          ' filter' +
-                          (activeFacetCount(facets) === 1 ? '' : 's')
-                        : ''}{' '}
-                      · {total} lead
-                      {total === 1 ? '' : 's'}
-                    </small>
-                  </a>
-                  <div className="export-divider" />
-                  {statusFilters(queue)
-                    .filter((option) => option.value !== status)
-                    .map((option) => (
-                      <a
-                        key={option.value}
-                        role="menuitem"
-                        href={
-                          '/api' +
-                          base +
-                          '/leads/export?' +
-                          new URLSearchParams({
-                            status: option.value === 'ASSIGNED_TO_ME' ? 'ASSIGNED' : option.value,
-                            ...(option.value === 'ASSIGNED_TO_ME' ? { assigned_to: 'me' } : {}),
-                          })
-                        }
-                        onClick={() => setExportOpen(false)}
-                      >
-                        {option.label}
-                      </a>
-                    ))}
-                </div>
-              )}
-            </div>
+            {/*
+              Export is the view on screen, and only that: the status, the search text and the
+              facets the table itself is filtered by, taken from the same facetParams the table
+              sends. A menu of other views to export was offered here and removed on request —
+              exporting a list nobody is looking at invites sending the wrong file.
+            */}
+            <a
+              className="button secondary"
+              href={
+                '/api' +
+                base +
+                '/leads/export?' +
+                new URLSearchParams([
+                  ['status', status],
+                  ['search', query],
+                  // The same facets and sort as the table, from the same function.
+                  ...facetParams(facets),
+                ])
+              }
+              title={
+                'Export the ' +
+                total +
+                ' lead' +
+                (total === 1 ? '' : 's') +
+                ' this view shows' +
+                (query ? ', matching “' + query + '”' : '') +
+                (activeFacetCount(facets)
+                  ? ' with ' +
+                    activeFacetCount(facets) +
+                    ' filter' +
+                    (activeFacetCount(facets) === 1 ? '' : 's') +
+                    ' applied'
+                  : '')
+              }
+            >
+              <ArrowDownToLine size={15} />
+              Export
+            </a>
           </div>
           {filtersOpen && (
             <LeadFilterBar
@@ -2077,10 +2025,11 @@ const queueViews = [
 ];
 
 /**
- * Preset views, offered as one-click exports in the Export menu (the list itself filters with
- * the filter bar's facets). The values come from the shared vocabulary so the server enum and
- * this list cannot drift; ASSIGNED_TO_ME is the one client-only value, being the ASSIGNED view
- * narrowed to the signed-in account, which the server expresses as status=ASSIGNED&assigned_to=me.
+ * The views the filter bar's "AI qualification" choice offers, which is also what the page's
+ * status is and therefore what Export sends. The values come from the shared vocabulary so the
+ * server enum and this list cannot drift; ASSIGNED_TO_ME is the one client-only value, being the
+ * ASSIGNED view narrowed to the signed-in account, which the server expresses as
+ * status=ASSIGNED&assigned_to=me.
  */
 type FilterValue = LeadStatusFilter | 'ASSIGNED_TO_ME';
 type FilterOption = { value: FilterValue; label: string };
