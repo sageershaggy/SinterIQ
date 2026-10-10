@@ -842,7 +842,7 @@ test('the counts above the table cover the whole project and each one is a worki
   }
 });
 
-test('a real qualification lands in Qualified, and editing the lead moves it to Requalification needed', async () => {
+test('a real qualification lands in Qualified, and editing the lead leaves it Qualified', async () => {
   const f = fixture();
   try {
     await f.setup();
@@ -873,10 +873,21 @@ test('a real qualification lands in Qualified, and editing the lead moves it to 
       country: 'Germany',
     });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
-    assert.deepEqual(await names('qualification=QUALIFIED'), []);
-    assert.deepEqual(await names('qualification=REQUALIFY'), ['Real Run Pumps']);
+    // Correcting a settled lead's details is not a reason to take its decision away: it stays
+    // Qualified, out of the review queue, and nothing asks to be re-qualified on its own.
+    assert.deepEqual(await names('qualification=QUALIFIED'), ['Real Run Pumps']);
+    assert.deepEqual(await names('qualification=REQUALIFY'), []);
     const summary = (await f.agent.get('/api' + base)).body.summary;
-    assert.deepEqual([summary.qualified, summary.requalify], [0, 1]);
+    assert.deepEqual([summary.qualified, summary.requalify], [1, 0]);
+    // The edit was saved exactly as it was typed: capitalising is for the text a list brings
+    // in, never for what a person wrote. The CSV still presents it capitalised.
+    assert.equal(
+      ((await f.agent.get('/api' + base + '/' + id)).body as Lead).industry,
+      'Pump manufacturing',
+    );
+    const csv = await f.agent.get('/api' + base + '/export?status=QUALIFIED');
+    assert.equal(csv.status, 200);
+    assert.match(csv.text, /Pump Manufacturing/);
   } finally {
     f.dispose();
   }
@@ -934,19 +945,21 @@ test('"Qualified by AI" is the AI’s own current verdict, whatever a reviewer d
       return (response.body.leads as Lead[]).map((lead) => lead.name).sort();
     };
     // Alone: every lead whose current run said Qualified, the overruled one included. The edited
-    // lead's verdict belongs to a record that has changed since, so it is not current.
+    // lead is there too — correcting a settled lead's details leaves its verdict current.
     assert.deepEqual(await names('qualification=AI_SAID_QUALIFIED'), [
+      'Edited Pumps',
       'Overruled Pumps',
       'Said Pumps',
     ]);
     // The status follows the reviewer instead.
-    assert.deepEqual(await names('qualification=QUALIFIED'), ['Said Pumps']);
+    assert.deepEqual(await names('qualification=QUALIFIED'), ['Edited Pumps', 'Said Pumps']);
     assert.deepEqual(await names('qualification=NOT_QUALIFIED'), [
       'Bearings Works',
       'Overruled Pumps',
     ]);
     // ORed with any other value chosen beside it, ANDed with the other facets and the search.
     assert.deepEqual(await names('qualification=AI_SAID_QUALIFIED&qualification=RAW'), [
+      'Edited Pumps',
       'Overruled Pumps',
       'Raw Pumps',
       'Said Pumps',
@@ -957,6 +970,8 @@ test('"Qualified by AI" is the AI’s own current verdict, whatever a reviewer d
       'Overruled Pumps',
       'Said Pumps',
     ]);
+    // Nothing needs requalifying: the edit kept the lead current.
+    assert.deepEqual(await names('qualification=REQUALIFY'), []);
     assert.deepEqual(await names('qualification=REQUALIFY&qualification=AI_SAID_QUALIFIED'), [
       'Edited Pumps',
       'Overruled Pumps',
@@ -976,7 +991,7 @@ test('"Qualified by AI" is the AI’s own current verdict, whatever a reviewer d
         .filter(Boolean)
         .map((line) => /^"((?:[^"]|"")*)"/.exec(line)![1])
         .sort(),
-      ['Overruled Pumps', 'Said Pumps'],
+      ['Edited Pumps', 'Overruled Pumps', 'Said Pumps'],
     );
     // Once the training changes, no verdict is current.
     const current = (await f.agent.get('/api/projects/' + project.id)).body.project as Project;
@@ -1076,4 +1091,87 @@ test('date-added presets count whole days in the viewer’s time zone', () => {
       addedRange(parse({ added: 'CUSTOM', added_from: '2026-09-02', added_to: '2026-09-01' }), now),
     (error: unknown) => error instanceof HttpError && error.status === 400,
   );
+});
+
+test('a person moves leads to Qualified or Disqualified, and the decision stands on its own', async () => {
+  const f = fixture();
+  try {
+    await f.setup();
+    const project = await readyProject(f);
+    const base = '/projects/' + project.id + '/leads';
+    const add = async (name: string) => {
+      const created = await f.post(base, {
+        name,
+        website: 'https://' + name.toLowerCase().replace(/\s+/g, '-') + '.example.com',
+        industry: 'Pumps',
+        country: 'Germany',
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      return created.body.id as number;
+    };
+    const kept = await add('Kept Pumps');
+    const dropped = await add('Dropped Pumps');
+    const names = async (query: string) =>
+      ((await f.agent.get('/api' + base + '?' + query)).body.leads as Lead[])
+        .map((lead) => lead.name)
+        .sort();
+
+    // Neither has been analysed: both are waiting in the queue.
+    assert.deepEqual(await names('status=REVIEW_QUEUE'), ['Dropped Pumps', 'Kept Pumps']);
+
+    const moved = await f.post(base + '/decision', { ids: [dropped], decision: 'DISQUALIFIED' });
+    assert.equal(moved.status, 200, JSON.stringify(moved.body));
+    assert.equal(moved.body.moved, 1);
+    const after = (await f.agent.get('/api' + base + '/' + dropped)).body as Lead;
+    assert.equal(after.status, 'DISQUALIFIED');
+    assert.equal(after.reviewed, true);
+    // Status only: no run was written, no score invented, and the revision did not move, so
+    // nothing went stale and nothing asks to be qualified again.
+    assert.equal(after.latest_run_id, null);
+    assert.equal(after.score, null);
+    assert.equal(after.revision, 1);
+    assert.equal(after.stale, false);
+    assert.equal(after.next_step, 'NONE');
+
+    // The decision takes it out of the queue, and it is Not qualified for the facets.
+    assert.deepEqual(await names('status=REVIEW_QUEUE'), ['Kept Pumps']);
+    assert.deepEqual(await names('qualification=NOT_QUALIFIED'), ['Dropped Pumps']);
+    assert.deepEqual(await names('status=DISQUALIFIED'), ['Dropped Pumps']);
+    assert.equal((await f.agent.get('/api/projects/' + project.id)).body.project.review_count, 1);
+
+    // Moving a lead where it already is changes nothing and is not an error.
+    const again = await f.post(base + '/decision', { ids: [dropped], decision: 'DISQUALIFIED' });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.moved, 0);
+
+    // Qualified by hand, in a batch, and the export preset asks the same question.
+    const up = await f.post(base + '/decision', {
+      ids: [kept, dropped],
+      decision: 'QUALIFIED',
+    });
+    assert.equal(up.status, 200, JSON.stringify(up.body));
+    assert.equal(up.body.moved, 2);
+    assert.deepEqual(await names('status=QUALIFIED'), ['Dropped Pumps', 'Kept Pumps']);
+    const exported = await f.agent.get('/api' + base + '/export?status=QUALIFIED');
+    assert.equal(exported.status, 200);
+    const lines = exported.text.replace(/^\ufeff/, '').split('\r\n').filter(Boolean);
+    assert.equal(lines.length, 3, 'a header and the two leads');
+    // The AI never qualified either, so the AI columns are empty while the status is not.
+    const header = lines[0].split(',').map((cell) => cell.replace(/"/g, ''));
+    const row = lines[1].split(',').map((cell) => cell.replace(/"/g, ''));
+    assert.equal(row[header.indexOf('decision')], 'QUALIFIED');
+    assert.equal(row[header.indexOf('ai_decision')], '');
+    assert.equal(row[header.indexOf('ai_qualified_at')], '');
+
+    // A lead nobody may touch in this project is refused, not silently skipped.
+    const other = await f.post('/projects', { name: 'Another project' });
+    assert.equal(other.status, 201);
+    const outside = await f.post('/projects/' + other.body.id + '/leads/decision', {
+      ids: [kept],
+      decision: 'QUALIFIED',
+    });
+    assert.equal(outside.status, 404, JSON.stringify(outside.body));
+  } finally {
+    f.dispose();
+  }
 });

@@ -1,4 +1,15 @@
 export type Decision = 'QUALIFIED' | 'NOT_A_TARGET' | 'NEEDS_REVIEW';
+/**
+ * A lead's qualification as the record holds it. Decision is what an AI run may return and
+ * nothing else, so the model can never produce the one value below that only a person can:
+ * DISQUALIFIED is somebody deciding by hand that this lead is not worth pursuing, as against
+ * NOT_A_TARGET, which is the analysis saying so. Keeping them apart is the point — a list of
+ * leads people rejected is a different list from one the rules rejected, and the two are
+ * exported separately.
+ */
+export type LeadStatus = 'UNREVIEWED' | Decision | 'DISQUALIFIED';
+/** Settled by a person: their decision is not something the next run quietly overwrites. */
+export const decidedByHand = (status: LeadStatus) => status === 'DISQUALIFIED';
 /** Outreach readiness derived from the server-computed fit score. */
 export type NextStep = 'CALL_READY' | 'SEND_EMAIL' | 'REVIEW_WITH_CLIENT' | 'NONE';
 export const nextStepBands = { call: 80, email: 70, review: 50 } as const;
@@ -7,7 +18,9 @@ export const nextStepBands = { call: 80, email: 70, review: 50 } as const;
  * it the lead is Not a target. Missing information lowers the score, it never causes a review.
  */
 export const qualifiedFloor = 50;
-export function nextStepFor(decision: Decision | 'UNREVIEWED', score: number | null): NextStep {
+export function nextStepFor(decision: LeadStatus, score: number | null): NextStep {
+  // A lead someone rejected by hand is not approached, whatever it scored.
+  if (decision === 'DISQUALIFIED') return 'NONE';
   if (decision === 'NOT_A_TARGET' || decision === 'UNREVIEWED' || score === null) return 'NONE';
   // An unresolved decision is a review regardless of how well it scored.
   if (decision === 'NEEDS_REVIEW') return 'REVIEW_WITH_CLIENT';
@@ -219,7 +232,7 @@ export interface Lead {
   industry: string;
   notes: string;
   revision: number;
-  status: 'UNREVIEWED' | Decision;
+  status: LeadStatus;
   score: number | null;
   confidence: number | null;
   latest_run_id: number | null;
@@ -348,6 +361,7 @@ export const leadStatusFilters = [
   'UNASSIGNED',
   'NEEDS_REVIEW',
   'NOT_A_TARGET',
+  'DISQUALIFIED',
   'STALE',
   'NEEDS_RESEARCH',
   'NO_WEBSITE',

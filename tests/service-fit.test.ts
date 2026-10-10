@@ -537,7 +537,8 @@ test('the lead keeps its current service fit for the list, the Service fit filte
       ),
     );
 
-    // Editing the lead supersedes its result: still shown (stale), no longer filtered on.
+    // Correcting a Qualified lead's details leaves its result standing: the fit is current, so
+    // it is still filtered on and still counted.
     const edited = await f.put(base + '/' + field.id, {
       revision: field.revision,
       name: 'Field Pumps',
@@ -545,14 +546,34 @@ test('the lead keeps its current service fit for the list, the Service fit filte
       city: 'Leeds',
     });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
+    const corrected = (await f.get(base + '/' + field.id)).body as Lead;
+    assert.equal(corrected.stale, false);
+    assert.equal(corrected.city, 'Leeds');
+    assert.deepEqual(corrected.service_fit, [{ category: 'App development', fit: 'GOOD' }]);
+    assert.deepEqual(await names('service_fit=App%20development'), ['Fax Tools', 'Field Pumps']);
+
+    // A result superseded by new training is a different matter: still shown, no longer filtered.
+    const current = (await f.get('/projects/' + project.id)).body.project as Project;
+    const added = await f.post('/projects/' + project.id + '/sources', {
+      revision: current.revision,
+      title: 'Later brief',
+      content: 'Also consider valve manufacturers that run their own engineering team.',
+    });
+    assert.equal(added.status, 201, JSON.stringify(added.body));
     const stale = (await f.get(base + '/' + field.id)).body as Lead;
     assert.equal(stale.stale, true);
     assert.deepEqual(stale.service_fit, [{ category: 'App development', fit: 'GOOD' }]);
-    assert.deepEqual(await names('service_fit=App%20development'), ['Fax Tools']);
+    assert.deepEqual(await names('service_fit=App%20development'), []);
     const after = (await f.get('/projects/' + project.id + '/lead-facets')).body as LeadFacetOptions;
-    assert.equal(after.service_fit.find((item) => item.value === 'App development')?.count, 1);
+    assert.equal(after.service_fit.find((item) => item.value === 'App development')?.count, 0);
 
-    // Requalifying replaces the stored fit with the new run's.
+    // Requalifying replaces the stored fit with the new run's. The training has to be published
+    // again first: a project whose library has changed refuses to qualify until it is.
+    const reready = (await f.get('/projects/' + project.id)).body.project as Project;
+    const republished = await f.post('/projects/' + project.id + '/training/publish', {
+      revision: reready.revision,
+    });
+    assert.equal(republished.status, 200, JSON.stringify(republished.body));
     f.ratings.set('Field Pumps', []);
     assert.equal((await f.post(base + '/' + field.id + '/qualify')).status, 200);
     assert.deepEqual(((await f.get(base + '/' + field.id)).body as Lead).service_fit, []);

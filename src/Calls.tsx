@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { CalendarClock, Mail, Phone, PhoneCall, Search } from 'lucide-react';
 import type { Project, User } from '../shared/types';
 import type { CallQueue, CallQueueRow, CallStage } from '../shared/calls';
@@ -17,6 +17,15 @@ const focusLabels: Record<Focus, string> = {
   FOLLOW_UP_REQUIRED: 'Follow-up required',
   COMPLETED: 'Completed',
 };
+/** The order the tiles and the Status filter both offer; the tiles and the filter are one choice. */
+const focusOrder = [
+  'ALL',
+  'NO_CALL_YET',
+  'DUE',
+  'PENDING',
+  'FOLLOW_UP_REQUIRED',
+  'COMPLETED',
+] as const satisfies readonly Focus[];
 
 /**
  * Every lead assigned for calling in a project (Suggestions 2, lines 26–27). Assigning a lead is
@@ -33,6 +42,7 @@ export default function Calls({
   user: User;
   notify: (text: string) => void;
 }) {
+  const datesId = useId();
   const [assignee, setAssignee] = useState(user.role === 'admin' ? 'all' : 'me');
   const [queue, setQueue] = useState<CallQueue | null>(null),
     [loading, setLoading] = useState(true),
@@ -40,6 +50,10 @@ export default function Calls({
     [refresh, setRefresh] = useState(0);
   const [focus, setFocus] = useState<Focus>('ALL'),
     [search, setSearch] = useState(''),
+    // The last call's own date, as two date inputs. Either end may stand alone, and a range
+    // entered back to front is read the way round it was meant.
+    [calledFrom, setCalledFrom] = useState(''),
+    [calledTo, setCalledTo] = useState(''),
     [updating, setUpdating] = useState<CallQueueRow | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -68,9 +82,25 @@ export default function Calls({
   const matches = (row: CallQueueRow, value: Focus) =>
     value === 'ALL' || (value === 'DUE' ? isDue(row) : row.call_stage === value);
   const needle = search.trim().toLowerCase();
+  const [from, to] =
+    calledFrom && calledTo && calledFrom > calledTo
+      ? [calledTo, calledFrom]
+      : [calledFrom, calledTo];
+  /**
+   * Within the range by the date of the lead's last call. A lead nobody has called has no such
+   * date, so asking for a range excludes it: the question is which calls happened when, and a
+   * call that has not happened has no answer.
+   */
+  const called = (row: CallQueueRow) => {
+    if (!from && !to) return true;
+    const day = (row.last_call_at || '').slice(0, 10);
+    if (!day) return false;
+    return (!from || day >= from) && (!to || day <= to);
+  };
   const visible = rows.filter(
     (row) =>
       matches(row, focus) &&
+      called(row) &&
       (!needle ||
         [row.name, row.contact_name, row.contact_email, row.contact_phone, row.city, row.country]
           .join(' ')
@@ -93,7 +123,7 @@ export default function Calls({
         </div>
       </div>
       <div className="calls-summary" role="group" aria-label="Show calls">
-        {(['ALL', 'NO_CALL_YET', 'DUE', 'PENDING', 'FOLLOW_UP_REQUIRED', 'COMPLETED'] as const).map(
+        {focusOrder.map(
           (value) => (
             <button
               key={value}
@@ -124,6 +154,47 @@ export default function Calls({
               placeholder="Search company, contact, phone or place"
             />
           </label>
+          <label className="calls-person">
+            Status
+            <select value={focus} onChange={(e) => setFocus(e.target.value as Focus)}>
+              {focusOrder.map((value) => (
+                <option key={value} value={value}>
+                  {focusLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="calls-dates">
+            <span id={datesId}>Call date</span>
+            <input
+              type="date"
+              aria-labelledby={datesId}
+              aria-label="Called from"
+              value={calledFrom}
+              max={calledTo || undefined}
+              onChange={(e) => setCalledFrom(e.target.value)}
+            />
+            <span aria-hidden="true">to</span>
+            <input
+              type="date"
+              aria-label="Called up to"
+              value={calledTo}
+              min={calledFrom || undefined}
+              onChange={(e) => setCalledTo(e.target.value)}
+            />
+            {(calledFrom || calledTo) && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setCalledFrom('');
+                  setCalledTo('');
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <label className="calls-person">
             Assigned to
             <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>

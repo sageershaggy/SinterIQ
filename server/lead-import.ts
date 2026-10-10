@@ -7,6 +7,7 @@ import { notifyProject } from './notifications';
 import { checkedUrl } from './network';
 import { importLimits, listData, mapImportRows, readImportRows, storedListData } from './import';
 import { screenFingerprint, screenRows, type ScreenResult } from './import-screen';
+import { titleCase, titleCasedFields } from '../shared/text-format';
 import { createScreenCache } from './screen-cache';
 import { HttpError, leadSchema, positiveId } from './validation';
 import { importMayReplace, recordFieldChanges } from './field-history';
@@ -165,6 +166,15 @@ export function existingStanding(db: DB, project: Project, match: { id: number; 
     archived: Boolean(row.archived_at),
   };
 }
+/** The list's own text, capitalised for reading; a URL, an email and free notes are untouched. */
+export function formatImported<T extends ImportLead>(lead: T): T {
+  const formatted = { ...lead };
+  for (const field of titleCasedFields) {
+    const value = formatted[field];
+    if (typeof value === 'string' && value) formatted[field] = titleCase(value);
+  }
+  return formatted;
+}
 /**
  * Creates a lead unless the company is already in the project. `provenance` says who supplied the
  * values — the list ('import') or a person on the lead form — and goes into lead_field_history,
@@ -178,6 +188,13 @@ export function insertLead(
 ) {
   const duplicate = findDuplicate(db, projectId, lead);
   if (duplicate) return { duplicate };
+  // Scraped lists arrive in lower case. The name, role, industry and place are capitalised as
+  // they are stored, so the record reads properly everywhere at once instead of each screen
+  // formatting it again. Deduplication is unaffected: name_key and website_key normalise anyway.
+  //
+  // Only what a list supplied. What a person types is theirs, spelled their way, here and on the
+  // lead form afterwards — the CSV export is where every value is presented capitalised.
+  if (provenance.origin === 'import') lead = formatImported(lead);
   const id = Number(
     db
       .prepare(

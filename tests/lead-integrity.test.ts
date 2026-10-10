@@ -506,8 +506,9 @@ test('a failed or stopped rerun keeps the previous status, score and run', async
     assert.equal(after.qualified_revision, before.qualified_revision);
     assert.equal(after.runs.length, 1);
 
-    // A job that fails on the lead leaves it as it was too. The lead is made out of date first
-    // (a note), so the job does not skip it as already current.
+    // A job that fails on the lead leaves it as it was too. Editing it first no longer makes it
+    // out of date — a settled lead keeps its verdict when its details are corrected — and the job
+    // runs it anyway, because a job given lead ids was asked for those leads by name.
     const edited = await f.put(base, {
       ...importedRow,
       city: after.city,
@@ -517,7 +518,8 @@ test('a failed or stopped rerun keeps the previous status, score and run', async
     });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
     const outdated = await detail(f, base);
-    assert.equal(outdated.stale, true);
+    assert.equal(outdated.stale, false);
+    assert.equal(outdated.notes, 'Met at the expo.');
     const started = await f.post('/projects/' + project.id + '/qualification-jobs', {
       scope: 'ids',
       lead_ids: [outdated.id],
@@ -530,8 +532,10 @@ test('a failed or stopped rerun keeps the previous status, score and run', async
     ).job!;
     assert.equal(job.failed, 1);
     after = await detail(f, base);
-    // Still rated: the earlier decision and score, shown out of date, never blanked.
-    assert.deepEqual(standing(after), { ...standing(before), stale: true });
+    // Still rated: the earlier decision, score and run survive a failed attempt untouched. The
+    // job did reach the lead — it counted a failure rather than a skip — and failing taught it
+    // nothing, so the lead is exactly where it was.
+    assert.deepEqual(standing(after), standing(before));
     assert.equal(after.runs.length, 1);
 
     // Stopped before it reached the lead: nothing at all happens to it.

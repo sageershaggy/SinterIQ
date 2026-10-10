@@ -7,6 +7,7 @@ import type { WebsitePage } from './network';
 import type { CrawledPage } from './crawl';
 import type { ResearchSearch } from './research-settings';
 import { HttpError, leadSchema, positiveId } from './validation';
+import { checkEmail, checkPhone } from '../shared/contact-check';
 import { recordResearchPass } from './research-log';
 import { stopContactSequences } from './funnels';
 import { currentOrigin, leadFieldHistory, recordFieldChanges } from './field-history';
@@ -263,6 +264,24 @@ export function createLeadResearch(deps: {
           websiteKey(String(current.website)) === websiteKey(outcome.website);
         if (onRecordSite)
           for (const contact of outcome.contacts || []) {
+            /*
+             * The address and the number are checked before either is stored. Both are read out
+             * of a page's running text, where a file name, a placeholder or a year sits as
+             * happily as a contact does; one that cannot be an address or a number is dropped
+             * and the reason said, rather than kept and found out by whoever writes to it.
+             * An address on the company's own domain is noted as such: short of writing to it,
+             * that is the best evidence there is that this is the right person at this company.
+             */
+            const site = String(current.website || outcome.website || '');
+            const email = checkEmail(contact.email, site);
+            const phone = checkPhone(contact.phone);
+            const dropped: string[] = [];
+            if (!email.ok) dropped.push('email (' + email.reason + ')');
+            if (!phone.ok) dropped.push('phone (' + phone.reason + ')');
+            if (dropped.length)
+              outcome.notes.push(
+                'Not kept for ' + (contact.name || 'a contact') + ': ' + dropped.join('; ') + '.',
+              );
             const inserted = db
               .prepare(
                 `INSERT OR IGNORE INTO lead_contacts
@@ -276,10 +295,15 @@ export function createLeadResearch(deps: {
                 nameKey(contact.name),
                 contact.role,
                 contact.role_category,
-                contact.email,
-                contact.phone,
+                email.ok ? contact.email : '',
+                phone.ok ? contact.phone : '',
                 contact.source_url,
-                contact.evidence,
+                contact.evidence +
+                  (email.ok && contact.email
+                    ? email.ownDomain
+                      ? ' The address is on the company’s own domain.'
+                      : ' The address is not on the company’s own domain.'
+                    : ''),
                 now(),
                 actor,
               );

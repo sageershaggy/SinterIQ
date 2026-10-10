@@ -100,7 +100,11 @@ export function staleSql(project: Project) {
  */
 export function qualificationStateSql(project: Project) {
   return (
-    "(CASE WHEN l.latest_run_id IS NULL THEN 'RAW' WHEN " +
+    // Disqualified comes first and outranks everything: a person decided this lead by hand, so
+    // it is neither raw (it may never have been analysed) nor out of date (no run supersedes a
+    // decision). It sits with Not qualified, which is what it is.
+    "(CASE WHEN l.status='DISQUALIFIED' THEN 'NOT_QUALIFIED'" +
+    " WHEN l.latest_run_id IS NULL THEN 'RAW' WHEN " +
     staleSql(project) +
     " THEN 'REQUALIFY' WHEN l.status='QUALIFIED' THEN 'QUALIFIED'" +
     " WHEN l.status='NOT_A_TARGET' THEN 'NOT_QUALIFIED' ELSE 'NEEDS_REVIEW' END)"

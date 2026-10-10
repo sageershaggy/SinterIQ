@@ -27,6 +27,16 @@ const plural = (count: number, one: string, many = one + 's') =>
 const listLimit = 300;
 
 /**
+ * A verdict the screen never actually reached: the provider failed on that row, or left it out
+ * of its answer. It arrives shaped like an UNCLEAR, but nothing judged the row, and the server
+ * deliberately does not remember it (server/screen-cache.ts) so it is asked again next time.
+ * Counting it as "Not enough information" is what made the same file give different numbers on
+ * every import: whichever rows happened to fail moved out of Passes and Rejected that run.
+ */
+const unanswered = (verdict: ScreenVerdict | undefined) =>
+  !verdict || verdict.reason === notScreened;
+
+/**
  * Where each previewed row stands. Duplicates are always their own group: never screened. A row
  * that repeats an earlier row of the same file is counted once, with that earlier row: never
  * screened and never imported a second time, so adding the same leads again keeps the counts.
@@ -46,7 +56,7 @@ function groupRows(preview: ImportPreview, verdicts: Verdicts, screened: boolean
     if (row.duplicate || verdict === 'DUPLICATE') groups.duplicate.push(row);
     else if (row.repeat_of) groups.repeated.push(row);
     else if (!screened) groups.ready.push(row);
-    else if (!verdict) groups.unscreened.push(row);
+    else if (unanswered(verdicts[row.row])) groups.unscreened.push(row);
     else if (verdict === 'PASS') groups.pass.push(row);
     else if (verdict === 'REJECT') groups.rejected.push(row);
     else groups.unclear.push(row);
@@ -426,9 +436,9 @@ export function ImportModal({
             {(screenState === 'stopped' || screenState === 'done') && (
               <>
                 <p className="import-screen-status">
-                  {screenState === 'done'
+                  {screenState === 'done' && !groups.unscreened.length
                     ? 'Quick screen finished. Choose what to import.'
-                    : 'Quick screen stopped. ' +
+                    : (screenState === 'done' ? 'Quick screen finished. ' : 'Quick screen stopped. ') +
                       plural(groups.unscreened.length, 'row was', 'rows were') +
                       ' not screened.'}
                   {reused > 0 && (
@@ -437,7 +447,11 @@ export function ImportModal({
                       training version and kept the same verdict.
                     </small>
                   )}
-                  {screenState === 'stopped' && (
+                  {/*
+                    Offered whenever rows are still unanswered, however the run ended: a row the
+                    provider failed on is not a verdict, and asking again is what gets it one.
+                  */}
+                  {groups.unscreened.length > 0 && (
                     <button
                       className="text-button"
                       type="button"

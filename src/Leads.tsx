@@ -4,7 +4,10 @@ import {
   ArrowRight,
   ArrowUpRight,
   BookOpen,
+  ChevronDown,
   ChevronLeft,
+  CircleCheck,
+  CircleSlash,
   CircleStop,
   ClipboardCheck,
   FileText,
@@ -158,7 +161,10 @@ export default function Leads({
       ? leadLink(project.id, id, tab, queue)
       : `#projects/${project.id}/${queue ? 'review' : 'leads'}`;
   };
-  const [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
+  const exportRef = useRef<HTMLDivElement>(null);
+  const [exportOpen, setExportOpen] = useState(false),
+    [moving, setMoving] = useState<'' | 'QUALIFIED' | 'DISQUALIFIED'>(''),
+    [confirmDelete, setConfirmDelete] = useState<number[] | null>(null),
     [assigning, setAssigning] = useState<number[] | null>(null),
     [enrolling, setEnrolling] = useState(false),
     [assignees, setAssignees] = useState<User[]>([]);
@@ -180,6 +186,22 @@ export default function Leads({
     }, 250);
     return () => clearTimeout(timer);
   }, [search]);
+  useEffect(() => {
+    // The Export menu closes on an outside click or Escape.
+    if (!exportOpen) return;
+    const away = (event: MouseEvent) => {
+      if (!exportRef.current?.contains(event.target as Node)) setExportOpen(false);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExportOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [exportOpen]);
   useEffect(() => {
     api<User[]>(base + '/assignees')
       .then(setAssignees)
@@ -249,6 +271,36 @@ export default function Leads({
       if (mounted.current) setError((e as Error).message);
     } finally {
       if (mounted.current) setBusy('');
+    }
+  }
+  /**
+   * Moves the selected leads to a decision a person made. Status only: the server writes no run
+   * and moves no revision, so nothing goes stale and nothing is re-qualified. Leads already on
+   * that decision are not counted, which is why the server's own number is the one reported.
+   */
+  async function move(decision: 'QUALIFIED' | 'DISQUALIFIED') {
+    const ids = selected;
+    if (!ids.length) return;
+    setMoving(decision);
+    setError('');
+    try {
+      const { moved } = await api<{ moved: number }>(base + '/leads/decision', {
+        method: 'POST',
+        body: json({ ids, decision }),
+      });
+      if (!mounted.current) return;
+      setSelected([]);
+      reload();
+      const said = decision === 'QUALIFIED' ? 'Qualified' : 'Disqualified';
+      notify(
+        moved
+          ? moved + ' lead' + (moved === 1 ? '' : 's') + ' moved to ' + said + '.'
+          : 'Nothing to move: every selected lead is already ' + said + '.',
+      );
+    } catch (e) {
+      if (mounted.current) setError((e as Error).message);
+    } finally {
+      if (mounted.current) setMoving('');
     }
   }
   async function assignLeads(ids: number[], accountId: number | null) {
@@ -481,46 +533,73 @@ export default function Leads({
               open={filtersOpen}
               count={activeFacetCount(facets) + (status !== defaultStatus ? 1 : 0)}
               controls={filterBarId}
-              onToggle={() => setFiltersOpen((open) => !open)}
+              onToggle={() => {
+                setFiltersOpen((open) => !open);
+                setExportOpen(false);
+              }}
             />
             {/*
-              Export is the view on screen, and only that: the status, the search text and the
-              facets the table itself is filtered by, taken from the same facetParams the table
-              sends. A menu of other views to export was offered here and removed on request —
-              exporting a list nobody is looking at invites sending the wrong file.
+              Export offers the view on screen first — the status, the search text and the facets
+              the table is filtered by, from the same facetParams the table sends — and then the
+              four whole-project lists people are asked for by name. Qualified and Disqualified
+              are a person's decisions; Not a target is the analysis's own, which is why the two
+              rejections are separate files.
             */}
-            <a
-              className="button secondary"
-              href={
-                '/api' +
-                base +
-                '/leads/export?' +
-                new URLSearchParams([
-                  ['status', status],
-                  ['search', query],
-                  // The same facets and sort as the table, from the same function.
-                  ...facetParams(facets),
-                ])
-              }
-              title={
-                'Export the ' +
-                total +
-                ' lead' +
-                (total === 1 ? '' : 's') +
-                ' this view shows' +
-                (query ? ', matching “' + query + '”' : '') +
-                (activeFacetCount(facets)
-                  ? ' with ' +
-                    activeFacetCount(facets) +
-                    ' filter' +
-                    (activeFacetCount(facets) === 1 ? '' : 's') +
-                    ' applied'
-                  : '')
-              }
-            >
-              <ArrowDownToLine size={15} />
-              Export
-            </a>
+            <div className="export-menu" ref={exportRef}>
+              <button
+                className="button secondary"
+                aria-expanded={exportOpen}
+                aria-haspopup="true"
+                onClick={() => setExportOpen((open) => !open)}
+              >
+                <ArrowDownToLine size={15} />
+                Export
+                <ChevronDown size={14} />
+              </button>
+              {exportOpen && (
+                <div className="export-dropdown" role="menu">
+                  <a
+                    role="menuitem"
+                    href={
+                      '/api' +
+                      base +
+                      '/leads/export?' +
+                      new URLSearchParams([
+                        ['status', status],
+                        ['search', query],
+                        ...facetParams(facets),
+                      ])
+                    }
+                    onClick={() => setExportOpen(false)}
+                  >
+                    <strong>Current filter</strong>
+                    <small>
+                      {statusFilters(queue).find((o) => o.value === status)?.label}
+                      {query ? ' · matching “' + query + '”' : ''}
+                      {activeFacetCount(facets)
+                        ? ' · ' +
+                          activeFacetCount(facets) +
+                          ' filter' +
+                          (activeFacetCount(facets) === 1 ? '' : 's')
+                        : ''}{' '}
+                      · {total} lead{total === 1 ? '' : 's'}
+                    </small>
+                  </a>
+                  <div className="export-divider" />
+                  {exportLists.map((item) => (
+                    <a
+                      key={item.value}
+                      role="menuitem"
+                      href={'/api' + base + '/leads/export?status=' + item.value}
+                      onClick={() => setExportOpen(false)}
+                    >
+                      <strong>{item.label}</strong>
+                      <small>{item.hint}</small>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           {filtersOpen && (
             <LeadFilterBar
@@ -630,6 +709,42 @@ export default function Leads({
               >
                 <Mail size={15} />
                 Add to funnel
+              </button>
+              {/*
+                The way out of the review queue. A decision a person makes about the leads in
+                front of them: it moves the status and nothing else, so no score changes and
+                nothing is re-qualified. Disqualified is their own rejection, kept apart from
+                the analysis's Not a target.
+              */}
+              <button
+                className="button secondary"
+                disabled={!!busy || moving !== ''}
+                title="Mark the selected leads Qualified. Their scores and analyses stay as they are."
+                onClick={() => void move('QUALIFIED')}
+              >
+                {moving === 'QUALIFIED' ? (
+                  <Spinner text="Moving…" />
+                ) : (
+                  <>
+                    <CircleCheck size={15} />
+                    Move to Qualified
+                  </>
+                )}
+              </button>
+              <button
+                className="button secondary"
+                disabled={!!busy || moving !== ''}
+                title="Mark the selected leads Disqualified: your own rejection, not the AI's."
+                onClick={() => void move('DISQUALIFIED')}
+              >
+                {moving === 'DISQUALIFIED' ? (
+                  <Spinner text="Moving…" />
+                ) : (
+                  <>
+                    <CircleSlash size={15} />
+                    Move to Disqualified
+                  </>
+                )}
               </button>
               <button
                 className="button danger"
@@ -1164,7 +1279,15 @@ function LeadDetail({
         if (!cancelled) {
           setLead(data);
           setRunId(data.runs?.[0]?.id || null);
-          setDecision(data.status === 'UNREVIEWED' ? 'NEEDS_REVIEW' : data.status);
+          // The recorded review argues against an analysis, so it offers the three decisions an
+          // analysis can reach. A lead disqualified by hand starts from the nearest of them.
+          setDecision(
+            data.status === 'UNREVIEWED'
+              ? 'NEEDS_REVIEW'
+              : data.status === 'DISQUALIFIED'
+                ? 'NOT_A_TARGET'
+                : data.status,
+          );
         }
       })
       .catch((e) => {
@@ -1349,8 +1472,13 @@ function LeadDetail({
         {lead && (
           <LeadStatus
             base={base}
+            projectBase={'/projects/' + project.id}
             lead={lead}
             onSaved={(crm) => setLead((current) => current && { ...current, ...crm })}
+            onDecided={() => {
+              setRefresh((n) => n + 1);
+              onChange();
+            }}
           />
         )}
         {lead && (
@@ -2025,6 +2153,19 @@ const queueViews = [
 ];
 
 /**
+ * The whole-project lists the Export menu offers below the current filter, named as the people
+ * who ask for them name them. Each is a plain status, so the file holds exactly the leads the
+ * list's own badge shows: the two rejections stay separate because one is a person's decision
+ * and the other is the analysis's.
+ */
+const exportLists = [
+  { value: 'QUALIFIED', label: 'Qualified', hint: 'Qualified on the current training' },
+  { value: 'DISQUALIFIED', label: 'Disqualified', hint: 'Rejected by hand by your team' },
+  { value: 'NEEDS_REVIEW', label: 'Needs review', hint: 'Waiting for a person to decide' },
+  { value: 'NOT_A_TARGET', label: 'Not a target', hint: 'The analysis ruled these out' },
+] as const;
+
+/**
  * The views the filter bar's "AI qualification" choice offers, which is also what the page's
  * status is and therefore what Export sends. The values come from the shared vocabulary so the
  * server enum and this list cannot drift; ASSIGNED_TO_ME is the one client-only value, being the
@@ -2051,6 +2192,8 @@ function statusFilterGroups(queue: boolean): FilterGroup[] {
         { value: 'QUALIFIED', label: 'Qualified' },
         { value: 'NEEDS_REVIEW', label: 'Needs review' },
         { value: 'NOT_A_TARGET', label: 'Not a target' },
+        // A person's own rejection, which no analysis produces.
+        { value: 'DISQUALIFIED', label: 'Disqualified' },
         { value: 'UNREVIEWED', label: 'Unreviewed' },
       ],
     },

@@ -430,15 +430,22 @@ export function createQualificationJobs(deps: {
     })();
   }
 
-  /** Current on this job's training, and (for 'all') qualified since the job started. */
+  /**
+   * Current on this job's training, and qualified since the job started.
+   *
+   * A job given a list of ids never skips: those leads were asked for by name, and running them
+   * is the whole of the request — the more so since editing a settled lead no longer makes it out
+   * of date, which leaves this the way to ask for one again. Every other scope describes a set
+   * rather than naming it, so a lead qualified in the meantime is work already done.
+   */
   function alreadyCurrent(job: JobRow, lead: LeadState) {
+    if (job.scope === 'ids') return false;
     if (
       lead.latest_run_id === null ||
       lead.training_version !== job.training_version ||
       lead.qualified_revision !== lead.revision
     )
       return false;
-    if (job.scope !== 'all') return true;
     const run = db
       .prepare('SELECT created_at FROM qualification_runs WHERE id=? AND project_id=?')
       .get(lead.latest_run_id, job.project_id) as { created_at: string } | undefined;

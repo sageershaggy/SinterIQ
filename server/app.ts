@@ -24,6 +24,7 @@ import { createQualificationJobs } from './qualification-jobs';
 import { fetchWebsite, checkedUrl } from './network';
 import { crawlLimit, pagesRead, readSite } from './crawl';
 import { webSearch, type WebSearch } from './web-search';
+import { titleCase } from '../shared/text-format';
 import { installResearchSettings, researchSearch } from './research-settings';
 import { extractDocument } from './documents';
 import { preservedRecords, previousResearchContext } from './legacy';
@@ -128,7 +129,7 @@ const projectSelect = `SELECT p.*,
   (SELECT COUNT(*) FROM lead_feedback WHERE project_id=p.id AND applied_version IS NULL) pending_feedback_count,
   (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND archived_at IS NULL) lead_count,
   (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND archived_at IS NULL AND status='QUALIFIED' AND training_version=p.active_version AND qualified_revision=revision AND p.trained_revision=p.revision) qualified_count,
-  (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND archived_at IS NULL AND (status IN ('UNREVIEWED','NEEDS_REVIEW') OR training_version IS NOT p.active_version OR qualified_revision IS NOT revision OR p.trained_revision IS NOT p.revision)) review_count
+  (SELECT COUNT(*) FROM leads WHERE project_id=p.id AND archived_at IS NULL AND status<>'DISQUALIFIED' AND (status IN ('UNREVIEWED','NEEDS_REVIEW') OR training_version IS NOT p.active_version OR qualified_revision IS NOT revision OR p.trained_revision IS NOT p.revision)) review_count
   FROM projects p`;
 const serializeProject = (row: Record<string, unknown>) => {
   const { rubric_json, ...rest } = row;
@@ -250,8 +251,11 @@ function leadFilter(project: Project, input: z.infer<typeof leadQuerySchema>, vi
   const stale =
     '(l.training_version IS NOT ? OR l.qualified_revision IS NOT l.revision OR ? IS NOT ?)';
   if (input.status === 'REVIEW_QUEUE') {
+    // A lead someone disqualified by hand is off the queue: the decision it was waiting for
+    // has been made, and nothing a later run says puts it back without someone asking.
     where +=
-      " AND (l.status IN ('UNREVIEWED','NEEDS_REVIEW') OR l.assigned_to IS NOT NULL OR (l.latest_run_id IS NOT NULL AND " +
+      " AND l.status<>'DISQUALIFIED' AND (l.status IN ('UNREVIEWED','NEEDS_REVIEW')" +
+      ' OR l.assigned_to IS NOT NULL OR (l.latest_run_id IS NOT NULL AND ' +
       stale +
       '))';
     params.push(...current);
@@ -1131,6 +1135,7 @@ export function createApp(options: {
         'needs_requalification',
         'human_reviewed',
         'ai_decision',
+        'ai_qualified_at',
         'ai_reasoning',
         'why_qualified',
         'call_script',
@@ -1141,8 +1146,11 @@ export function createApp(options: {
       ...rows.map((row) => {
         const run = row.latest_run_id
           ? (db
-              .prepare('SELECT result_json FROM qualification_runs WHERE id=? AND project_id=?')
-              .get(row.latest_run_id, project.id) as { result_json: string } | undefined)
+              .prepare(
+                'SELECT result_json,created_at FROM qualification_runs WHERE id=? AND project_id=?',
+              )
+              .get(row.latest_run_id, project.id) as
+              { result_json: string; created_at: string } | undefined)
           : undefined;
         const review = row.latest_run_id
           ? (db
@@ -1165,15 +1173,17 @@ export function createApp(options: {
             .get(row.id) as { outcome: string; notes: string } | undefined,
         };
         return [
-          row.name,
+          // Capitalised the same way the import capitalises what it stores, so a lead that was
+          // already in the project before that started still exports as a reader expects.
+          titleCase(row.name),
           row.website,
-          row.contact_name,
-          row.contact_role,
+          titleCase(row.contact_name),
+          titleCase(row.contact_role),
           row.contact_email,
           row.contact_phone,
-          row.country,
-          row.city,
-          row.industry,
+          titleCase(row.country),
+          titleCase(row.city),
+          titleCase(row.industry),
           row.employee_count,
           row.assigned_to_name || '',
           calls.total,
@@ -1191,6 +1201,8 @@ export function createApp(options: {
           serialized.stale,
           Boolean(row.reviewed),
           result?.decision || '',
+          // When the AI last qualified this lead, which is not when the record last changed.
+          run?.created_at || '',
           result?.summary || '',
           result?.outreach?.why_qualified || '',
           result?.outreach?.call_script || '',
@@ -1283,8 +1295,23 @@ export function createApp(options: {
       .get(project.id, lead.id, nameKey(input.name), websiteKey(input.website));
     if (duplicate)
       throw new HttpError(409, 'A lead with that name or website already exists in this project.');
+    /*
+     * A lead someone already decided keeps its decision when its details are corrected. The
+     * revision still moves, so a second session editing the same lead is caught; what follows it
+     * is qualified_revision, which is what makes a result read as out of date. Carrying that
+     * forward means a Qualified lead stays Qualified with its score and next step, instead of
+     * returning to the review queue because an address was fixed. Requalifying is still a button.
+     *
+     * Only for a lead whose verdict is settled: a Needs review lead is edited precisely so it can
+     * be judged again, and for it the staleness is the point ("fill the gaps, then analyze again").
+     */
+    const keepsVerdict = lead.status === 'QUALIFIED' || lead.status === 'DISQUALIFIED';
     db.prepare(
-      'UPDATE leads SET name=?,name_key=?,website=?,website_key=?,country=?,city=?,industry=?,employee_count=?,contact_name=?,contact_role=?,contact_email=?,contact_phone=?,notes=?,revision=revision+1,reviewed=0,updated_at=? WHERE id=? AND project_id=?',
+      'UPDATE leads SET name=?,name_key=?,website=?,website_key=?,country=?,city=?,industry=?,employee_count=?,contact_name=?,contact_role=?,contact_email=?,contact_phone=?,notes=?,revision=revision+1,' +
+        (keepsVerdict
+          ? 'qualified_revision=CASE WHEN qualified_revision=revision THEN revision+1 ELSE qualified_revision END,'
+          : 'reviewed=0,') +
+        'updated_at=? WHERE id=? AND project_id=?',
     ).run(
       input.name,
       nameKey(input.name),
@@ -1318,7 +1345,10 @@ export function createApp(options: {
       project.id,
       req.user.name,
       'lead.updated',
-      input.name + '. Previous qualification retained for comparison.',
+      input.name +
+        (keepsVerdict
+          ? '. The lead keeps its qualification: only the details changed.'
+          : '. Previous qualification retained for comparison.'),
     );
     res.json(getLead(db, project, lead.id));
   });
@@ -1732,6 +1762,59 @@ export function createApp(options: {
     const count = assign(project, [...new Set(input.ids)], input.account_id, req.user.name);
     if (!count) throw new HttpError(404, 'No matching leads in this project.');
     res.json({ assigned: count });
+  });
+  /**
+   * Moves leads to a decision a person made: Qualified, or Disqualified for one they have
+   * rejected by hand. This is the Needs review queue's way out — pick the leads, say which way
+   * they go — so it takes a selection and is deliberately lighter than a recorded review
+   * (/leads/:leadId/review), which argues a case against a specific analysis and needs one.
+   *
+   * It changes the status and nothing else: no run is written, no score moves, no revision
+   * changes, so no result goes stale and nothing is re-qualified behind anybody's back. The
+   * lead is marked reviewed, because a person has now looked at it. Every move is audited by
+   * name, and moving a lead that is already there is not an error — it just is not counted.
+   */
+  app.post('/api/projects/:projectId/leads/decision', (req, res) => {
+    const project = getProject(db, positiveId(req.params.projectId), req.user);
+    const input = z
+      .object({
+        ids: z.array(z.number().int().positive()).min(1).max(500),
+        decision: z.enum(['QUALIFIED', 'DISQUALIFIED']),
+      })
+      .strict()
+      .parse(req.body);
+    const ids = [...new Set(input.ids)];
+    const moved = db.transaction(() => {
+      const rows = db
+        .prepare(
+          'SELECT id,name,status FROM leads WHERE project_id=? AND archived_at IS NULL AND id IN (' +
+            ids.map(() => '?').join(',') +
+            ')',
+        )
+        .all(project.id, ...ids) as Array<{ id: number; name: string; status: string }>;
+      if (!rows.length) throw new HttpError(404, 'No matching leads in this project.');
+      const changing = rows.filter((row) => row.status !== input.decision);
+      if (!changing.length) return 0;
+      const stamp = now();
+      const update = db.prepare(
+        'UPDATE leads SET status=?,reviewed=1,updated_at=? WHERE id=? AND project_id=?',
+      );
+      for (const row of changing) update.run(input.decision, stamp, row.id, project.id);
+      audit(
+        db,
+        project.id,
+        req.user.name,
+        'lead.decision',
+        changing.length === 1
+          ? changing[0].name + ': ' + input.decision + ' (moved by hand, was ' + changing[0].status + ')'
+          : changing.length + ' leads moved to ' + input.decision + ' by hand',
+      );
+      const said = input.decision === 'QUALIFIED' ? 'Qualified' : 'Disqualified';
+      for (const row of changing)
+        notifyLead(db, project.id, row.id, 'qualification', said + ': ' + row.name);
+      return changing.length;
+    })();
+    res.json({ moved });
   });
   /** Researchers who may hold an assignment in this project. */
   app.get('/api/projects/:projectId/assignees', (req, res) => {

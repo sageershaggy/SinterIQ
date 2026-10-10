@@ -558,7 +558,7 @@ test('low confidence never routes to review; nothing found at all does, saying w
     f.dispose();
   }
 });
-test('lead edits invalidate qualifications and stale edit requests are rejected', async () => {
+test('an edit keeps a settled lead’s verdict, and stale edit requests are rejected', async () => {
   const f = fixture();
   try {
     await f.setup();
@@ -568,14 +568,20 @@ test('lead edits invalidate qualifications and stale edit requests are rejected'
       website: 'https://example.com',
     });
     const base = '/projects/' + project.id + '/leads/' + created.body.id;
-    await f.post(base + '/qualify', {});
+    const run = await f.post(base + '/qualify', {});
+    assert.equal(run.status, 200, JSON.stringify(run.body));
+    const settled = (await f.agent.get('/api' + base)).body.status as string;
     const updated = await f.put(base, {
       revision: 1,
       name: 'New Identity',
       website: 'https://example.org',
     });
     assert.equal(updated.status, 200);
-    assert.equal(updated.body.stale, true);
+    // Correcting the details of a lead whose verdict is settled does not take the verdict away;
+    // one still under review goes out of date, because judging it again is the point of the edit.
+    assert.equal(updated.body.stale, settled !== 'QUALIFIED' && settled !== 'DISQUALIFIED');
+    assert.equal(updated.body.status, settled);
+    assert.equal(updated.body.revision, 2, 'the revision still moves, so a second session is caught');
     assert.equal((await f.put(base, { revision: 1, name: 'Stale Edit' })).status, 409);
   } finally {
     f.dispose();

@@ -359,38 +359,45 @@ export function installQuickDecisions(
     const questions = ruleQuestions(rubric);
     const results: ScreenResult[] = new Array(leads.length);
     let next = 0;
+    // One row's call failing is usually the connection, not the row. An unanswered row is not a
+    // verdict and is not remembered, so it would be asked again on the next import and could
+    // come back differently — the same list giving different counts. Ask twice here instead.
+    const attempts = 2;
     const worker = async () => {
       while (next < leads.length) {
         const index = next++;
         const lead = leads[index];
-        try {
-          const state = companyState({
-            lead,
-            listData: lead.list_data ?? {},
-            facts: [],
-            website: null,
-          });
-          const read = readAnswers(rubric, (await decide({ apiKey: key, model, state, questions })).answers);
-          const met = read.criteria.filter((item) => item.call === 'MEETS');
-          results[index] = read.excluded_by
-            ? {
-                verdict: 'REJECT',
-                reason: 'Matches exclusion: ' + cut(read.excluded_by, 150) + ' (Jev)',
-                rule: read.excluded_by,
-              }
-            : met.length
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+          try {
+            const state = companyState({
+              lead,
+              listData: lead.list_data ?? {},
+              facts: [],
+              website: null,
+            });
+            const read = readAnswers(rubric, (await decide({ apiKey: key, model, state, questions })).answers);
+            const met = read.criteria.filter((item) => item.call === 'MEETS');
+            results[index] = read.excluded_by
               ? {
-                  verdict: 'PASS',
-                  reason: 'Fits: ' + cut(met[0].rule, 150) + ' (Jev)',
-                  rule: met[0].rule,
+                  verdict: 'REJECT',
+                  reason: 'Matches exclusion: ' + cut(read.excluded_by, 150) + ' (Jev)',
+                  rule: read.excluded_by,
                 }
-              : {
-                  verdict: 'UNCLEAR',
-                  reason: 'The row does not say enough to judge the rules (Jev).',
-                  rule: '',
-                };
-        } catch {
-          results[index] = { verdict: 'UNCLEAR', reason: notScreened, rule: '' };
+              : met.length
+                ? {
+                    verdict: 'PASS',
+                    reason: 'Fits: ' + cut(met[0].rule, 150) + ' (Jev)',
+                    rule: met[0].rule,
+                  }
+                : {
+                    verdict: 'UNCLEAR',
+                    reason: 'The row does not say enough to judge the rules (Jev).',
+                    rule: '',
+                  };
+            break;
+          } catch {
+            results[index] = { verdict: 'UNCLEAR', reason: notScreened, rule: '' };
+          }
         }
       }
     };

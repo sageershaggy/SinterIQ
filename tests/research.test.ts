@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { checkEmail, checkPhone } from '../shared/contact-check';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1442,4 +1443,33 @@ test('fit bands follow the owner’s thresholds', () => {
   assert.equal(fitBandFor(49)?.label, 'Not a fit');
   assert.equal(fitBandFor(0)?.label, 'Not a fit');
   assert.equal(fitBandFor(null), null);
+});
+
+test('a contact’s address and number are checked before either is stored', () => {
+  // Shaped like an address, and on the company's own domain: the strongest evidence short of
+  // writing to it that this is the right person at this company.
+  const own = checkEmail('p.schulz@baltic-sealing.de', 'https://www.baltic-sealing.de/contact');
+  assert.deepEqual([own.ok, own.ownDomain, own.reason], [true, true, '']);
+  // A real address somewhere else is kept, and said to be elsewhere.
+  const free = checkEmail('p.schulz@gmail.com', 'https://baltic-sealing.de');
+  assert.equal(free.ok, true);
+  assert.equal(free.ownDomain, false);
+  assert.match(free.reason, /not on the company/);
+  // A subdomain is the same company's mail.
+  assert.equal(checkEmail('a@mail.baltic-sealing.de', 'baltic-sealing.de').ownDomain, true);
+  // What a page's running text offers that is not an address at all.
+  for (const value of ['logo-2x.png', 'name@', 'no-at-sign.de', 'you@example.com', 'hero@2x.jpg'])
+    assert.equal(checkEmail(value, 'https://baltic-sealing.de').ok, false, value);
+  // Nothing to check is not a failure: a contact may have no address.
+  assert.equal(checkEmail('', 'https://baltic-sealing.de').ok, true);
+
+  // Numbers: anything dialable passes, in whatever way the page wrote it.
+  for (const value of ['+49 30 1234 5678', '(030) 1234-567', '00 44 20 7946 0958'])
+    assert.equal(checkPhone(value).ok, true, value);
+  // A year, a postcode or a sentence that sat next to the word "phone" does not.
+  for (const value of ['2026', '12-34', 'call the office', '1234567890123456'])
+    assert.equal(checkPhone(value).ok, false, value);
+  assert.equal(checkPhone('').ok, true);
+  // The reason is always said, so a refusal can be shown rather than silently applied.
+  assert.match(checkPhone('2026').reason, /too few digits/);
 });

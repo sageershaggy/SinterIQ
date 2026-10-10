@@ -13,19 +13,41 @@ import { api, json } from './api';
 import './LeadStatus.css';
 
 /**
+ * The two decisions a person can make about the qualification itself, offered from this same
+ * control because that is where people look for a lead's status. They are not pipeline values
+ * and are never the select's value: picking one is an instruction, and the control goes back to
+ * showing the pipeline status. Qualified and Disqualified move the status alone — no run, no
+ * score, no revision — so nothing is re-qualified and no result goes stale.
+ */
+const handDecisions = [
+  { value: 'QUALIFIED', label: 'Qualified' },
+  { value: 'DISQUALIFIED', label: 'Disqualified' },
+] as const;
+type HandDecision = (typeof handDecisions)[number]['value'];
+const isHandDecision = (value: string): value is HandDecision =>
+  handDecisions.some((item) => item.value === value);
+
+/**
  * The manual lead status, for the top right of the lead header. It is the team's own pipeline
  * and deliberately separate from the AI qualification: moving it records who, when and from
- * what, and never touches the fit score or the decision.
+ * what, and never touches the fit score or the decision. The qualification a person sets by
+ * hand is offered from here too, as its own group.
  */
 export function LeadStatus({
   base,
+  projectBase,
   lead,
   onSaved,
+  onDecided,
 }: {
   /** The lead's API path, /projects/:id/leads/:id. */
   base: string;
+  /** The project's API path, /projects/:id, where the decision endpoint lives. */
+  projectBase: string;
   lead: Lead;
   onSaved: (crm: LeadCrm) => void;
+  /** The qualification was set by hand; the lead needs re-reading. */
+  onDecided?: (decision: HandDecision) => void;
 }) {
   const id = useId();
   const status = lead.pipeline_status || defaultPipelineStatus;
@@ -51,6 +73,23 @@ export function LeadStatus({
       document.removeEventListener('keydown', close);
     };
   }, [open]);
+  /** Sets the qualification by hand, through the same endpoint the lead list's Move uses. */
+  async function decide(decision: HandDecision) {
+    if (lead.status === decision) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api<{ moved: number }>(projectBase + '/leads/decision', {
+        method: 'POST',
+        body: json({ ids: [lead.id], decision }),
+      });
+      onDecided?.(decision);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function change(next: PipelineStatus) {
     if (next === status) return;
     setBusy(true);
@@ -77,13 +116,27 @@ export function LeadStatus({
           id={id}
           value={status}
           disabled={busy}
-          onChange={(e) => void change(e.target.value as PipelineStatus)}
+          onChange={(e) =>
+            void (isHandDecision(e.target.value)
+              ? decide(e.target.value)
+              : change(e.target.value as PipelineStatus))
+          }
         >
-          {pipelineStatuses.map((value) => (
-            <option key={value} value={value}>
-              {pipelineStatusLabels[value]}
-            </option>
-          ))}
+          <optgroup label="Pipeline">
+            {pipelineStatuses.map((value) => (
+              <option key={value} value={value}>
+                {pipelineStatusLabels[value]}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Set the qualification">
+            {handDecisions.map((item) => (
+              <option key={item.value} value={item.value} disabled={lead.status === item.value}>
+                {item.label}
+                {lead.status === item.value ? ' (already)' : ''}
+              </option>
+            ))}
+          </optgroup>
         </select>
         <button
           type="button"
